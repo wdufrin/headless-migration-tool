@@ -199,7 +199,7 @@ export class SessionMigrator {
       } else if (srcUser && srcUser.includes('@')) {
         targetUserId = srcUser;
       } else {
-        targetUserId = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'admin@example.com';
+        targetUserId = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'admin@wdufrin.altostrat.com';
       }
     }
 

@@ -34,6 +34,7 @@ export class GcpAuthService {
   private serviceAccountKey?: any;
   private cachedAdcToken?: { token: string; expiresAt: number };
   private userTokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
+  private failedDwdUsers: Set<string> = new Set();
 
   constructor(options: TokenProviderOptions = {}) {
     this.staticToken = options.staticToken;
@@ -99,30 +100,46 @@ export class GcpAuthService {
 
     // 1. Domain-Wide Delegation Impersonation
     if (cleanEmail && this.serviceAccountKey) {
-      const cached = this.userTokenCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now() + 60000) {
-        return cached.token;
-      }
+      const lower = cleanEmail.toLowerCase();
+      const isEligible = (
+        lower.includes('@') &&
+        !lower.endsWith('.gserviceaccount.com') &&
+        !lower.includes('serviceaccount') &&
+        !lower.startsWith('service-') &&
+        !lower.endsWith('@example.com') &&
+        lower !== 'unknown' &&
+        lower !== 'admin'
+      );
 
-      try {
-        logger.debug(`Minting DWD impersonated token for user: ${cleanEmail} with scopes: ${requestedScopes.join(', ')}`);
-        const jwtClient = new JWT({
-          email: this.serviceAccountKey.client_email,
-          key: this.serviceAccountKey.private_key,
-          subject: cleanEmail,
-          scopes: requestedScopes
-        });
-
-        const tokenResponse = await jwtClient.getAccessToken();
-        if (tokenResponse.token) {
-          this.userTokenCache.set(cacheKey, {
-            token: tokenResponse.token,
-            expiresAt: Date.now() + 3000 * 1000
-          });
-          return tokenResponse.token;
+      if (isEligible) {
+        const cached = this.userTokenCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now() + 60000) {
+          return cached.token;
         }
-      } catch (err: any) {
-        logger.warn(`DWD impersonation failed for ${cleanEmail} (${err.message}). Falling back to admin credentials.`);
+
+        try {
+          logger.debug(`Minting DWD impersonated token for user: ${cleanEmail} with scopes: ${requestedScopes.join(', ')}`);
+          const jwtClient = new JWT({
+            email: this.serviceAccountKey.client_email,
+            key: this.serviceAccountKey.private_key,
+            subject: cleanEmail,
+            scopes: requestedScopes
+          });
+
+          const tokenResponse = await jwtClient.getAccessToken();
+          if (tokenResponse.token) {
+            this.userTokenCache.set(cacheKey, {
+              token: tokenResponse.token,
+              expiresAt: Date.now() + 3000 * 1000
+            });
+            return tokenResponse.token;
+          }
+        } catch (err: any) {
+          if (!this.failedDwdUsers.has(cleanEmail)) {
+            this.failedDwdUsers.add(cleanEmail);
+            logger.warn(`DWD impersonation skipped/failed for ${cleanEmail} (${err.message}). Using admin credentials.`);
+          }
+        }
       }
     }
 

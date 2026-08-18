@@ -70,17 +70,29 @@ export class BigQueryDiscoveryService {
 
       const data: any = await response.json();
       const rows = data.rows || [];
-      return rows.map((r: any) => {
-        const userEmail = r.f[0]?.v || '';
-        const agents = (r.f[1]?.v || []).map((a: any) => a.v);
-        const count = Number(r.f[2]?.v) || 0;
-        return {
-          userEmail,
-          agentNames: agents,
-          notebookIds: [],
-          interactionCount: count
-        };
-      });
+      return rows
+        .map((r: any) => {
+          const userEmail = (r.f[0]?.v || '').replace(/^user:/i, '').trim();
+          const agents = (r.f[1]?.v || []).map((a: any) => a.v);
+          const count = Number(r.f[2]?.v) || 0;
+          return {
+            userEmail,
+            agentNames: agents,
+            notebookIds: [],
+            interactionCount: count
+          };
+        })
+        .filter((u: any) => {
+          const lower = u.userEmail.toLowerCase();
+          return (
+            lower.includes('@') &&
+            !lower.endsWith('.gserviceaccount.com') &&
+            !lower.includes('serviceaccount') &&
+            !lower.startsWith('service-') &&
+            !lower.endsWith('@example.com') &&
+            lower !== 'unknown'
+          );
+        });
     } catch (err: any) {
       logger.warn(`Could not perform BigQuery telemetry lookup: ${err.message}`);
       return [];
