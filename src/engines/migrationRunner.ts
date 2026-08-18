@@ -93,12 +93,12 @@ export class MigrationRunner {
       logger.debug(`Could not retrieve target engine CID: ${e.message}`);
     }
 
-    // Step 2: User Asset Discovery via BigQuery (Best Effort)
+    // Step 2: User Asset Discovery via BigQuery, UserFilters, & IdentityMapping
     const discoveredUsers: string[] = [];
     try {
       const bqUsers = await this.bqDiscovery.discoverUsersFromBigQuery(config.source.projectId);
       for (const u of bqUsers) {
-        if (u.userEmail && u.userEmail !== 'unknown') {
+        if (u.userEmail && u.userEmail !== 'unknown' && !discoveredUsers.includes(u.userEmail)) {
           discoveredUsers.push(u.userEmail);
         }
       }
@@ -107,6 +107,23 @@ export class MigrationRunner {
       }
     } catch (bqErr: any) {
       logger.debug(`BigQuery discovery skipped: ${bqErr.message}`);
+    }
+
+    if (config.options?.userFilter) {
+      for (const f of config.options.userFilter) {
+        const cleanF = f.replace(/^user:/, '').trim();
+        if (cleanF.includes('@') && !cleanF.includes('*') && !discoveredUsers.includes(cleanF)) {
+          discoveredUsers.push(cleanF);
+        }
+      }
+    }
+    if (config.identityMapping) {
+      for (const k of Object.keys(config.identityMapping)) {
+        const cleanK = k.replace(/^user:/, '').trim();
+        if (cleanK.includes('@') && !discoveredUsers.includes(cleanK)) {
+          discoveredUsers.push(cleanK);
+        }
+      }
     }
 
     const allResults: MigrationItemResult[] = [];
@@ -118,7 +135,8 @@ export class MigrationRunner {
           config.source,
           config.target,
           config.options,
-          config.identityMapping
+          config.identityMapping,
+          discoveredUsers
         );
         allResults.push(...notebookResults);
       } catch (err: any) {

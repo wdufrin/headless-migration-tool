@@ -158,11 +158,19 @@ export class DiscoveryEngineClient {
 
   // --- Notebooks ---
 
-  async listNotebooks(env: EnvironmentConfig): Promise<Notebook[]> {
+  async listNotebooks(env: EnvironmentConfig, forUserEmail?: string): Promise<Notebook[]> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks:listRecentlyViewed`;
-    const res = await this.request<{ notebooks?: Notebook[] }>(url, 'GET', undefined, env.projectId);
-    return res.notebooks || [];
+    const res = await this.request<{ notebooks?: Notebook[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
+    const notebooks = res.notebooks || [];
+    if (forUserEmail) {
+      for (const nb of notebooks) {
+        nb.owner = forUserEmail;
+        if (!nb.metadata) nb.metadata = {};
+        nb.metadata.ownerEmail = forUserEmail;
+      }
+    }
+    return notebooks;
   }
 
   async batchDeleteNotebooks(projectId: string, location: string, notebookNames: string[]): Promise<any> {

@@ -90,12 +90,27 @@ export class UserReportGenerator {
 
     const now = new Date().toISOString();
 
+    // Determine the primary domain user in the report to prevent phantom accounts
+    const domainUserCandidates: string[] = [];
+    const results = Array.isArray(report.results) ? report.results : [];
+    for (const r of results) {
+      const o = (r.targetOwner || r.originalOwner || '').replace(/^user:/, '').trim();
+      if (o && o.includes('@') && o !== 'user@example.com' && !o.includes('gserviceaccount.com')) {
+        domainUserCandidates.push(o);
+      }
+    }
+
+    const userFrequency = new Map<string, number>();
+    for (const u of domainUserCandidates) {
+      userFrequency.set(u, (userFrequency.get(u) || 0) + 1);
+    }
+    const sortedUsers = Array.from(userFrequency.entries()).sort((a, b) => b[1] - a[1]);
+    const primaryReportUser = sortedUsers.length > 0 ? sortedUsers[0][0] : (process.env.ADMIN_EMAIL || 'admin@wdufrin.altostrat.com');
+
     const getOrCreateUser = (rawEmail?: string): UserHandoverData => {
-      const defaultEmail = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'user@example.com';
-      let email = rawEmail || defaultEmail;
-      if (email.startsWith('user:')) email = email.replace('user:', '');
-      if (email === 'unknown' || email === 'admin' || !email.includes('@')) {
-        email = defaultEmail;
+      let email = (rawEmail || '').replace(/^user:/, '').trim();
+      if (!email || email === 'unknown' || email === 'admin' || !email.includes('@') || email === 'user@example.com') {
+        email = primaryReportUser;
       }
 
       if (!userMap.has(email)) {
@@ -115,7 +130,6 @@ export class UserReportGenerator {
     };
 
     // Group Results by Item Type
-    const results = Array.isArray(report.results) ? report.results : [];
     for (const item of results) {
       const u = getOrCreateUser(item.targetOwner || item.originalOwner);
       if (item.type === 'NOTEBOOK') {

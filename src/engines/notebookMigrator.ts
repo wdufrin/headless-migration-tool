@@ -213,14 +213,73 @@ export class NotebookMigrator {
     sourceEnv: EnvironmentConfig,
     targetEnv: EnvironmentConfig,
     options: MigrationOptions = {},
-    identityMapping: Record<string, string> = {}
+    identityMapping: Record<string, string> = {},
+    discoveredUsers: string[] = []
   ): Promise<MigrationItemResult[]> {
     logger.info(`Discovering notebooks in source project: ${sourceEnv.projectId} (${sourceEnv.appLocation})...`);
-    const sourceNotebooks = await this.client.listNotebooks(sourceEnv);
-    logger.info(`Found ${sourceNotebooks.length} total source notebooks.`);
+
+    // 1. Resolve Candidate Users for Multi-User DWD Notebook Discovery
+    const candidateUsers = new Set<string>();
+    if (options.userFilter && options.userFilter.length > 0) {
+      for (const u of options.userFilter) {
+        if (!u.includes('*') && u.includes('@')) candidateUsers.add(u.replace(/^user:/, '').trim());
+      }
+    }
+    for (const u of discoveredUsers) {
+      if (u.includes('@')) candidateUsers.add(u.replace(/^user:/, '').trim());
+    }
+    for (const u of Object.keys(identityMapping)) {
+      if (u.includes('@')) candidateUsers.add(u.replace(/^user:/, '').trim());
+    }
+
+    if (candidateUsers.size === 0) {
+      const defaultAdmin = process.env.ADMIN_EMAIL || 'admin@wdufrin.altostrat.com';
+      candidateUsers.add(defaultAdmin);
+    }
+
+    // 2. Discover Notebooks per user via Domain-Wide Delegation
+    const allSourceNotebooks: Notebook[] = [];
+    const seenNotebookIds = new Set<string>();
+
+    for (const userEmail of candidateUsers) {
+      try {
+        const userNotebooks = await this.client.listNotebooks(sourceEnv, userEmail);
+        logger.info(`Discovered ${userNotebooks.length} notebooks for user "${userEmail}".`);
+        for (const nb of userNotebooks) {
+          const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          if (nbId && !seenNotebookIds.has(nbId)) {
+            seenNotebookIds.add(nbId);
+            nb.owner = userEmail;
+            if (!nb.metadata) nb.metadata = {};
+            nb.metadata.ownerEmail = userEmail;
+            allSourceNotebooks.push(nb);
+          }
+        }
+      } catch (err: any) {
+        logger.debug(`Per-user notebook discovery skipped for "${userEmail}": ${err.message}`);
+      }
+    }
+
+    // Fallback: If per-user DWD discovery returned 0, query project root
+    if (allSourceNotebooks.length === 0) {
+      const rootNotebooks = await this.client.listNotebooks(sourceEnv);
+      const fallbackOwner = Array.from(candidateUsers)[0] || 'admin@wdufrin.altostrat.com';
+      for (const nb of rootNotebooks) {
+        const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+        if (nbId && !seenNotebookIds.has(nbId)) {
+          seenNotebookIds.add(nbId);
+          nb.owner = fallbackOwner;
+          if (!nb.metadata) nb.metadata = {};
+          nb.metadata.ownerEmail = fallbackOwner;
+          allSourceNotebooks.push(nb);
+        }
+      }
+    }
+
+    logger.info(`Total discovered source notebooks across all users: ${allSourceNotebooks.length}`);
 
     const userFilter = options.userFilter || [];
-    const filteredNotebooks = sourceNotebooks.filter(nb => this.isNotebookOwnedByUser(nb, userFilter));
+    const filteredNotebooks = allSourceNotebooks.filter(nb => this.isNotebookOwnedByUser(nb, userFilter));
     logger.info(`Selected ${filteredNotebooks.length} notebooks matching user filters.`);
 
     const concurrency = options.concurrency || 10;
@@ -229,8 +288,10 @@ export class NotebookMigrator {
     return mapConcurrent(filteredNotebooks, concurrency, async (nb: Notebook) => {
       const startTime = Date.now();
       const notebookId = nb.name.split('/').pop() || '';
-      const originalOwner = nb.metadata?.ownerEmail || nb.owner || 'unknown';
-      const targetOwner = identityMapping[originalOwner] || originalOwner;
+      const fallbackUser = Array.from(candidateUsers)[0] || 'admin@wdufrin.altostrat.com';
+      const rawOwner = nb.metadata?.ownerEmail || nb.owner || fallbackUser;
+      const originalOwner = (rawOwner === 'unknown' || !rawOwner.includes('@')) ? fallbackUser : rawOwner;
+      const targetOwner = identityMapping[originalOwner] || identityMapping[`user:${originalOwner}`] || originalOwner;
 
       const result: MigrationItemResult = {
         id: notebookId,
