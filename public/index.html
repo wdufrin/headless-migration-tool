@@ -302,6 +302,79 @@
               </div>
             </div>
 
+            <!-- Identity Provider (IdP) & Workforce Identity Federation (WiF) Section -->
+            <div class="border-t border-gray-800 pt-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 class="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    <span>Identity Provider (IdP) & Workforce Identity Federation (WiF)</span>
+                  </h4>
+                  <p class="text-[11px] text-gray-500 mt-0.5">Configure authentication method and auto-translate user accounts across IdP transitions</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-400 font-medium">Auth Mode:</span>
+                  <select id="authModeSelect" onchange="onAuthModeChange()" class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    <option value="DWD" selected>🔑 Service Account Key (DWD)</option>
+                    <option value="WIF">🌐 Workforce Identity Federation (WiF)</option>
+                    <option value="ADC">💻 Application Default Credentials (ADC)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- WiF Config Path (Shown when WiF is selected) -->
+              <div id="wifConfigRow" class="hidden bg-gray-950/80 border border-indigo-900/40 p-3 rounded-xl space-y-2">
+                <label class="block text-xs font-medium text-indigo-300">Workforce Identity Federation Config Path</label>
+                <input type="text" id="optWifConfigPath" value="./workforce-identity-config.json" class="w-full bg-gray-900 border border-indigo-700/50 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-400">
+                <p class="text-[11px] text-gray-400">Exchanges OIDC/SAML tokens from Microsoft Entra ID, Okta, or Ping with GCP STS</p>
+              </div>
+
+              <!-- IdP Domain Auto-Mapping Card -->
+              <div class="bg-gray-950 border border-gray-800 p-4 rounded-xl space-y-3">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-semibold text-gray-300">🔄 Cross-IdP Transformation Rules</span>
+                    <span class="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded-md font-mono">Auto-Mapping Ready</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <select id="idpPresetSelect" onchange="applyIdpPreset(this.value)" class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500">
+                      <option value="CUSTOM">Custom Suffix Rule</option>
+                      <option value="ENTRA_TO_GOOGLE">Preset: Entra ID ➔ Google Identity</option>
+                      <option value="OKTA_TO_GOOGLE">Preset: Okta ➔ Google Identity</option>
+                      <option value="PING_TO_GOOGLE">Preset: Ping ➔ Google Identity</option>
+                    </select>
+                    <button type="button" onclick="previewAutoMapping()" class="px-3 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+                      <span>⚡</span> Preview Mappings
+                    </button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label class="block text-gray-400 mb-1 font-medium">Source Domain / Suffix</label>
+                    <input type="text" id="mapFromDomain" placeholder="@legacy-ad.onmicrosoft.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono">
+                  </div>
+                  <div>
+                    <label class="block text-gray-400 mb-1 font-medium">Target Google Cloud Identity Domain</label>
+                    <input type="text" id="mapToDomain" placeholder="@target-company.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono">
+                  </div>
+                </div>
+
+                <!-- Auto-Mapping Results Preview Box -->
+                <div id="idpMappingPreviewBox" class="hidden border-t border-gray-800 pt-3 space-y-2">
+                  <div class="flex items-center justify-between text-xs text-gray-400">
+                    <span id="idpMappingCount" class="font-medium text-indigo-300">Mapped Identities Preview:</span>
+                    <span class="text-[11px] text-gray-500">Auto-saved to migration pipeline</span>
+                  </div>
+                  <div id="idpMappingTableContainer" class="max-h-48 overflow-y-auto rounded-lg border border-gray-800 bg-gray-900/60 text-xs">
+                    <!-- Populated dynamically via JS -->
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Action Controls -->
             <div class="flex items-center justify-between pt-2">
               <div class="flex items-center gap-3">
@@ -1049,6 +1122,115 @@
       }
     }
 
+    let explicitIdpOverrides = {};
+
+    function onAuthModeChange() {
+      const mode = document.getElementById('authModeSelect').value;
+      const wifRow = document.getElementById('wifConfigRow');
+      if (mode === 'WIF') {
+        wifRow.classList.remove('hidden');
+      } else {
+        wifRow.classList.add('hidden');
+      }
+    }
+
+    function applyIdpPreset(presetKey) {
+      const fromInput = document.getElementById('mapFromDomain');
+      const toInput = document.getElementById('mapToDomain');
+      if (presetKey === 'ENTRA_TO_GOOGLE') {
+        fromInput.value = '@company.onmicrosoft.com';
+        toInput.value = '@company.com';
+      } else if (presetKey === 'OKTA_TO_GOOGLE') {
+        fromInput.value = '@company.okta.com';
+        toInput.value = '@company.com';
+      } else if (presetKey === 'PING_TO_GOOGLE') {
+        fromInput.value = '@ping.company.com';
+        toInput.value = '@company.com';
+      } else {
+        fromInput.value = '';
+        toInput.value = '';
+      }
+    }
+
+    function getActiveDomainRules() {
+      const from = document.getElementById('mapFromDomain')?.value?.trim();
+      const to = document.getElementById('mapToDomain')?.value?.trim();
+      if (from && to) {
+        return [{ fromDomain: from, toDomain: to }];
+      }
+      return [];
+    }
+
+    async function previewAutoMapping() {
+      const previewBox = document.getElementById('idpMappingPreviewBox');
+      const tableContainer = document.getElementById('idpMappingTableContainer');
+      const countEl = document.getElementById('idpMappingCount');
+      const srcProj = document.getElementById('srcProjectId').value.trim();
+
+      const domainRules = getActiveDomainRules();
+      if (domainRules.length === 0) {
+        alert('Please specify a Source Domain and Target Domain (or select an IdP Preset).');
+        return;
+      }
+
+      previewBox.classList.remove('hidden');
+      tableContainer.innerHTML = '<div class="p-4 text-center text-gray-400">Discovering users and computing cross-IdP mappings...</div>';
+
+      try {
+        const res = await fetch('/api/idp/auto-map', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceProjectId: srcProj,
+            domainRules,
+            explicitMappings: explicitIdpOverrides
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Failed to auto-map identities');
+
+        countEl.textContent = `Auto-Mapped ${data.totalUsers} Identities:`;
+
+        if (data.mappings.length === 0) {
+          tableContainer.innerHTML = '<div class="p-4 text-center text-gray-500">No active users discovered. When users are discovered during migration, the rules will be applied automatically.</div>';
+          return;
+        }
+
+        let html = `
+          <table class="w-full text-left">
+            <thead class="bg-gray-950/80 text-gray-400 uppercase font-mono text-[10px] border-b border-gray-800">
+              <tr>
+                <th class="py-2 px-3">Source Identity (Old IdP)</th>
+                <th class="py-2 px-3">Target Google Identity</th>
+                <th class="py-2 px-3">Rule</th>
+                <th class="py-2 px-3">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+        `;
+
+        for (const m of data.mappings) {
+          const badgeClass = m.status === 'AUTO_MAPPED' ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-indigo-950 text-indigo-300 border-indigo-800';
+          html += `
+            <tr class="hover:bg-gray-800/40">
+              <td class="py-2 px-3 font-mono text-gray-300">${m.sourceIdentity}</td>
+              <td class="py-2 px-3 font-mono text-emerald-400 font-semibold">${m.targetIdentity}</td>
+              <td class="py-2 px-3 text-gray-400">${m.matchedRule || 'Default'}</td>
+              <td class="py-2 px-3">
+                <span class="text-[10px] px-2 py-0.5 rounded border ${badgeClass}">${m.status}</span>
+              </td>
+            </tr>
+          `;
+        }
+
+        html += '</tbody></table>';
+        tableContainer.innerHTML = html;
+      } catch (err) {
+        tableContainer.innerHTML = `<div class="p-3 text-red-400 text-center">Error: ${err.message}</div>`;
+      }
+    }
+
     async function startMigration(isDryRun) {
       const tracker = document.getElementById('trackerSection');
       tracker.classList.remove('hidden');
@@ -1079,6 +1261,17 @@
           collectionId: document.getElementById('tgtCollectionId').value.trim(),
           appId: document.getElementById('tgtAppId').value.trim(),
           assistantId: 'default_assistant'
+        },
+        auth: {
+          authType: document.getElementById('authModeSelect').value === 'WIF' ? 'WORKFORCE_IDENTITY_FEDERATION' : 'SERVICE_ACCOUNT_KEY',
+          wifConfigPath: document.getElementById('optWifConfigPath')?.value?.trim() || './workforce-identity-config.json',
+          serviceAccountKeyPath: document.getElementById('optSaKey')?.value?.trim() || './sa-dwd-key.json'
+        },
+        idpMapping: {
+          sourceIdp: document.getElementById('idpPresetSelect').value || 'CUSTOM',
+          targetIdp: 'GOOGLE_CLOUD_IDENTITY',
+          domainRules: getActiveDomainRules(),
+          fallbackUserEmail: 'admin@wdufrin.altostrat.com'
         },
         options: {
           migrateNotebooks: document.getElementById('optNotebooks').checked,

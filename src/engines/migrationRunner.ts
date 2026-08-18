@@ -24,6 +24,7 @@ import { NotebookMigrator } from './notebookMigrator.js';
 import { AgentMigrator } from './agentMigrator.js';
 import { DryRunSimulator } from './dryRunSimulator.js';
 import { MigrationReporter } from '../services/reporter.js';
+import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
 
 export interface MigrationRunnerOptions {
@@ -122,6 +123,26 @@ export class MigrationRunner {
         const cleanK = k.replace(/^user:/, '').trim();
         if (cleanK.includes('@') && !discoveredUsers.includes(cleanK)) {
           discoveredUsers.push(cleanK);
+        }
+      }
+    }
+
+    // Step 2b: Apply IdP Domain Rules & Automated Cross-IdP Translations
+    if (config.idpMapping) {
+      const idpService = new IdentityMappingService({
+        sourceIdp: config.idpMapping.sourceIdp,
+        targetIdp: config.idpMapping.targetIdp,
+        domainRules: config.idpMapping.domainRules || [],
+        explicitMappings: config.identityMapping || {},
+        defaultFallbackEmail: config.idpMapping.fallbackUserEmail || config.defaultOwnerFallback
+      });
+
+      config.identityMapping = config.identityMapping || {};
+      for (const u of discoveredUsers) {
+        const res = idpService.resolveIdentity(u);
+        if (res.targetIdentity && !config.identityMapping[u]) {
+          config.identityMapping[u] = res.targetIdentity;
+          logger.info(`[IdP AUTO-MAP] "${u}" -> "${res.targetIdentity}" (${res.matchedRule || 'Default'})`);
         }
       }
     }

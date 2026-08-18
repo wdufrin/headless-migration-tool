@@ -770,6 +770,55 @@ app.get('/api/user-reports/render/:email', async (req, res) => {
   }
 });
 
+// IdP Presets Endpoint
+app.get('/api/idp/presets', (_req, res) => {
+  try {
+    const { IdentityMappingService } = require('./services/identityMappingService.js');
+    return res.status(200).json({
+      presets: IdentityMappingService.getIdpPresets()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'FailedToGetPresets', message: err.message });
+  }
+});
+
+// IdP Auto-Mapping Preview & Transformation Endpoint
+app.post('/api/idp/auto-map', authMiddleware, async (req, res) => {
+  try {
+    const { IdentityMappingService } = await import('./services/identityMappingService.js');
+    const { sourceUsers, domainRules, explicitMappings, fallbackUserEmail, sourceProjectId } = req.body || {};
+
+    let usersToMap: string[] = Array.isArray(sourceUsers) ? sourceUsers : [];
+
+    // If sourceUsers not provided, attempt to discover from BigQuery or source project
+    if (usersToMap.length === 0 && sourceProjectId) {
+      try {
+        const callerToken = req.accessToken;
+        const authService = new GcpAuthService({ staticToken: callerToken });
+        const bqService = new BigQueryDiscoveryService(authService);
+        const bqUsers = await bqService.discoverUsersFromBigQuery(sourceProjectId);
+        usersToMap = bqUsers.map(u => u.userEmail).filter(e => e && e !== 'unknown');
+      } catch (e: any) {
+        logger.debug(`Could not discover users from BQ: ${e.message}`);
+      }
+    }
+
+    const mappingService = new IdentityMappingService({
+      domainRules: domainRules || [],
+      explicitMappings: explicitMappings || {},
+      defaultFallbackEmail: fallbackUserEmail
+    });
+
+    const mappedResults = mappingService.autoMapUserList(usersToMap);
+    return res.status(200).json({
+      totalUsers: mappedResults.length,
+      mappings: mappedResults
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'AutoMapFailed', message: err.message });
+  }
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(port, () => {
     logger.info(`Gemini Enterprise Admin Migration Console listening on http://localhost:${port}`);

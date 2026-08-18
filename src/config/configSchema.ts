@@ -44,10 +44,31 @@ export const MigrationOptionsSchema = z.object({
   logLevel: z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR']).default('INFO')
 }).default({});
 
+export const AuthConfigSchema = z.object({
+  authType: z.enum(['SERVICE_ACCOUNT_KEY', 'WORKFORCE_IDENTITY_FEDERATION', 'APPLICATION_DEFAULT_CREDENTIALS']).default('SERVICE_ACCOUNT_KEY'),
+  serviceAccountKeyPath: z.string().optional(),
+  wifConfigPath: z.string().optional(),
+  workforcePoolIssuer: z.string().optional()
+}).default({});
+
+export const DomainRuleSchema = z.object({
+  fromDomain: z.string(),
+  toDomain: z.string()
+});
+
+export const IdpMappingSchema = z.object({
+  sourceIdp: z.enum(['MICROSOFT_ENTRA', 'OKTA', 'PING', 'GOOGLE_WORKSPACE', 'CUSTOM']).default('CUSTOM'),
+  targetIdp: z.enum(['GOOGLE_CLOUD_IDENTITY', 'GOOGLE_WORKSPACE', 'CUSTOM']).default('GOOGLE_CLOUD_IDENTITY'),
+  domainRules: z.array(DomainRuleSchema).default([]),
+  fallbackUserEmail: z.string().optional()
+}).default({});
+
 export const MigrationConfigSchema = z.object({
   source: EnvironmentConfigSchema,
   target: EnvironmentConfigSchema,
   options: MigrationOptionsSchema,
+  auth: AuthConfigSchema.optional(),
+  idpMapping: IdpMappingSchema.optional(),
   datastoreMapping: z.record(z.string()).default({}),
   collectionMapping: z.record(z.string()).default({}),
   identityMapping: z.record(z.string()).default({}),

@@ -17,7 +17,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
-import { JWT } from 'google-auth-library';
+import { JWT, GoogleAuth } from 'google-auth-library';
 import { logger } from '../utils/logger.js';
 
 const execAsync = promisify(exec);
@@ -27,17 +27,46 @@ export interface TokenProviderOptions {
   useAdc?: boolean;
   serviceAccountKeyPath?: string;
   serviceAccountKeyJson?: any;
+  wifConfigPath?: string;
+  wifConfigJson?: any;
+  authType?: 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS';
 }
 
 export class GcpAuthService {
   private staticToken?: string;
   private serviceAccountKey?: any;
+  private wifConfig?: any;
+  private wifConfigPath?: string;
+  private authType: 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS' = 'SERVICE_ACCOUNT_KEY';
   private cachedAdcToken?: { token: string; expiresAt: number };
+  private cachedWifToken?: { token: string; expiresAt: number };
   private userTokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
   private failedDwdUsers: Set<string> = new Set();
 
   constructor(options: TokenProviderOptions = {}) {
     this.staticToken = options.staticToken;
+    this.authType = options.authType || 'SERVICE_ACCOUNT_KEY';
+    this.wifConfigPath = options.wifConfigPath;
+    this.wifConfig = options.wifConfigJson;
+
+    if (options.wifConfigPath && fs.existsSync(options.wifConfigPath)) {
+      try {
+        const content = fs.readFileSync(options.wifConfigPath, 'utf-8');
+        this.wifConfig = JSON.parse(content);
+        this.authType = 'WORKFORCE_IDENTITY_FEDERATION';
+        logger.info(`Loaded Workforce Identity Federation (WiF) Config from: ${options.wifConfigPath}`);
+      } catch (err: any) {
+        logger.warn(`Failed to parse WiF config file: ${err.message}`);
+      }
+    } else if (fs.existsSync('./workforce-identity-config.json')) {
+      try {
+        const content = fs.readFileSync('./workforce-identity-config.json', 'utf-8');
+        this.wifConfig = JSON.parse(content);
+        this.authType = 'WORKFORCE_IDENTITY_FEDERATION';
+        logger.info('Auto-loaded Workforce Identity Federation (WiF) Config from ./workforce-identity-config.json');
+      } catch {}
+    }
+
     if (options.serviceAccountKeyJson) {
       this.serviceAccountKey = options.serviceAccountKeyJson;
     } else if (options.serviceAccountKeyPath && fs.existsSync(options.serviceAccountKeyPath)) {
@@ -61,6 +90,11 @@ export class GcpAuthService {
 
   setToken(token: string) {
     this.staticToken = token;
+  }
+
+  setWifConfig(config: any) {
+    this.wifConfig = config;
+    this.authType = 'WORKFORCE_IDENTITY_FEDERATION';
   }
 
   setServiceAccountKey(keyInput: any) {
@@ -147,11 +181,34 @@ export class GcpAuthService {
       return this.staticToken;
     }
 
+    // 2. Workforce Identity Federation (WiF) Token Exchange via GCP STS
+    if (this.wifConfig) {
+      if (this.cachedWifToken && this.cachedWifToken.expiresAt > Date.now() + 60000) {
+        return this.cachedWifToken.token;
+      }
+      try {
+        const auth = new GoogleAuth({
+          scopes: requestedScopes
+        });
+        const client = auth.fromJSON(this.wifConfig);
+        const tokenRes = await client.getAccessToken();
+        if (tokenRes.token) {
+          this.cachedWifToken = {
+            token: tokenRes.token,
+            expiresAt: Date.now() + 3000 * 1000
+          };
+          return tokenRes.token;
+        }
+      } catch (err: any) {
+        logger.warn(`Workforce Identity Federation token exchange failed: ${err.message}`);
+      }
+    }
+
     if (this.cachedAdcToken && this.cachedAdcToken.expiresAt > Date.now() + 60000) {
       return this.cachedAdcToken.token;
     }
 
-    // 2. Try GCE/GKE Metadata Server
+    // 3. Try GCE/GKE Metadata Server
     try {
       const metaRes = await fetch('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token', {
         headers: { 'Metadata-Flavor': 'Google' },
