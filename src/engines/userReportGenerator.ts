@@ -147,6 +147,9 @@ export class UserReportGenerator {
   /**
    * Generates clean, end-user friendly Markdown checklist
    */
+  /**
+   * Generates clean, end-user friendly Markdown checklist with interactive checkboxes
+   */
   generateMarkdownReport(data: UserHandoverData): string {
     const agList = data.agents.length > 0
       ? data.agents.map(ag => {
@@ -163,16 +166,14 @@ export class UserReportGenerator {
 
           if (isPrivate) {
             return `### 🤖 [${ag.displayName}](${directAgentUrl})
-- **Status:** Private
-- **Next Step:** Open the agent and click **"Publish"** in the top right to activate it.
+- [ ] **Step 1:** Open agent and click **"Publish"** in the top right to activate.
 `;
           }
 
           return `### 🤖 [${ag.displayName}](${directAgentUrl})
 - **Previously Shared With:** \`${sharedWithText}\`
-- **Next Step:**
-  1. Open the agent and click **"Publish"** in the top right.
-  2. Click **"Share"** in the top right and re-add: \`${sharedWithText}\`.
+- [ ] **Step 1:** Open agent and click **"Publish"** in the top right to activate.
+- [ ] **Step 2:** Click **"Share"** in the top right and re-add: \`${sharedWithText}\`.
 `;
         }).join('\n')
       : '_No custom agents found for your account._';
@@ -180,9 +181,10 @@ export class UserReportGenerator {
     const nbList = data.notebooks.length > 0
       ? data.notebooks.map(nb => {
           const directNbUrl = `https://vertexaisearch.cloud.google.com/home/cid/${data.targetCid}/r/notebook/${nb.targetId || nb.id}?hl=en_US`;
-          return `- 📓 **[${nb.displayName}](${directNbUrl})**
-  - **Status:** Restored with all your sources and notes.
-  - **Next Step:** Open notebook and click **"Share"** if you'd like to invite colleagues.`;
+          return `### 📓 [${nb.displayName}](${directNbUrl})
+- [ ] **Step 1:** Open notebook to verify restored sources and study materials.
+- [ ] **Step 2:** (Optional) Click **"Share"** inside the notebook if you'd like to invite colleagues.
+`;
         }).join('\n')
       : '_No research notebooks found for your account._';
 
@@ -206,7 +208,7 @@ ${agList}
 ---
 
 ## 📓 2. Your Research Notebooks
-All of your notebooks, sources, and generated study guides have been restored. Your generated study guides, FAQs, and briefing documents are also attached to this email.
+All of your notebooks, sources, and generated study guides have been restored. Your generated presentations and briefing documents are also attached to this email.
 
 ${nbList}
 
@@ -227,7 +229,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
   }
 
   /**
-   * Generates clean, modern, end-user friendly HTML email
+   * Generates clean, modern, end-user friendly HTML email with checkboxes
    */
   generateHtmlReport(data: UserHandoverData): string {
     const agCards = data.agents.length > 0
@@ -244,21 +246,35 @@ All of your past search and chat conversations (**${data.sessions.length} conver
 
           const badge = isPrivate
             ? `<span style="background-color: #064e3b; color: #a7f3d0; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;">🔒 Private</span>`
-            : `<span style="background-color: #451a03; color: #fde68a; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;">👥 Shared with Colleagues</span>`;
-
-          const instruction = isPrivate
-            ? `Click into your agent and press <strong>Publish</strong> to activate.`
-            : `Click into your agent, press <strong>Publish</strong>, then click <strong>Share</strong> to re-add: <code>${filteredCollaborators.join(', ')}</code>`;
+            : `<span style="background-color: #451a03; color: #fde68a; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;">👥 Shared</span>`;
 
           return `
-            <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <a href="${directAgentUrl}" target="_blank" style="color: #60a5fa; font-weight: 600; font-size: 14px; text-decoration: none;">🤖 ${ag.displayName} &rarr;</a>
+            <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <a href="${directAgentUrl}" target="_blank" style="color: #60a5fa; font-weight: 700; font-size: 14px; text-decoration: none;">🤖 ${ag.displayName} &rarr;</a>
                 ${badge}
               </div>
-              <p style="margin: 0; font-size: 12px; color: #cbd5e1; line-height: 1.4;">
-                ${instruction}
-              </p>
+              
+              <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+                <tr>
+                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
+                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
+                  </td>
+                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4; padding-bottom: ${isPrivate ? '0' : '6px'};">
+                    <strong>Step 1:</strong> Click into agent and press <strong>Publish</strong> in the top right to activate.
+                  </td>
+                </tr>
+                ${!isPrivate ? `
+                <tr>
+                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
+                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
+                  </td>
+                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4;">
+                    <strong>Step 2:</strong> Click <strong>Share</strong> and re-add: <code style="background-color: #0f172a; padding: 2px 6px; border-radius: 4px; color: #93c5fd; font-size: 11px;">${filteredCollaborators.join(', ')}</code>
+                  </td>
+                </tr>
+                ` : ''}
+              </table>
             </div>
           `;
         }).join('')
@@ -267,17 +283,31 @@ All of your past search and chat conversations (**${data.sessions.length} conver
     const nbCards = data.notebooks.length > 0
       ? data.notebooks.map(nb => {
           const directNbUrl = `https://vertexaisearch.cloud.google.com/home/cid/${data.targetCid}/r/notebook/${nb.targetId || nb.id}?hl=en_US`;
-          const artCount = nb.details?.artifactsCount || nb.details?.artifacts?.length || 0;
-          const noteCount = nb.details?.notesCount || nb.details?.notes?.length || 0;
 
           return `
-            <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;">
-              <div style="margin-bottom: 4px;">
-                <a href="${directNbUrl}" target="_blank" style="color: #34d399; font-weight: 600; font-size: 14px; text-decoration: none;">📓 ${nb.displayName} &rarr;</a>
+            <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;">
+              <div style="margin-bottom: 10px;">
+                <a href="${directNbUrl}" target="_blank" style="color: #34d399; font-weight: 700; font-size: 14px; text-decoration: none;">📓 ${nb.displayName} &rarr;</a>
               </div>
-              <p style="margin: 0; font-size: 12px; color: #cbd5e1; line-height: 1.4;">
-                ✅ Restored with sources, notes, and study materials. Click <strong>Share</strong> inside the notebook if you'd like to invite team members.
-              </p>
+
+              <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+                <tr>
+                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
+                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
+                  </td>
+                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4; padding-bottom: 6px;">
+                    <strong>Step 1:</strong> Open notebook to verify restored sources and study materials.
+                  </td>
+                </tr>
+                <tr>
+                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
+                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
+                  </td>
+                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4;">
+                    <strong>Step 2:</strong> (Optional) Click <strong>Share</strong> inside the notebook if you'd like to invite team members.
+                  </td>
+                </tr>
+              </table>
             </div>
           `;
         }).join('')
@@ -316,7 +346,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
           </a>
         </div>
         <p style="margin: 0 0 12px 0; font-size: 13px; color: #94a3b8; line-height: 1.4;">
-          Your custom agents are transferred into your drafts. Click into each agent to publish and activate it:
+          Your custom agents are transferred into your drafts. Use the checklist below to activate and re-share them:
         </p>
         ${agCards}
       </div>
@@ -332,7 +362,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
           </a>
         </div>
         <p style="margin: 0 0 12px 0; font-size: 13px; color: #94a3b8; line-height: 1.4;">
-          All your notebooks and research sources are ready. Generated study guides and briefing notes are attached to this email.
+          All your notebooks and research sources are ready. Generated presentations and briefing documents are attached to this email.
         </p>
         ${nbCards}
       </div>
@@ -816,7 +846,13 @@ All of your past search and chat conversations (**${data.sessions.length} conver
       const userFolder = path.join(this.baseDir, sanitizedEmail);
       const nbArtifactsFolder = path.join(userFolder, 'notebook_artifacts');
 
-      if (!fs.existsSync(nbArtifactsFolder)) {
+      // Clean stale files from artifacts folder if present
+      if (fs.existsSync(nbArtifactsFolder)) {
+        const oldFiles = fs.readdirSync(nbArtifactsFolder);
+        for (const of of oldFiles) {
+          try { fs.unlinkSync(path.join(nbArtifactsFolder, of)); } catch {}
+        }
+      } else {
         fs.mkdirSync(nbArtifactsFolder, { recursive: true });
       }
 
@@ -841,7 +877,12 @@ All of your past search and chat conversations (**${data.sessions.length} conver
             const artTitle = art.title || art.type || 'Artifact';
             const cleanArtTitle = artTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
             const artType = (art.type || '').toLowerCase();
-            const textContent = art.content || art.extractedText || '';
+            const textContent = (art.content || art.extractedText || '').trim();
+
+            // Skip empty/non-functional artifacts (e.g. audio overview without audio/text or blank templates)
+            if (textContent.length < 30) {
+              continue;
+            }
 
             if (artType.includes('slide') || artType.includes('presentation')) {
               // 1. Native Microsoft PowerPoint (.pptx)
@@ -873,12 +914,16 @@ All of your past search and chat conversations (**${data.sessions.length} conver
           }
         }
 
-        // Save Studio Notes as Native DOCX, Formatted HTML & Markdown
+        // Save Studio Notes as Native DOCX, Formatted HTML & Markdown (Only if not empty)
         if (nb.details?.notes && Array.isArray(nb.details.notes)) {
           for (const note of nb.details.notes) {
+            const noteContent = (note.content || '').trim();
+            if (noteContent.length < 30) {
+              continue; // Skip empty notes
+            }
+
             const noteTitle = note.title || 'Studio Note';
             const cleanNoteTitle = noteTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
-            const noteContent = note.content || '';
 
             // Note DOCX
             const noteDocxPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_Note_${cleanNoteTitle}.docx`);
@@ -939,26 +984,26 @@ All of your past search and chat conversations (**${data.sessions.length} conver
     const htmlBody = this.generateHtmlReport(userData);
     const textBody = this.generateMarkdownReport(userData);
 
-    // Prepare attachments: HTML Checklist + NotebookLM Artifacts
+    // Prepare attachments: Curate only real, functional Office documents (.pptx, .docx) > 1KB
     const sanitizedEmail = options.userEmail.replace(/[^a-zA-Z0-9@._-]/g, '_');
     const userFolder = path.join(this.baseDir, sanitizedEmail);
+    const localHtmlPath = path.join(userFolder, 'MIGRATION_CHECKLIST.html');
     const attachments: Array<{ filename: string; path: string }> = [];
-
-    const htmlPath = path.join(userFolder, 'MIGRATION_CHECKLIST.html');
-    if (fs.existsSync(htmlPath)) {
-      attachments.push({ filename: 'MIGRATION_CHECKLIST.html', path: htmlPath });
-    }
 
     const nbArtFolder = path.join(userFolder, 'notebook_artifacts');
     if (fs.existsSync(nbArtFolder)) {
       const files = fs.readdirSync(nbArtFolder);
-      for (const f of files.slice(0, 15)) { // Attach top 15 NotebookLM artifact documents
-        const fullPath = path.join(nbArtFolder, f);
-        if (fs.statSync(fullPath).isFile()) {
-          attachments.push({
-            filename: f,
-            path: fullPath
-          });
+      for (const f of files) {
+        // Attach only PPTX presentations and DOCX documents with valid content
+        if (f.endsWith('.pptx') || f.endsWith('.docx')) {
+          const fullPath = path.join(nbArtFolder, f);
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile() && stat.size > 1024) { // Only substantive attachments > 1KB
+            attachments.push({
+              filename: f,
+              path: fullPath
+            });
+          }
         }
       }
     }
@@ -1004,7 +1049,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
         message: `Email successfully dispatched via corporate SMTP (${options.smtpConfig.host}) to ${recipient}`,
         messageId: smtpInfo.messageId,
         emlPath,
-        htmlPath,
+        htmlPath: localHtmlPath,
         attachmentsCount: attachments.length
       };
     }
@@ -1047,7 +1092,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
       messageId: gmailData.id,
       threadId: gmailData.threadId,
       emlPath,
-      htmlPath,
+      htmlPath: localHtmlPath,
       attachmentsCount: attachments.length
     };
   }
