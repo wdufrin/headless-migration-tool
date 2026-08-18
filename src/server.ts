@@ -819,6 +819,130 @@ app.post('/api/idp/auto-map', authMiddleware, async (req, res) => {
   }
 });
 
+// Wizard: Test Domain-Wide Delegation (DWD)
+app.post('/api/wizard/test-dwd', authMiddleware, async (req, res) => {
+  try {
+    const { testUserEmail, keyPath, keyJson } = req.body || {};
+    if (!testUserEmail) {
+      return res.status(400).json({ error: 'MissingEmail', message: 'testUserEmail is required to verify DWD impersonation.' });
+    }
+
+    const authService = new GcpAuthService({
+      serviceAccountKeyPath: keyPath || './sa-dwd-key.json',
+      serviceAccountKeyJson: keyJson
+    });
+
+    if (!authService.hasDwdConfigured()) {
+      return res.status(400).json({
+        success: false,
+        error: 'KeyNotFound',
+        message: 'No Service Account Key found. Please upload or specify a valid sa-dwd-key.json path.'
+      });
+    }
+
+    try {
+      const token = await authService.getAccessToken(testUserEmail, [
+        'https://www.googleapis.com/auth/discoveryengine.readwrite',
+        'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        message: `DWD impersonation successful for "${testUserEmail}". Minted valid user-scoped OAuth2 token.`,
+        tokenPrefix: token ? `${token.substring(0, 15)}...` : 'None',
+        scopesVerified: [
+          'https://www.googleapis.com/auth/discoveryengine.readwrite',
+          'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+        ]
+      });
+    } catch (dwdErr: any) {
+      return res.status(400).json({
+        success: false,
+        error: 'DwdImpersonationFailed',
+        message: `DWD impersonation failed: ${dwdErr.message}. Ensure the Client ID is authorized in Google Workspace Admin Console (admin.google.com).`
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ error: 'TestDwdError', message: err.message });
+  }
+});
+
+// Wizard: Generate Workforce Identity Federation (WiF) Config
+app.post('/api/wizard/generate-wif-config', authMiddleware, async (req, res) => {
+  try {
+    const {
+      workforcePoolId = 'enterprise-workforce-pool',
+      providerId = 'entra-id-provider',
+      organizationId,
+      projectNumber,
+      issuerUri,
+      clientId,
+      saveToFile = true
+    } = req.body || {};
+
+    const audience = `//iam.googleapis.com/locations/global/workforcePools/${workforcePoolId}/providers/${providerId}`;
+
+    const wifConfig = {
+      type: 'external_account',
+      audience,
+      subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+      token_url: 'https://sts.googleapis.com/v1/token',
+      credential_source: {
+        file: './idp-subject-token.jwt',
+        format: {
+          type: 'text'
+        }
+      },
+      workforce_pool_user_project: projectNumber || undefined
+    };
+
+    let filePath = './workforce-identity-config.json';
+    if (saveToFile) {
+      fs.writeFileSync(filePath, JSON.stringify(wifConfig, null, 2), 'utf-8');
+      logger.info(`Wizard generated and saved WiF config to ${filePath}`);
+    }
+
+    return res.status(200).json({
+      success: true,
+      config: wifConfig,
+      savedPath: saveToFile ? filePath : undefined,
+      audience,
+      instructions: `Workforce Identity Federation config generated. Save this file as workforce-identity-config.json to authenticate via external IdP.`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'GenerateWifFailed', message: err.message });
+  }
+});
+
+// Wizard: Test Workforce Identity Federation (WiF) Token Exchange
+app.post('/api/wizard/test-wif', authMiddleware, async (req, res) => {
+  try {
+    const { wifConfig, wifConfigPath = './workforce-identity-config.json' } = req.body || {};
+    const authService = new GcpAuthService({
+      wifConfigPath,
+      wifConfigJson: wifConfig,
+      authType: 'WORKFORCE_IDENTITY_FEDERATION'
+    });
+
+    try {
+      const token = await authService.getAccessToken();
+      return res.status(200).json({
+        success: true,
+        message: 'Successfully exchanged token with GCP Security Token Service (STS) via Workforce Identity Federation.',
+        tokenPrefix: token ? `${token.substring(0, 15)}...` : 'None'
+      });
+    } catch (wifErr: any) {
+      return res.status(400).json({
+        success: false,
+        error: 'WifExchangeFailed',
+        message: `WiF Token exchange test notice: ${wifErr.message}`
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ error: 'TestWifError', message: err.message });
+  }
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(port, () => {
     logger.info(`Gemini Enterprise Admin Migration Console listening on http://localhost:${port}`);

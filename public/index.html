@@ -130,6 +130,13 @@
         <span class="text-amber-300 font-medium">📬 User Handover & Email</span>
       </button>
 
+      <button onclick="switchTab('wizard')" id="nav-wizard" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+        </svg>
+        <span class="text-emerald-300 font-medium">🔐 Auth & WiF Wizard</span>
+      </button>
+
       <button onclick="switchTab('maintenance')" id="nav-maintenance" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -962,6 +969,192 @@
         </div>
       </div>
 
+      <!-- TAB: AUTH & WIF WIZARD -->
+      <section id="tab-wizard" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <span class="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">🔐</span>
+                <span>Auth & Identity Provider Configuration Wizard</span>
+              </h2>
+              <p class="text-xs text-gray-400 mt-1">Interactive step-by-step assistant for configuring Google Workspace Domain-Wide Delegation (DWD) and GCP Workforce Identity Federation (WiF) for Entra ID, Okta, & Ping.</p>
+            </div>
+            <div class="flex items-center gap-2 bg-gray-950 p-1 rounded-xl border border-gray-800">
+              <button onclick="switchWizardTab('dwd')" id="wiz-btn-dwd" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-sm transition">
+                🔑 Domain-Wide Delegation (DWD)
+              </button>
+              <button onclick="switchWizardTab('wif')" id="wiz-btn-wif" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition">
+                🌐 Workforce Identity Federation (WiF)
+              </button>
+            </div>
+          </div>
+
+          <!-- SUB-PANEL 1: DWD WIZARD -->
+          <div id="wiz-panel-dwd" class="space-y-6">
+            <!-- Step 1: Create Service Account in GCP -->
+            <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                  <h3 class="text-sm font-bold text-white">Create GCP Service Account & Key</h3>
+                </div>
+                <span class="text-xs text-gray-400 font-mono">Google Cloud Console / CLI</span>
+              </div>
+              
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium">Target GCP Project ID</label>
+                  <input type="text" id="wizDwdProject" value="testgebackupandrestorev2" oninput="updateDwdScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
+                </div>
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium">Service Account ID Name</label>
+                  <input type="text" id="wizDwdSaName" value="gemini-dwd-migrator" oninput="updateDwdScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between text-xs text-gray-400 mb-1.5">
+                  <span class="font-semibold">Terminal Commands:</span>
+                  <button onclick="copyToClipboard('wizDwdScript', 'btnCopyDwdScript')" id="btnCopyDwdScript" class="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    <span>Copy Commands</span>
+                  </button>
+                </div>
+                <pre id="wizDwdScript" class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 font-mono text-[11px] text-emerald-300 overflow-x-auto select-all"></pre>
+              </div>
+            </div>
+
+            <!-- Step 2: Authorize in Google Workspace Admin Console -->
+            <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                  <h3 class="text-sm font-bold text-white">Authorize Domain-Wide Delegation in Google Workspace</h3>
+                </div>
+                <a href="https://admin.google.com/ac/owl/domainwidedelegation" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium">
+                  <span>Open Admin Console</span> &rarr;
+                </a>
+              </div>
+
+              <div class="text-xs text-gray-300 space-y-2">
+                <p>1. Open <a href="https://admin.google.com/ac/owl/domainwidedelegation" target="_blank" class="text-indigo-400 underline">Google Workspace Admin Console</a> &rarr; <strong>Security</strong> &rarr; <strong>Access and data control</strong> &rarr; <strong>API controls</strong> &rarr; <strong>Manage Domain Wide Delegation</strong>.</p>
+                <p>2. Click <strong>Add new</strong> and paste the Client ID (numeric <code>client_id</code> inside your <code>sa-dwd-key.json</code>).</p>
+                <p>3. In <strong>OAuth Scopes (comma-delimited)</strong>, paste the following exact API scopes:</p>
+              </div>
+
+              <div class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 flex items-center justify-between gap-3">
+                <code id="wizDwdScopes" class="text-[11px] text-amber-300 font-mono select-all break-all">https://www.googleapis.com/auth/discoveryengine.readwrite, https://www.googleapis.com/auth/discoveryengine.assist.readwrite, https://www.googleapis.com/auth/gmail.send</code>
+                <button onclick="copyToClipboard('wizDwdScopes', 'btnCopyDwdScopes')" id="btnCopyDwdScopes" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-semibold shrink-0 border border-gray-700">
+                  Copy Scopes
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 3: Test & Validate DWD Impersonation -->
+            <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="flex items-center gap-2.5">
+                <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                <h3 class="text-sm font-bold text-white">Test DWD Impersonation Live</h3>
+              </div>
+
+              <div class="flex flex-col sm:flex-row items-center gap-3">
+                <input type="email" id="wizTestEmail" value="admin@wdufrin.altostrat.com" placeholder="admin@your-company.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white focus:border-indigo-500 font-mono">
+                <button type="button" onclick="testDwdConnection()" id="btnTestDwd" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-md shadow-emerald-600/20 transition flex items-center gap-1.5">
+                  <span>⚡</span> Test Impersonation
+                </button>
+              </div>
+
+              <div id="dwdTestResultBox" class="hidden rounded-xl border p-3 text-xs"></div>
+            </div>
+          </div>
+
+          <!-- SUB-PANEL 2: WIF WIZARD -->
+          <div id="wiz-panel-wif" class="space-y-6 hidden">
+            <!-- Step 1: Select IdP Provider -->
+            <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="flex items-center gap-2.5">
+                <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                <h3 class="text-sm font-bold text-white">Select External Identity Provider (IdP)</h3>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button type="button" onclick="selectWifPreset('ENTRA')" id="wif-preset-ENTRA" class="wif-preset-btn p-3 rounded-xl border border-purple-500/50 bg-purple-950/20 text-left transition hover:border-purple-400">
+                  <div class="text-xs font-bold text-white">Microsoft Entra ID</div>
+                  <div class="text-[11px] text-gray-400 mt-0.5">Azure Active Directory OIDC</div>
+                </button>
+                <button type="button" onclick="selectWifPreset('OKTA')" id="wif-preset-OKTA" class="wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400">
+                  <div class="text-xs font-bold text-white">Okta Universal Directory</div>
+                  <div class="text-[11px] text-gray-400 mt-0.5">Okta Cloud OIDC / SAML</div>
+                </button>
+                <button type="button" onclick="selectWifPreset('PING')" id="wif-preset-PING" class="wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400">
+                  <div class="text-xs font-bold text-white">Ping Identity</div>
+                  <div class="text-[11px] text-gray-400 mt-0.5">PingOne / PingFederate</div>
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 2: Pool Parameters -->
+            <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="flex items-center gap-2.5">
+                <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                <h3 class="text-sm font-bold text-white">Workforce Identity Pool Parameters</h3>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium">GCP Organization ID (numeric)</label>
+                  <input type="text" id="wizWifOrgId" value="123456789012" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                </div>
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium">Workforce Pool ID</label>
+                  <input type="text" id="wizWifPoolId" value="enterprise-workforce-pool" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                </div>
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium">Provider ID</label>
+                  <input type="text" id="wizWifProviderId" value="entra-id-provider" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                </div>
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium">External IdP Issuer URI</label>
+                  <input type="text" id="wizWifIssuer" value="https://login.microsoftonline.com/<TENANT_ID>/v2.0" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between text-xs text-gray-400 mb-1.5">
+                  <span class="font-semibold">Terminal Setup Commands:</span>
+                  <button onclick="copyToClipboard('wizWifScript', 'btnCopyWifScript')" id="btnCopyWifScript" class="text-purple-400 hover:text-purple-300 flex items-center gap-1 font-medium">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    <span>Copy Commands</span>
+                  </button>
+                </div>
+                <pre id="wizWifScript" class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 font-mono text-[11px] text-cyan-300 overflow-x-auto select-all"></pre>
+              </div>
+            </div>
+
+            <!-- Step 3: Generate workforce-identity-config.json -->
+            <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                  <h3 class="text-sm font-bold text-white">Generate Client Configuration JSON</h3>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button type="button" onclick="generateAndSaveWifConfig(true)" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+                    <span>💾</span> Save to Server
+                  </button>
+                  <button type="button" onclick="downloadWifConfigJson()" class="px-3.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-semibold border border-gray-700 transition flex items-center gap-1.5">
+                    <span>📥</span> Download JSON
+                  </button>
+                </div>
+              </div>
+
+              <pre id="wifJsonViewer" class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 font-mono text-[11px] text-purple-300 overflow-x-auto select-all"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- TAB 6: DESTINATION MAINTENANCE -->
       <section id="tab-maintenance" class="tab-content space-y-6 hidden">
         <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
@@ -1068,7 +1261,214 @@
         }
       } else if (tabId === 'handover') {
         loadUserReports();
+      } else if (tabId === 'wizard') {
+        updateDwdScript();
+        updateWifScript();
+        generateAndSaveWifConfig(false);
       }
+    }
+
+    function switchWizardTab(type) {
+      const btnDwd = document.getElementById('wiz-btn-dwd');
+      const btnWif = document.getElementById('wiz-btn-wif');
+      const panelDwd = document.getElementById('wiz-panel-dwd');
+      const panelWif = document.getElementById('wiz-panel-wif');
+
+      if (type === 'dwd') {
+        btnDwd.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-sm transition';
+        btnWif.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition';
+        panelDwd.classList.remove('hidden');
+        panelWif.classList.add('hidden');
+      } else {
+        btnWif.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 text-white shadow-sm transition';
+        btnDwd.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition';
+        panelWif.classList.remove('hidden');
+        panelDwd.classList.add('hidden');
+        updateWifScript();
+        generateAndSaveWifConfig(false);
+      }
+    }
+
+    function updateDwdScript() {
+      const proj = document.getElementById('wizDwdProject')?.value?.trim() || 'testgebackupandrestorev2';
+      const saName = document.getElementById('wizDwdSaName')?.value?.trim() || 'gemini-dwd-migrator';
+      const saEmail = `${saName}@${proj}.iam.gserviceaccount.com`;
+
+      const script = `# 1. Create the Service Account
+gcloud iam service-accounts create "${saName}" \\
+    --display-name="Gemini Enterprise Migration Service Account" \\
+    --project="${proj}"
+
+# 2. Grant Discovery Engine Admin & Token Creator Roles
+gcloud projects add-iam-policy-binding "${proj}" \\
+    --member="serviceAccount:${saEmail}" \\
+    --role="roles/discoveryengine.admin"
+
+gcloud projects add-iam-policy-binding "${proj}" \\
+    --member="serviceAccount:${saEmail}" \\
+    --role="roles/iam.serviceAccountTokenCreator"
+
+# 3. Generate and download the JSON key file
+gcloud iam service-accounts keys create sa-dwd-key.json \\
+    --iam-account="${saEmail}" \\
+    --project="${proj}"`;
+
+      const el = document.getElementById('wizDwdScript');
+      if (el) el.textContent = script;
+    }
+
+    function updateWifScript() {
+      const orgId = document.getElementById('wizWifOrgId')?.value?.trim() || '123456789012';
+      const poolId = document.getElementById('wizWifPoolId')?.value?.trim() || 'enterprise-workforce-pool';
+      const provId = document.getElementById('wizWifProviderId')?.value?.trim() || 'entra-id-provider';
+      const issuer = document.getElementById('wizWifIssuer')?.value?.trim() || 'https://login.microsoftonline.com/<TENANT_ID>/v2.0';
+
+      const script = `# 1. Create the Workforce Identity Pool
+gcloud iam workforce-pools create "${poolId}" \\
+    --organization="${orgId}" \\
+    --location="global" \\
+    --display-name="Enterprise Workforce IdP Pool"
+
+# 2. Add External IdP OIDC Provider
+gcloud iam workforce-pools providers create-oidc "${provId}" \\
+    --workforce-pool="${poolId}" \\
+    --location="global" \\
+    --display-name="Enterprise IdP Provider" \\
+    --issuer-uri="${issuer}" \\
+    --attribute-mapping="google.subject=assertion.sub,attribute.email=assertion.email || assertion.preferred_username,attribute.display_name=assertion.name,attribute.groups=assertion.groups"`;
+
+      const el = document.getElementById('wizWifScript');
+      if (el) el.textContent = script;
+    }
+
+    function selectWifPreset(type) {
+      document.querySelectorAll('.wif-preset-btn').forEach(b => {
+        b.className = 'wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400';
+      });
+      const selectedBtn = document.getElementById(`wif-preset-${type}`);
+      if (selectedBtn) {
+        selectedBtn.className = 'wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition';
+      }
+
+      if (type === 'ENTRA') {
+        document.getElementById('wizWifProviderId').value = 'entra-id-provider';
+        document.getElementById('wizWifIssuer').value = 'https://login.microsoftonline.com/<TENANT_ID>/v2.0';
+      } else if (type === 'OKTA') {
+        document.getElementById('wizWifProviderId').value = 'okta-provider';
+        document.getElementById('wizWifIssuer').value = 'https://<TENANT>.okta.com';
+      } else if (type === 'PING') {
+        document.getElementById('wizWifProviderId').value = 'ping-provider';
+        document.getElementById('wizWifIssuer').value = 'https://auth.pingone.com/<ENV_ID>/as';
+      }
+      updateWifScript();
+      generateAndSaveWifConfig(false);
+    }
+
+    let currentWifConfigJson = null;
+
+    async function generateAndSaveWifConfig(saveToFile = true) {
+      const poolId = document.getElementById('wizWifPoolId')?.value?.trim() || 'enterprise-workforce-pool';
+      const provId = document.getElementById('wizWifProviderId')?.value?.trim() || 'entra-id-provider';
+      const orgId = document.getElementById('wizWifOrgId')?.value?.trim();
+
+      try {
+        const res = await fetch('/api/wizard/generate-wif-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workforcePoolId: poolId,
+            providerId: provId,
+            organizationId: orgId,
+            saveToFile
+          })
+        });
+
+        const data = await res.json();
+        currentWifConfigJson = data.config;
+        const viewer = document.getElementById('wifJsonViewer');
+        if (viewer) viewer.textContent = JSON.stringify(data.config, null, 2);
+
+        if (saveToFile) {
+          alert('Saved workforce-identity-config.json to project directory successfully!');
+        }
+      } catch (err) {
+        console.error('Failed to generate WiF config:', err);
+      }
+    }
+
+    function downloadWifConfigJson() {
+      if (!currentWifConfigJson) {
+        generateAndSaveWifConfig(false);
+      }
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentWifConfigJson, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "workforce-identity-config.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    async function testDwdConnection() {
+      const email = document.getElementById('wizTestEmail').value.trim();
+      const resultBox = document.getElementById('dwdTestResultBox');
+
+      if (!email) {
+        alert('Please enter a test email address.');
+        return;
+      }
+
+      resultBox.classList.remove('hidden');
+      resultBox.className = 'rounded-xl border border-gray-700 bg-gray-900/80 p-3.5 text-xs text-gray-300 space-y-1.5 animate-pulse';
+      resultBox.innerHTML = `<span>⏳ Testing Domain-Wide Delegation token minting for <strong>${email}</strong>...</span>`;
+
+      try {
+        const res = await fetch('/api/wizard/test-dwd', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ testUserEmail: email })
+        });
+
+        const data = await res.json();
+        resultBox.classList.remove('animate-pulse');
+
+        if (data.success) {
+          resultBox.className = 'rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-3.5 text-xs text-emerald-300 space-y-1.5';
+          resultBox.innerHTML = `
+            <div class="flex items-center gap-2 font-bold">
+              <span>✅ DWD Impersonation Verified</span>
+            </div>
+            <p>${data.message}</p>
+            <div class="font-mono text-[11px] text-emerald-400">Token: ${data.tokenPrefix}</div>
+          `;
+        } else {
+          resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300 space-y-1.5';
+          resultBox.innerHTML = `
+            <div class="flex items-center gap-2 font-bold text-red-400">
+              <span>❌ DWD Verification Notice</span>
+            </div>
+            <p>${data.message}</p>
+          `;
+        }
+      } catch (err) {
+        resultBox.classList.remove('animate-pulse');
+        resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300';
+        resultBox.innerHTML = `<span>Error: ${err.message}</span>`;
+      }
+    }
+
+    function copyToClipboard(elementId, btnId) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      const text = el.textContent || el.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+          const originalText = btn.innerHTML;
+          btn.innerHTML = '<span>✓ Copied!</span>';
+          setTimeout(() => { btn.innerHTML = originalText; }, 2000);
+        }
+      });
     }
 
     function loadTemplate(type = 'default') {
