@@ -363,7 +363,247 @@ All of your past search and chat conversations (**${data.sessions.length} conver
   }
 
   /**
-   * Generates folders, reports, and copies NotebookLM artifacts for each user
+   * Renders structured slide decks into standalone, interactive HTML presentations
+   */
+  renderSlideDeckPresentation(title: string, notebookName: string, content: string): string {
+    const rawSlides = content.split(/^##\s+Slide\s+\d+:?/im).filter(s => s.trim().length > 0);
+    const slides = rawSlides.length > 0 ? rawSlides : [content];
+
+    const slideCards = slides.map((s, idx) => {
+      const lines = s.trim().split('\n');
+      const slideTitle = lines[0]?.replace(/^[#*-]\s*/, '').trim() || `Slide ${idx + 1}`;
+      const slideBody = lines.slice(1).join('\n')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^- (.*)$/gm, '<li style="margin-bottom: 8px;">$1</li>')
+        .replace(/\[(.*?)\]/g, '<div style="background-color: #1e293b; border-left: 4px solid #3b82f6; padding: 10px 14px; margin: 14px 0; border-radius: 0 6px 6px 0; color: #93c5fd; font-size: 13px;">$1</div>')
+        .replace(/\n\n/g, '<br/><br/>');
+
+      return `
+        <div class="slide" id="slide-${idx}" style="${idx === 0 ? 'display: block;' : 'display: none;'}">
+          <div class="slide-header">
+            <span class="slide-badge">SLIDE ${idx + 1} OF ${slides.length}</span>
+            <span class="notebook-tag">📓 ${notebookName}</span>
+          </div>
+          <h2 class="slide-title">${slideTitle}</h2>
+          <div class="slide-content">
+            ${slideBody}
+          </div>
+        </div>
+      `;
+    }).join('\n');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} - Slide Deck</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .deck-container {
+      width: 100%;
+      max-width: 900px;
+      background-color: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 520px;
+    }
+    .slide {
+      padding: 40px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+    }
+    .slide-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .slide-badge {
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .notebook-tag {
+      color: #94a3b8;
+      font-size: 12px;
+    }
+    .slide-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff;
+      margin: 0 0 20px 0;
+      line-height: 1.3;
+      border-bottom: 2px solid #1f2937;
+      padding-bottom: 12px;
+    }
+    .slide-content {
+      font-size: 15px;
+      line-height: 1.7;
+      color: #cbd5e1;
+      flex: 1;
+    }
+    .controls {
+      background-color: #0f172a;
+      border-top: 1px solid #1f2937;
+      padding: 16px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .btn {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: background 0.2s;
+    }
+    .btn:hover { background-color: #1d4ed8; }
+    .btn:disabled { background-color: #334155; cursor: not-allowed; opacity: 0.6; }
+    .progress-text { font-size: 13px; color: #94a3b8; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="deck-container">
+    ${slideCards}
+    <div class="controls">
+      <button class="btn" id="prevBtn" onclick="prevSlide()">◀ Previous</button>
+      <span class="progress-text" id="counter">Slide 1 of ${slides.length}</span>
+      <button class="btn" id="nextBtn" onclick="nextSlide()">Next ▶</button>
+    </div>
+  </div>
+
+  <script>
+    let current = 0;
+    const total = ${slides.length};
+    function updateUI() {
+      for (let i = 0; i < total; i++) {
+        const el = document.getElementById('slide-' + i);
+        if (el) el.style.display = i === current ? 'block' : 'none';
+      }
+      document.getElementById('counter').innerText = 'Slide ' + (current + 1) + ' of ' + total;
+      document.getElementById('prevBtn').disabled = current === 0;
+      document.getElementById('nextBtn').disabled = current === total - 1;
+    }
+    function nextSlide() { if (current < total - 1) { current++; updateUI(); } }
+    function prevSlide() { if (current > 0) { current--; updateUI(); } }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') nextSlide();
+      if (e.key === 'ArrowLeft') prevSlide();
+    });
+    updateUI();
+  </script>
+</body>
+</html>`;
+  }
+
+  /**
+   * Renders structured reports, study guides, and briefing docs into executive formatted HTML
+   */
+  renderDocumentHtml(title: string, type: string, notebookName: string, content: string): string {
+    const formattedBody = content
+      .replace(/^# (.*$)/gm, '<h1 style="color: #ffffff; font-size: 22px; margin-top: 24px; border-bottom: 2px solid #334155; padding-bottom: 8px;">$1</h1>')
+      .replace(/^## (.*$)/gm, '<h2 style="color: #60a5fa; font-size: 18px; margin-top: 20px;">$1</h2>')
+      .replace(/^### (.*$)/gm, '<h3 style="color: #a5b4fc; font-size: 15px; margin-top: 16px;">$1</h3>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^- (.*)$/gm, '<li style="margin-bottom: 6px;">$1</li>')
+      .replace(/\[(.*?)\]/g, '<div style="background-color: #0f172a; border-left: 4px solid #3b82f6; padding: 10px 14px; margin: 12px 0; border-radius: 0 6px 6px 0; color: #93c5fd; font-size: 13px;">$1</div>')
+      .replace(/\n\n/g, '<br/><br/>');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} - ${type}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #0b0f19;
+      color: #cbd5e1;
+      margin: 0;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+    .doc-container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .doc-header {
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 20px;
+      margin-bottom: 28px;
+    }
+    .doc-badge {
+      background-color: #0369a1;
+      color: #e0f2fe;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 12px;
+    }
+    .doc-title {
+      font-size: 24px;
+      color: #ffffff;
+      margin: 0 0 8px 0;
+      font-weight: 700;
+    }
+    .doc-meta {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="doc-container">
+    <div class="doc-header">
+      <span class="doc-badge">${type.toUpperCase()}</span>
+      <h1 class="doc-title">${title}</h1>
+      <div class="doc-meta">📓 Notebook: <strong>${notebookName}</strong> &bull; Gemini Enterprise NotebookLM</div>
+    </div>
+    <div class="doc-body">
+      ${formattedBody}
+    </div>
+  </div>
+</body>
+</html>`;
+  }
+
+  /**
+   * Generates folders, reports, and exports NotebookLM artifacts in their intended rich formats
    */
   generateAllUserBundles(report: MigrationReport): Record<string, { folderPath: string; markdownPath: string; htmlPath: string; notebookArtifactsCount: number }> {
     const userGroups = this.groupReportByUser(report);
@@ -388,37 +628,64 @@ All of your past search and chat conversations (**${data.sessions.length} conver
       const htmlPath = path.join(userFolder, 'MIGRATION_CHECKLIST.html');
       fs.writeFileSync(htmlPath, htmlContent, 'utf8');
 
-      // 3. Extract & Save NotebookLM Artifacts & Notes as Markdown/Text documents
+      // 3. Extract & Save NotebookLM Artifacts & Notes in intended rich formats (Interactive HTML + Markdown)
       let nbArtifactCount = 0;
       for (const nb of userData.notebooks) {
         const cleanNbTitle = (nb.displayName || 'Notebook').replace(/[^a-zA-Z0-9_-]/g, '_');
         
-        // Save Notebook Artifacts (Study Guides, FAQs, Briefing Docs, Timelines)
+        // Save Notebook Artifacts (Slide Decks, Infographics, Study Guides, FAQs, Briefing Docs)
         if (nb.details?.artifacts && Array.isArray(nb.details.artifacts)) {
           for (const art of nb.details.artifacts) {
-            const cleanArtTitle = (art.title || art.type || 'Artifact').replace(/[^a-zA-Z0-9_-]/g, '_');
-            const fileName = `${cleanNbTitle}_${cleanArtTitle}.md`;
-            const filePath = path.join(nbArtifactsFolder, fileName);
-            const content = `# ${nb.displayName} - ${art.title || art.type}\n\n**Artifact Type:** \`${art.type}\`\n\n---\n\n${art.content || art.extractedText || ''}\n`;
-            fs.writeFileSync(filePath, content, 'utf8');
-            nbArtifactCount++;
+            const artTitle = art.title || art.type || 'Artifact';
+            const cleanArtTitle = artTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const artType = (art.type || '').toLowerCase();
+            const textContent = art.content || art.extractedText || '';
+
+            if (artType.includes('slide') || artType.includes('presentation')) {
+              // Interactive HTML Presentation Slide Deck
+              const deckHtml = this.renderSlideDeckPresentation(artTitle, nb.displayName, textContent);
+              const deckPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_${cleanArtTitle}_SlideDeck.html`);
+              fs.writeFileSync(deckPath, deckHtml, 'utf8');
+              nbArtifactCount++;
+            } else {
+              // Formatted Executive HTML Document
+              const docHtml = this.renderDocumentHtml(artTitle, art.type || 'Study Guide', nb.displayName, textContent);
+              const docPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_${cleanArtTitle}.html`);
+              fs.writeFileSync(docPath, docHtml, 'utf8');
+              nbArtifactCount++;
+            }
+
+            // Always provide companion Markdown document
+            const mdFileName = `${cleanNbTitle}_${cleanArtTitle}.md`;
+            const mdFilePath = path.join(nbArtifactsFolder, mdFileName);
+            const content = `# ${nb.displayName} - ${artTitle}\n\n**Artifact Type:** \`${art.type}\`\n\n---\n\n${textContent}\n`;
+            fs.writeFileSync(mdFilePath, content, 'utf8');
           }
         }
 
-        // Save Studio Notes
+        // Save Studio Notes as Formatted HTML & Markdown
         if (nb.details?.notes && Array.isArray(nb.details.notes)) {
           for (const note of nb.details.notes) {
-            const cleanNoteTitle = (note.title || 'Studio_Note').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const noteTitle = note.title || 'Studio Note';
+            const cleanNoteTitle = noteTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const noteContent = note.content || '';
+
+            // Note HTML
+            const noteHtml = this.renderDocumentHtml(noteTitle, 'Studio Note', nb.displayName, noteContent);
+            const noteHtmlPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_Note_${cleanNoteTitle}.html`);
+            fs.writeFileSync(noteHtmlPath, noteHtml, 'utf8');
+            nbArtifactCount++;
+
+            // Note Markdown
             const fileName = `${cleanNbTitle}_Note_${cleanNoteTitle}.md`;
             const filePath = path.join(nbArtifactsFolder, fileName);
-            const content = `# ${nb.displayName} - Note: ${note.title || 'Studio Note'}\n\n---\n\n${note.content || ''}\n`;
+            const content = `# ${nb.displayName} - Note: ${noteTitle}\n\n---\n\n${noteContent}\n`;
             fs.writeFileSync(filePath, content, 'utf8');
-            nbArtifactCount++;
           }
         }
       }
 
-      logger.info(`Generated Handover Bundle for "${userEmail}" at: ${userFolder} (${nbArtifactCount} NotebookLM artifacts saved)`);
+      logger.info(`Generated Handover Bundle for "${userEmail}" at: ${userFolder} (${nbArtifactCount} rich NotebookLM artifacts saved)`);
       resultSummary[userEmail] = {
         folderPath: userFolder,
         markdownPath: mdPath,
