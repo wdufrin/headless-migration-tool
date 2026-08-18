@@ -702,7 +702,7 @@ app.post('/api/user-reports/generate', async (req, res) => {
       return res.status(400).json({ error: 'NoMigrationReport', message: 'No migration reports found to generate user bundles from.' });
     }
 
-    const bundles = generator.generateAllUserBundles(latestReport);
+    const bundles = await generator.generateAllUserBundles(latestReport);
     return res.status(200).json({
       success: true,
       message: `Generated ${Object.keys(bundles).length} user handover bundles.`,
@@ -729,7 +729,7 @@ app.post('/api/user-reports/send-email', authMiddleware, async (req, res) => {
     }
 
     // Ensure bundles exist
-    generator.generateAllUserBundles(latestReport);
+    await generator.generateAllUserBundles(latestReport);
 
     const authService = new GcpAuthService({ staticToken: callerToken });
     const result = await generator.sendUserEmail({
@@ -757,7 +757,7 @@ app.get('/api/user-reports/render/:email', async (req, res) => {
       const { UserReportGenerator } = await import('./engines/userReportGenerator.js');
       const generator = new UserReportGenerator();
       const latestReport = getLatestMigrationReport();
-      if (latestReport) generator.generateAllUserBundles(latestReport);
+      if (latestReport) await generator.generateAllUserBundles(latestReport);
     }
 
     if (fs.existsSync(htmlPath)) {

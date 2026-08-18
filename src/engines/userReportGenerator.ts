@@ -603,9 +603,211 @@ All of your past search and chat conversations (**${data.sessions.length} conver
   }
 
   /**
-   * Generates folders, reports, and exports NotebookLM artifacts in their intended rich formats
+   * Generates a native Microsoft PowerPoint (.pptx) presentation from slide deck content
    */
-  generateAllUserBundles(report: MigrationReport): Record<string, { folderPath: string; markdownPath: string; htmlPath: string; notebookArtifactsCount: number }> {
+  async generatePptxPresentation(title: string, notebookName: string, content: string, outputPath: string): Promise<void> {
+    try {
+      const pptxModule: any = await import('pptxgenjs');
+      const PptxConstructor = pptxModule.default || pptxModule;
+      const pres = new PptxConstructor();
+      pres.title = title;
+      pres.subject = `Exported from Gemini Enterprise Notebook: ${notebookName}`;
+      pres.layout = 'LAYOUT_16x9';
+
+      // Title Slide
+      const titleSlide = pres.addSlide();
+      titleSlide.background = { color: '0F172A' };
+      titleSlide.addText(title, {
+        x: 1.0,
+        y: 2.0,
+        w: '80%',
+        h: 1.8,
+        fontSize: 30,
+        bold: true,
+        color: 'FFFFFF',
+        align: 'left'
+      });
+      titleSlide.addText(`Gemini Enterprise Notebook: ${notebookName}`, {
+        x: 1.0,
+        y: 4.2,
+        w: '80%',
+        h: 0.5,
+        fontSize: 15,
+        color: '94A3B8',
+        align: 'left'
+      });
+
+      const rawSlides = content.split(/^##\s+Slide\s+\d+:?/im).filter(s => s.trim().length > 0);
+      const slides = rawSlides.length > 0 ? rawSlides : [content];
+
+      for (let i = 0; i < slides.length; i++) {
+        const s = slides[i].trim();
+        const lines = s.split('\n').map(l => l.trim()).filter(Boolean);
+        const slideTitle = lines[0]?.replace(/^[#*-]\s*/, '').trim() || `Slide ${i + 1}`;
+        const bodyLines = lines.slice(1);
+
+        const slide = pres.addSlide();
+        slide.background = { color: '0F172A' };
+
+        // Slide Title
+        slide.addText(slideTitle, {
+          x: 0.8,
+          y: 0.6,
+          w: '85%',
+          h: 0.8,
+          fontSize: 22,
+          bold: true,
+          color: '60A5FA',
+          align: 'left'
+        });
+
+        // Slide Footer
+        slide.addText(`Slide ${i + 1} of ${slides.length} • ${notebookName}`, {
+          x: 0.8,
+          y: 6.8,
+          w: '85%',
+          h: 0.4,
+          fontSize: 10,
+          color: '64748B',
+          align: 'left'
+        });
+
+        // Format bullet items
+        const textItems: any[] = [];
+        for (const line of bodyLines) {
+          if (line.startsWith('- ') || line.startsWith('* ')) {
+            textItems.push({
+              text: line.replace(/^[-*]\s+/, ''),
+              options: { bullet: true, fontSize: 14, color: 'E2E8F0', breakLine: true }
+            });
+          } else if (line.startsWith('[') && line.endsWith(']')) {
+            textItems.push({
+              text: line.slice(1, -1),
+              options: { italic: true, fontSize: 12, color: '93C5FD', breakLine: true }
+            });
+          } else {
+            textItems.push({
+              text: line,
+              options: { fontSize: 14, color: 'CBD5E1', breakLine: true }
+            });
+          }
+        }
+
+        if (textItems.length > 0) {
+          slide.addText(textItems, {
+            x: 0.8,
+            y: 1.6,
+            w: '85%',
+            h: 4.8,
+            valign: 'top',
+            margin: 0
+          });
+        }
+      }
+
+      const buf = await pres.write({ outputType: 'nodebuffer' });
+      fs.writeFileSync(outputPath, buf as Buffer);
+    } catch (err: any) {
+      logger.warn(`Could not generate PPTX for "${title}": ${err.message}`);
+    }
+  }
+
+  /**
+   * Generates a native Microsoft Word (.docx) document from markdown/report content
+   */
+  async generateDocxDocument(title: string, type: string, notebookName: string, content: string, outputPath: string): Promise<void> {
+    try {
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx');
+
+      const paragraphs: any[] = [];
+
+      // Document Title
+      paragraphs.push(
+        new Paragraph({
+          text: title,
+          heading: HeadingLevel.TITLE,
+          spacing: { after: 120 }
+        })
+      );
+
+      // Meta Subtitle
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: `Type: `, bold: true, color: '4B5563' }),
+            new TextRun({ text: `${type}  |  `, color: '6B7280' }),
+            new TextRun({ text: `Notebook: `, bold: true, color: '4B5563' }),
+            new TextRun({ text: `${notebookName}`, color: '6B7280' })
+          ],
+          spacing: { after: 300 }
+        })
+      );
+
+      const lines = content.split('\n');
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (line.startsWith('# ')) {
+          paragraphs.push(
+            new Paragraph({
+              text: line.replace(/^#\s+/, ''),
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 240, after: 120 }
+            })
+          );
+        } else if (line.startsWith('## ')) {
+          paragraphs.push(
+            new Paragraph({
+              text: line.replace(/^##\s+/, ''),
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 180, after: 80 }
+            })
+          );
+        } else if (line.startsWith('### ')) {
+          paragraphs.push(
+            new Paragraph({
+              text: line.replace(/^###\s+/, ''),
+              heading: HeadingLevel.HEADING_3,
+              spacing: { before: 120, after: 60 }
+            })
+          );
+        } else if (line.startsWith('- ') || line.startsWith('* ')) {
+          paragraphs.push(
+            new Paragraph({
+              text: line.replace(/^[-*]\s+/, ''),
+              bullet: { level: 0 },
+              spacing: { after: 60 }
+            })
+          );
+        } else {
+          paragraphs.push(
+            new Paragraph({
+              children: [new TextRun({ text: line, size: 22 })],
+              spacing: { after: 100 }
+            })
+          );
+        }
+      }
+
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: paragraphs
+        }]
+      });
+
+      const buffer = await Packer.toBuffer(doc);
+      fs.writeFileSync(outputPath, buffer);
+    } catch (err: any) {
+      logger.warn(`Could not generate DOCX for "${title}": ${err.message}`);
+    }
+  }
+
+  /**
+   * Generates folders, reports, and exports NotebookLM artifacts in their intended rich formats (PPTX, DOCX, HTML, MD)
+   */
+  async generateAllUserBundles(report: MigrationReport): Promise<Record<string, { folderPath: string; markdownPath: string; htmlPath: string; notebookArtifactsCount: number }>> {
     const userGroups = this.groupReportByUser(report);
     const resultSummary: Record<string, any> = {};
 
@@ -628,7 +830,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
       const htmlPath = path.join(userFolder, 'MIGRATION_CHECKLIST.html');
       fs.writeFileSync(htmlPath, htmlContent, 'utf8');
 
-      // 3. Extract & Save NotebookLM Artifacts & Notes in intended rich formats (Interactive HTML + Markdown)
+      // 3. Extract & Save NotebookLM Artifacts & Notes in intended rich formats (PPTX, DOCX, HTML, Markdown)
       let nbArtifactCount = 0;
       for (const nb of userData.notebooks) {
         const cleanNbTitle = (nb.displayName || 'Notebook').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -642,20 +844,28 @@ All of your past search and chat conversations (**${data.sessions.length} conver
             const textContent = art.content || art.extractedText || '';
 
             if (artType.includes('slide') || artType.includes('presentation')) {
-              // Interactive HTML Presentation Slide Deck
+              // 1. Native Microsoft PowerPoint (.pptx)
+              const pptxPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_${cleanArtTitle}.pptx`);
+              await this.generatePptxPresentation(artTitle, nb.displayName, textContent, pptxPath);
+
+              // 2. Interactive HTML Presentation Slide Deck
               const deckHtml = this.renderSlideDeckPresentation(artTitle, nb.displayName, textContent);
               const deckPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_${cleanArtTitle}_SlideDeck.html`);
               fs.writeFileSync(deckPath, deckHtml, 'utf8');
               nbArtifactCount++;
             } else {
-              // Formatted Executive HTML Document
+              // 1. Native Microsoft Word (.docx)
+              const docxPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_${cleanArtTitle}.docx`);
+              await this.generateDocxDocument(artTitle, art.type || 'Study Guide', nb.displayName, textContent, docxPath);
+
+              // 2. Formatted Executive HTML Document
               const docHtml = this.renderDocumentHtml(artTitle, art.type || 'Study Guide', nb.displayName, textContent);
               const docPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_${cleanArtTitle}.html`);
               fs.writeFileSync(docPath, docHtml, 'utf8');
               nbArtifactCount++;
             }
 
-            // Always provide companion Markdown document
+            // Companion Markdown document
             const mdFileName = `${cleanNbTitle}_${cleanArtTitle}.md`;
             const mdFilePath = path.join(nbArtifactsFolder, mdFileName);
             const content = `# ${nb.displayName} - ${artTitle}\n\n**Artifact Type:** \`${art.type}\`\n\n---\n\n${textContent}\n`;
@@ -663,12 +873,16 @@ All of your past search and chat conversations (**${data.sessions.length} conver
           }
         }
 
-        // Save Studio Notes as Formatted HTML & Markdown
+        // Save Studio Notes as Native DOCX, Formatted HTML & Markdown
         if (nb.details?.notes && Array.isArray(nb.details.notes)) {
           for (const note of nb.details.notes) {
             const noteTitle = note.title || 'Studio Note';
             const cleanNoteTitle = noteTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
             const noteContent = note.content || '';
+
+            // Note DOCX
+            const noteDocxPath = path.join(nbArtifactsFolder, `${cleanNbTitle}_Note_${cleanNoteTitle}.docx`);
+            await this.generateDocxDocument(noteTitle, 'Studio Note', nb.displayName, noteContent, noteDocxPath);
 
             // Note HTML
             const noteHtml = this.renderDocumentHtml(noteTitle, 'Studio Note', nb.displayName, noteContent);
@@ -685,7 +899,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
         }
       }
 
-      logger.info(`Generated Handover Bundle for "${userEmail}" at: ${userFolder} (${nbArtifactCount} rich NotebookLM artifacts saved)`);
+      logger.info(`Generated Handover Bundle for "${userEmail}" at: ${userFolder} (${nbArtifactCount} rich PPTX/DOCX/HTML NotebookLM artifacts saved)`);
       resultSummary[userEmail] = {
         folderPath: userFolder,
         markdownPath: mdPath,
@@ -718,7 +932,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
     }
 
     // Ensure user bundle exists on disk
-    this.generateAllUserBundles(report);
+    await this.generateAllUserBundles(report);
 
     const recipient = options.overrideRecipientEmail || options.userEmail;
     const fromAddress = options.senderEmail || process.env.SENDER_EMAIL || process.env.ADMIN_EMAIL || 'admin@example.com';
