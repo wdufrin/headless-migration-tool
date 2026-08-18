@@ -1,0 +1,37 @@
+{
+  "source": {
+    "projectId": "gemini-enterprise-test-project",
+    "appLocation": "global",
+    "collectionId": "default_collection",
+    "appId": "ge-assistant-app",
+    "assistantId": "default_assistant"
+  },
+  "target": {
+    "projectId": "gemini-enterprise-prod-project",
+    "appLocation": "global",
+    "collectionId": "default_collection",
+    "appId": "ge-assistant-app-prod",
+    "assistantId": "default_assistant"
+  },
+  "options": {
+    "migrateNotebooks": true,
+    "migrateAgents": true,
+    "dryRun": false,
+    "concurrency": 10,
+    "userFilter": ["*@fedex.com"],
+    "preserveOwnership": true,
+    "allowOverwrite": false,
+    "logLevel": "INFO"
+  },
+  "datastoreMapping": {
+    "test-hr-policy-datastore": "prod-hr-policy-datastore",
+    "test-finance-docs": "prod-finance-docs"
+  },
+  "collectionMapping": {
+    "default_collection": "default_collection"
+  },
+  "identityMapping": {
+    "user:john.doe@test-tenant.com": "user:john.doe@fedex.com"
+  },
+  "defaultOwnerFallback": "admin-sa@gemini-enterprise-prod-project.iam.gserviceaccount.com"
+}

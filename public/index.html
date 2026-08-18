@@ -1,0 +1,2530 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Enterprise Admin Migration Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .animate-pulse-slow {
+      animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #111827;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #374151;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #4b5563;
+    }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans antialiased min-h-screen flex flex-col">
+
+  <!-- Top Navigation Header -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center space-x-4">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full">v1.0.0</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            DWD Enabled
+          </span>
+        </div>
+        <p class="text-xs text-gray-400">Headless migration platform for Notebooks, Custom Agents & Datastores</p>
+      </div>
+    </div>
+
+    <!-- Active Environment Badge & Health -->
+    <div class="flex items-center space-x-4">
+      <div id="healthBadge" class="flex items-center space-x-2 text-xs bg-gray-800/80 border border-gray-700 px-3 py-1.5 rounded-lg">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="text-gray-300 font-medium">API Service Online</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main App Layout with Sidebar -->
+  <div class="flex flex-1 overflow-hidden">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-4 space-y-2 select-none">
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-2">Navigation</div>
+      
+      <button onclick="switchTab('studio')" id="nav-studio" class="nav-btn active flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+        <span>Migration Studio</span>
+      </button>
+
+      <button onclick="switchTab('report')" id="nav-report" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span>Latest Report</span>
+      </button>
+
+      <button onclick="switchTab('history')" id="nav-history" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Historical Runs</span>
+      </button>
+
+      <button onclick="switchTab('sessions')" id="nav-sessions" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+        <span class="text-cyan-300 font-medium">💬 Chat History Migrator</span>
+      </button>
+
+      <button onclick="switchTab('artifacts')" id="nav-artifacts" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+        <span class="text-pink-300 font-medium">🎨 User Artifacts Gallery</span>
+      </button>
+
+      <button onclick="switchTab('handover')" id="nav-handover" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        <span class="text-amber-300 font-medium">📬 User Handover & Email</span>
+      </button>
+
+      <button onclick="switchTab('maintenance')" id="nav-maintenance" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+        <span>Target Maintenance</span>
+      </button>
+
+      <div class="pt-6 border-t border-gray-800 mt-auto">
+        <div class="bg-gray-800/60 p-3 rounded-lg border border-gray-700/60">
+          <div class="text-xs font-semibold text-gray-300">Security Mitigations</div>
+          <div class="text-[11px] text-gray-400 mt-1 space-y-1">
+            <div class="flex items-center gap-1.5 text-emerald-400">
+              <span>✓</span> SSRF Allowlist Protected
+            </div>
+            <div class="flex items-center gap-1.5 text-emerald-400">
+              <span>✓</span> Header-Only Token Auth
+            </div>
+            <div class="flex items-center gap-1.5 text-emerald-400">
+              <span>✓</span> Non-Root UID 1000 K8s
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-y-auto bg-gray-950 p-8">
+
+      <!-- TAB 1: MIGRATION STUDIO -->
+      <section id="tab-studio" class="tab-content space-y-8">
+        
+        <!-- Environment Configuration Card -->
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+          <div class="flex items-center justify-between border-b border-gray-800 pb-4 mb-6">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+                Migration Pipeline Configuration
+              </h2>
+              <p class="text-xs text-gray-400 mt-0.5">Specify source and destination GCP environments for Gemini Enterprise</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="loadTemplate('default')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-300 rounded-lg transition border border-gray-700">
+                Load Active Config
+              </button>
+            </div>
+          </div>
+
+          <form id="migrationForm" onsubmit="event.preventDefault();" class="space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              <!-- Source Environment Box -->
+              <div class="bg-gray-950/60 border border-gray-800 rounded-xl p-5 space-y-4">
+                <div class="flex items-center justify-between text-sm font-semibold text-blue-400">
+                  <span class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                    SOURCE ENVIRONMENT
+                  </span>
+                  <span class="text-xs text-gray-500">Read-Only</span>
+                </div>
+                
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Project ID</label>
+                    <input type="text" id="srcProjectId" value="ancient-sandbox-322523" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Region</label>
+                      <input type="text" id="srcLocation" value="global" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Collection ID</label>
+                      <input type="text" id="srcCollectionId" value="default_collection" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Engine / App ID</label>
+                    <input type="text" id="srcAppId" value="cosmere-1756136513915_1756136523768" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Target Environment Box -->
+              <div class="bg-gray-950/60 border border-gray-800 rounded-xl p-5 space-y-4">
+                <div class="flex items-center justify-between text-sm font-semibold text-emerald-400">
+                  <span class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    TARGET ENVIRONMENT
+                  </span>
+                  <span class="text-xs text-gray-500">Write / Restore</span>
+                </div>
+                
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Project ID</label>
+                    <input type="text" id="tgtProjectId" value="testgebackupandrestorev2" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Region</label>
+                      <input type="text" id="tgtLocation" value="global" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Collection ID</label>
+                      <input type="text" id="tgtCollectionId" value="default_collection" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Engine / App ID</label>
+                    <input type="text" id="tgtAppId" value="testnotebooks_1784725785748" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Migration Scope & Options -->
+            <div class="bg-gray-950/40 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div class="text-sm font-semibold text-gray-300">Migration Scope, Sharing & Delegation</div>
+              
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Checkbox toggles -->
+                <div class="space-y-2">
+                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optNotebooks" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
+                    <span class="font-medium text-white">📓 Migrate Notebooks & Sources</span>
+                  </label>
+                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optAgents" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
+                    <span class="font-medium text-white">🤖 Migrate Agents & Workflows</span>
+                  </label>
+                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optSessions" checked class="rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
+                    <span class="font-medium text-cyan-300">💬 Migrate Multi-User Chat History</span>
+                  </label>
+                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optArtifacts" checked class="rounded bg-gray-800 border-gray-700 text-purple-500 focus:ring-purple-500">
+                    <span class="font-medium text-purple-300">🎨 Export & Archive User Artifacts</span>
+                  </label>
+                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optDryRun" class="rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-500">
+                    <span class="text-amber-300 font-medium">🧪 Dry Run (Simulate Only)</span>
+                  </label>
+                </div>
+
+                <!-- Agent Type Filter -->
+                <div class="space-y-2">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Agent & Workflow Filter</label>
+                    <select id="optAgentType" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                      <option value="LOW_CODE_WORKFLOWS" selected>Low-Code + Workflows (Recommended)</option>
+                      <option value="LOW_CODE">Low-Code Agents Only</option>
+                      <option value="WORKFLOW">Workflows Only</option>
+                      <option value="ALL">All Types (Low-Code, Workflows, ADK, A2A)</option>
+                      <option value="ADK">ADK Agents Only</option>
+                      <option value="A2A">A2A Agents Only</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Concurrency & Service Account Key -->
+                <div>
+                  <label class="block text-xs font-medium text-gray-400 mb-1">DWD Service Account Key Path</label>
+                  <input type="text" id="optSaKey" value="./sa-dwd-key.json" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                  <p class="text-[11px] text-gray-500 mt-1">Impersonates creator identity via Domain-Wide Delegation</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Controls -->
+            <div class="flex items-center justify-between pt-2">
+              <div class="flex items-center gap-3">
+                <button type="button" onclick="startMigration(true)" id="btnDryRun" class="px-5 py-2.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 rounded-xl text-sm font-semibold transition flex items-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  Pre-Flight Dry Run
+                </button>
+                <button type="button" onclick="deployAllAgentsNow()" id="btnDeployNow" class="px-5 py-2.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-sm font-semibold transition flex items-center gap-2" title="Deploys all target low-code agents directly through the browser session to clear the blue Draft badges">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  ⚡ Deploy Target Agents
+                </button>
+              </div>
+
+              <div class="flex items-center gap-3">
+                <button type="button" onclick="startMigration(false)" id="btnLiveMigrate" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-600/30 transition flex items-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Execute Live Migration
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- Live Migration Tracker (Visible when job is active or completed) -->
+        <div id="trackerSection" class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6 hidden">
+          <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+            <div class="flex items-center gap-3">
+              <div id="statusSpinner" class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+              <div>
+                <h3 id="trackerTitle" class="text-base font-bold text-white">Migration in Progress...</h3>
+                <p id="trackerSubtitle" class="text-xs text-gray-400">Executing user discovery and parallel batch migration</p>
+              </div>
+            </div>
+            <div id="progressPercent" class="text-xl font-extrabold text-indigo-400">0%</div>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="w-full bg-gray-950 rounded-full h-3 overflow-hidden border border-gray-800">
+            <div id="progressBar" class="bg-gradient-to-r from-indigo-500 to-blue-500 h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+
+          <!-- Stage Milestones -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+            <div id="stage-preflight" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Pre-Flight</span>
+            </div>
+            <div id="stage-notebooks" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Notebooks</span>
+            </div>
+            <div id="stage-agents" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Agents & Tools</span>
+            </div>
+            <div id="stage-sessions" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Chat History</span>
+            </div>
+            <div id="stage-artifacts" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>User Artifacts</span>
+            </div>
+            <div id="stage-reports" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Verification</span>
+            </div>
+          </div>
+
+          <!-- Real-Time Console Log Stream -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs text-gray-400">
+              <span class="font-semibold uppercase tracking-wider">Live Migration Log Stream</span>
+              <button onclick="document.getElementById('liveLogs').innerHTML = ''" class="hover:text-gray-200">Clear</button>
+            </div>
+            <div id="liveLogs" class="bg-black/90 font-mono text-xs text-gray-300 p-4 rounded-xl h-56 overflow-y-auto border border-gray-800 space-y-1 select-text">
+              <div class="text-gray-500">[System] Ready to start migration pipeline.</div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- TAB 2: AUDIT & REPORT VIEWER -->
+      <section id="tab-report" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white">Migration Certificate & Audit Report</h2>
+              <p id="reportTimestamp" class="text-xs text-gray-400">No report loaded yet. Run a migration from the Studio tab.</p>
+            </div>
+            <div class="flex items-center gap-2" id="reportActions">
+              <button onclick="downloadReport('markdown')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200 border border-gray-700 rounded-lg transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Download Markdown (.md)
+              </button>
+              <button onclick="downloadReport('json')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200 border border-gray-700 rounded-lg transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Download JSON (.json)
+              </button>
+            </div>
+          </div>
+
+          <!-- Summary Metric Cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4" id="reportMetrics">
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400">Total Migrated Agents</div>
+              <div id="metricAgents" class="text-2xl font-bold text-white mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400">Total Migrated Notebooks</div>
+              <div id="metricNotebooks" class="text-2xl font-bold text-white mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400">Failed / Skipped Items</div>
+              <div id="metricFailed" class="text-2xl font-bold text-emerald-400 mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400">Pipeline Duration</div>
+              <div id="metricDuration" class="text-2xl font-bold text-indigo-400 mt-1">0.00s</div>
+            </div>
+          </div>
+
+          <!-- Asset Migration Results Table -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-semibold text-gray-300">Detailed Migration Breakdown</h3>
+              <input type="text" id="tableFilter" oninput="filterReportTable()" placeholder="Search asset, owner, ID..." class="bg-gray-950 border border-gray-800 rounded-lg px-3 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <div class="border border-gray-800 rounded-xl overflow-hidden bg-gray-950/50">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-gray-900/80 text-gray-400 border-b border-gray-800 uppercase font-semibold">
+                  <tr>
+                    <th class="py-3 px-4">Type</th>
+                    <th class="py-3 px-4">Display Name / Title</th>
+                    <th class="py-3 px-4">Status</th>
+                    <th class="py-3 px-4">Owner Identity</th>
+                    <th class="py-3 px-4">Target ID</th>
+                    <th class="py-3 px-4">Duration</th>
+                  </tr>
+                </thead>
+                <tbody id="reportTableBody" class="divide-y divide-gray-800/60 text-gray-300">
+                  <tr>
+                    <td colspan="6" class="py-8 text-center text-gray-500">No migration run data available.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- TAB 3: HISTORICAL RUNS ARCHIVE -->
+      <section id="tab-history" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white">Historical Migration Runs Archive</h2>
+              <p class="text-xs text-gray-400">Browse and inspect past migration certificates and audit logs stored on disk</p>
+            </div>
+            <button onclick="loadHistoricalRuns()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-300 border border-gray-700 rounded-lg transition">
+              Refresh History
+            </button>
+          </div>
+
+          <div class="border border-gray-800 rounded-xl overflow-hidden bg-gray-950/50">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-gray-900/80 text-gray-400 border-b border-gray-800 uppercase font-semibold">
+                <tr>
+                  <th class="py-3 px-4">Report Timestamp</th>
+                  <th class="py-3 px-4">Migration ID</th>
+                  <th class="py-3 px-4">Mode</th>
+                  <th class="py-3 px-4">Summary</th>
+                  <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody" class="divide-y divide-gray-800/60 text-gray-300">
+                <tr>
+                  <td colspan="5" class="py-8 text-center text-gray-500">Loading historical reports...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+
+
+      <!-- TAB: CHAT SESSIONS MIGRATOR -->
+      <section id="tab-sessions" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <span class="p-2 bg-cyan-500/10 text-cyan-400 rounded-lg">💬</span>
+                <span>User Chat History & Session Migrator</span>
+              </h2>
+              <p class="text-xs text-gray-400 mt-1">Discover, preview, and restore user conversation histories and sidebar titles into the target Gemini Enterprise app.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="loadSourceSessions()" id="btnDiscoverSessions" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl text-xs font-semibold border border-gray-700 transition flex items-center gap-2">
+                <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <span>🔍 Discover Source Sessions</span>
+              </button>
+              <button onclick="migrateAllSessions()" id="btnMigrateAllSessions" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-cyan-600/30 transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>⚡ Migrate All Sessions</span>
+              </button>
+              <button onclick="loadTargetSessions()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl text-xs font-semibold border border-gray-700 transition flex items-center gap-2">
+                <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>🎯 Verify Target Sessions</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Discovered Sessions Table -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs text-gray-400">
+              <span class="font-semibold text-gray-300">Discovered Source Chat Sessions (<code id="lblSrcProject" class="text-cyan-400 font-mono">ancient-sandbox-322523</code>)</span>
+              <span id="sourceSessionCount" class="font-mono">0 sessions loaded</span>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-gray-800">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-gray-950/80 text-gray-400 uppercase font-semibold border-b border-gray-800">
+                  <tr>
+                    <th class="py-3 px-4">Chat Title (Sidebar Name)</th>
+                    <th class="py-3 px-4">User Identity ID</th>
+                    <th class="py-3 px-4">Turns Count</th>
+                    <th class="py-3 px-4">State</th>
+                    <th class="py-3 px-4 text-right">Individual Action</th>
+                  </tr>
+                </thead>
+                <tbody id="srcSessionsTableBody" class="divide-y divide-gray-800/60 font-mono">
+                  <tr>
+                    <td colspan="5" class="py-8 text-center text-gray-500">
+                      Click "Discover Source Sessions" to list conversation histories from source environment.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Verified Target Sessions Table -->
+          <div class="space-y-2 pt-4 border-t border-gray-800">
+            <div class="flex items-center justify-between text-xs text-gray-400">
+              <span class="font-semibold text-emerald-400">Target Chat Sessions (<code id="lblTgtProject" class="text-emerald-400 font-mono">testgebackupandrestorev2</code>)</span>
+              <span id="targetSessionCount" class="font-mono">0 sessions restored</span>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-gray-800">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-gray-950/80 text-gray-400 uppercase font-semibold border-b border-gray-800">
+                  <tr>
+                    <th class="py-3 px-4">Sidebar Display Name</th>
+                    <th class="py-3 px-4">Target Session Resource ID</th>
+                    <th class="py-3 px-4">User Pseudo ID</th>
+                    <th class="py-3 px-4">Turns Count</th>
+                    <th class="py-3 px-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="tgtSessionsTableBody" class="divide-y divide-gray-800/60 font-mono">
+                  <tr>
+                    <td colspan="5" class="py-6 text-center text-gray-500">
+                      Click "Verify Target Sessions" to inspect sessions in testgebackupandrestorev2.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Live Session Terminal -->
+          <div class="space-y-2 pt-2">
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                <span>Session Migration Activity Console</span>
+              </div>
+              <button onclick="document.getElementById('sessionDebugLogs').innerHTML = '';" class="text-[11px] text-gray-500 hover:text-gray-300">Clear Terminal</button>
+            </div>
+            <div id="sessionDebugLogs" class="bg-black/90 text-cyan-400 font-mono text-xs p-4 rounded-xl border border-gray-800 h-40 overflow-y-auto space-y-1.5 custom-scrollbar">
+              <div class="text-gray-500">// Ready to migrate sessions. Click "Discover Source Sessions" or "Migrate All Sessions".</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: USER ARTIFACTS GALLERY & EXPORTER -->
+      <section id="tab-artifacts" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <span class="text-pink-400">🎨</span>
+                <span>User Generated Artifacts Gallery & Exporter</span>
+              </h2>
+              <p class="text-xs text-gray-400 mt-1">Discover, preview, and export all generated slide presentations, interactive Canvas dashboards, and media files across the enterprise.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="loadDiscoveredArtifacts()" id="btnScanArtifacts" class="px-4 py-2 bg-pink-600/20 hover:bg-pink-600 text-pink-300 hover:text-white border border-pink-500/30 rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-pink-600/10">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <span>🔍 Scan Artifacts</span>
+              </button>
+              <button onclick="exportAllArtifactsToDisk()" id="btnExportArtifacts" class="px-4 py-2 bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-pink-600/20">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>📦 Export All Artifacts to Disk</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Stats Overview -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div class="bg-gray-950/70 border border-gray-800 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p class="text-[11px] text-gray-400 font-medium">Total Artifacts</p>
+                <h3 id="statTotalArtifacts" class="text-lg font-bold text-white mt-0.5">0</h3>
+              </div>
+              <div class="w-9 h-9 rounded-xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center text-pink-400 text-base">
+                🎨
+              </div>
+            </div>
+            <div class="bg-gray-950/70 border border-gray-800 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p class="text-[11px] text-gray-400 font-medium">Canvas Documents</p>
+                <h3 id="statCanvasDocs" class="text-lg font-bold text-purple-400 mt-0.5">0</h3>
+              </div>
+              <div class="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 text-base">
+                📄
+              </div>
+            </div>
+            <div class="bg-gray-950/70 border border-gray-800 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p class="text-[11px] text-gray-400 font-medium">Presentations / Slides</p>
+                <h3 id="statSlideDecks" class="text-lg font-bold text-cyan-400 mt-0.5">0</h3>
+              </div>
+              <div class="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-base">
+                📊
+              </div>
+            </div>
+            <div class="bg-gray-950/70 border border-gray-800 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p class="text-[11px] text-gray-400 font-medium">Interactive WebApps</p>
+                <h3 id="statCanvasWidgets" class="text-lg font-bold text-indigo-400 mt-0.5">0</h3>
+              </div>
+              <div class="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-base">
+                🎮
+              </div>
+            </div>
+            <div class="bg-gray-950/70 border border-gray-800 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p class="text-[11px] text-gray-400 font-medium">Generated Media</p>
+                <h3 id="statGeneratedFiles" class="text-lg font-bold text-emerald-400 mt-0.5">0</h3>
+              </div>
+              <div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-base">
+                🖼️
+              </div>
+            </div>
+          </div>
+
+          <!-- Artifacts Grid & Table -->
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button onclick="filterArtifacts('ALL')" id="filter-art-ALL" class="art-filter-btn px-3 py-1 bg-pink-600 text-white rounded-lg text-xs font-semibold">All Artifacts</button>
+                <button onclick="filterArtifacts('CANVAS_DOCUMENT')" id="filter-art-CANVAS_DOCUMENT" class="art-filter-btn px-3 py-1 bg-gray-800 text-gray-400 hover:text-white rounded-lg text-xs font-semibold">📄 Documents</button>
+                <button onclick="filterArtifacts('SLIDE_DECK')" id="filter-art-SLIDE_DECK" class="art-filter-btn px-3 py-1 bg-gray-800 text-gray-400 hover:text-white rounded-lg text-xs font-semibold">📊 Slide Decks</button>
+                <button onclick="filterArtifacts('CANVAS_WIDGET')" id="filter-art-CANVAS_WIDGET" class="art-filter-btn px-3 py-1 bg-gray-800 text-gray-400 hover:text-white rounded-lg text-xs font-semibold">🎮 Canvas WebApps</button>
+                <button onclick="filterArtifacts('GENERATED_FILE')" id="filter-art-GENERATED_FILE" class="art-filter-btn px-3 py-1 bg-gray-800 text-gray-400 hover:text-white rounded-lg text-xs font-semibold">🖼️ Media & Images</button>
+              </div>
+              <span id="artifactsCountBadge" class="text-xs text-gray-400">Click "Scan Artifacts" to begin</span>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-800 bg-gray-950/60 max-h-[500px] custom-scrollbar">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-gray-900/90 text-gray-400 uppercase font-mono sticky top-0 border-b border-gray-800 z-10">
+                  <tr>
+                    <th class="py-3 px-4">Artifact Type</th>
+                    <th class="py-3 px-4">Title / Name</th>
+                    <th class="py-3 px-4">Source Conversation</th>
+                    <th class="py-3 px-4">User</th>
+                    <th class="py-3 px-4">Details</th>
+                    <th class="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="artifactsTableBody" class="divide-y divide-gray-800/60">
+                  <tr>
+                    <td colspan="6" class="py-8 text-center text-gray-500">
+                      No artifacts loaded yet. Click <strong>"🔍 Scan Artifacts"</strong> above to extract all generated slide decks, dashboards, and images.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Artifact Fullscreen Preview Modal -->
+      <div id="artifactPreviewModal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          <div class="p-4 border-b border-gray-800 flex items-center justify-between bg-gray-950/80">
+            <div class="flex items-center gap-3">
+              <span id="previewModalIcon" class="text-xl">📊</span>
+              <div>
+                <h3 id="previewModalTitle" class="text-sm font-bold text-white">Artifact Title</h3>
+                <p id="previewModalSubtitle" class="text-xs text-gray-400">Source info</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="downloadCurrentArtifactHtml()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-semibold border border-gray-700 transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>Download Standalone (.html)</span>
+              </button>
+              <button onclick="closeArtifactPreviewModal()" class="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="flex-1 bg-black p-2 flex items-center justify-center overflow-hidden">
+            <iframe id="artifactIframe" class="w-full h-full rounded-xl border border-gray-800 bg-slate-950" sandbox="allow-scripts allow-same-origin"></iframe>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: USER HANDOVER & EMAIL DISPATCHER -->
+      <section id="tab-handover" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <span class="p-2 bg-amber-500/10 text-amber-400 rounded-lg">📬</span>
+                <span>User Handover & Action Checklist Dispatcher</span>
+              </h2>
+              <p class="text-xs text-gray-400 mt-1">Generate personalized post-migration action checklists, bundle user artifacts into local folders, and test email dispatching.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="loadUserReports()" id="btnRefreshUserReports" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl text-xs font-semibold border border-gray-700 transition flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>🔄 Refresh User List</span>
+              </button>
+              <button onclick="generateAllUserBundles()" id="btnGenerateBundles" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-amber-600/30 transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span>📦 Generate / Update All User Folders</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- Left: User Bundles Table -->
+            <div class="lg:col-span-2 space-y-4">
+              <div class="flex items-center justify-between">
+                <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                  <span>👥 Discovered Users & Handover Bundles</span>
+                  <span id="userReportsBadge" class="px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded-full text-[10px] font-mono">Loading...</span>
+                </h3>
+                <span class="text-[11px] text-gray-500 font-mono">Folders: ./user_handover_reports/&lt;user&gt;/</span>
+              </div>
+
+              <div class="overflow-x-auto rounded-xl border border-gray-800 bg-gray-950/60">
+                <table class="w-full text-left text-xs">
+                  <thead class="bg-gray-900/90 text-gray-400 uppercase font-mono border-b border-gray-800">
+                    <tr>
+                      <th class="py-3 px-4">User Account</th>
+                      <th class="py-3 px-4">Migrated Assets</th>
+                      <th class="py-3 px-4">Local Folder & Bundle</th>
+                      <th class="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="userReportsTableBody" class="divide-y divide-gray-800/60 font-mono">
+                    <tr>
+                      <td colspan="4" class="py-8 text-center text-gray-500">
+                        Loading discovered users and handover bundles...
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Right: Live Email Dispatcher & Tester -->
+            <div class="space-y-4">
+              <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+                    <span>✉️ Google Workspace Gmail API Dispatcher</span>
+                  </h3>
+                  <span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-mono">Gmail REST API</span>
+                </div>
+                <p class="text-xs text-gray-400 leading-relaxed">
+                  Send the official handover checklist and attached artifacts directly via <strong>Google Workspace Gmail API</strong> (<code class="text-gray-300">gmail.googleapis.com</code>) using your enterprise credentials.
+                </p>
+
+                <div class="space-y-3 pt-1">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Select User Handover Bundle</label>
+                    <select id="selEmailUser" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-mono">
+                      <option value="">Loading users...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Sender Email (<code class="text-amber-400">From</code>)</label>
+                    <input type="email" id="inputSenderEmail" value="admin@wdufrin.altostrat.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-amber-500">
+                    <p class="text-[11px] text-gray-500 mt-1">Authorized Google Workspace admin sender.</p>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-amber-300 mb-1">Recipient Email (<code class="text-white">To</code> / Overwrite for Testing)</label>
+                    <input type="email" id="inputTestEmail" value="wdufrin@google.com" placeholder="your-email@google.com" class="w-full bg-gray-900 border border-amber-500/50 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-amber-400">
+                    <p class="text-[11px] text-gray-400 mt-1">Overwrite recipient so you can safely validate email format & attachments before go-live.</p>
+                  </div>
+
+                  <div class="pt-2">
+                    <button onclick="sendTestHandoverEmail()" id="btnSendTestEmail" class="w-full py-2.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-amber-600/20 transition flex items-center justify-center gap-2">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                      <span>🚀 Send Email via Gmail API</span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Live Dispatch Feedback Window -->
+                <div id="emailDispatchFeedback" class="hidden p-3 bg-gray-900 border border-gray-800 rounded-lg space-y-2">
+                  <div class="flex items-center justify-between text-xs">
+                    <span class="font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>Dispatch Status</span>
+                    </span>
+                    <span id="emailDispatchStatusText" class="text-gray-400 font-mono text-[11px]">Ready</span>
+                  </div>
+                  <p id="emailDispatchMessage" class="text-xs text-gray-300"></p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- User Checklist HTML Preview Modal -->
+      <div id="userChecklistModal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          <div class="p-4 border-b border-gray-800 flex items-center justify-between bg-gray-950/80">
+            <div class="flex items-center gap-3">
+              <span class="text-xl">📋</span>
+              <div>
+                <h3 id="checklistModalTitle" class="text-sm font-bold text-white">Migration Handover Checklist</h3>
+                <p id="checklistModalSubtitle" class="text-xs text-gray-400 font-mono">user@domain.com</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="document.getElementById('userChecklistModal').classList.add('hidden')" class="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="flex-1 bg-black p-2 flex items-center justify-center overflow-hidden">
+            <iframe id="checklistIframe" class="w-full h-full rounded-xl border border-gray-800 bg-white" sandbox="allow-scripts allow-same-origin"></iframe>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 6: DESTINATION MAINTENANCE -->
+      <section id="tab-maintenance" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="border-b border-gray-800 pb-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2 text-red-400">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Target Destination Cleanup Utility
+            </h2>
+            <p class="text-xs text-gray-400 mt-1">Safely reset or clear all target destination notebooks, custom agents, chat history sessions, and local artifacts prior to running a fresh migration.</p>
+          </div>
+
+          <div class="bg-red-950/20 border border-red-500/30 rounded-xl p-5 space-y-4">
+            <div class="text-sm font-semibold text-red-300">⚠️ Destructive Operation</div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              This operation deletes all custom notebooks, custom agents, and chat history sessions inside the configured target project (<code id="maintTargetProject" class="text-red-300 font-mono">testgebackupandrestorev2</code>), and resets all local archived artifacts. System agents such as <code>deep_research</code> are safely preserved.
+            </p>
+
+            <div class="flex items-center gap-3 pt-2">
+              <button onclick="clearTargetDestination()" id="btnClearTarget" class="px-5 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-red-600/30 transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                <span>Reset Target (Notebooks, Agents, Chat History & Artifacts)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Full Conversation Viewer Modal -->
+      <div id="sessionModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          <!-- Header -->
+          <div class="p-5 border-b border-gray-800 flex items-center justify-between bg-gray-950/60">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-cyan-400 text-lg">💬</span>
+                <h3 id="modalSessionTitle" class="text-base font-bold text-white">Session Title</h3>
+              </div>
+              <p id="modalSessionSubtitle" class="text-xs text-gray-400 mt-0.5 font-mono">Session ID & User info</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="downloadSessionTranscript()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-semibold border border-gray-700 transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>Export Transcript (.md)</span>
+              </button>
+              <button onclick="closeSessionModal()" class="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Conversation Body -->
+          <div id="modalSessionConversation" class="p-6 overflow-y-auto space-y-6 flex-1 custom-scrollbar font-sans text-sm">
+            <!-- Populated dynamically with User Query bubbles and Gemini Assistant cards -->
+          </div>
+
+          <!-- Footer -->
+          <div class="p-4 border-t border-gray-800 bg-gray-950/60 flex items-center justify-between text-xs text-gray-400">
+            <span id="modalTurnsCount">0 turn(s) loaded</span>
+            <button onclick="closeSessionModal()" class="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg font-semibold">
+              Close Viewer
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    let activeReportData = null;
+    let tableItems = [];
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.nav-btn').forEach(el => {
+        el.classList.remove('bg-indigo-600', 'text-white', 'shadow-lg');
+        el.classList.add('text-gray-400', 'hover:text-white', 'hover:bg-gray-800');
+      });
+
+      const tabEl = document.getElementById(`tab-${tabId}`);
+      const navEl = document.getElementById(`nav-${tabId}`);
+      if (tabEl) tabEl.classList.remove('hidden');
+      if (navEl) {
+        navEl.classList.add('bg-indigo-600', 'text-white', 'shadow-lg');
+        navEl.classList.remove('text-gray-400', 'hover:bg-gray-800');
+      }
+
+      if (tabId === 'history') {
+        loadHistoricalRuns();
+      } else if (tabId === 'sessions') {
+        loadSourceSessions();
+        loadTargetSessions();
+      } else if (tabId === 'artifacts') {
+        if (typeof loadDiscoveredArtifacts === 'function' && (!loadedArtifacts || loadedArtifacts.length === 0)) {
+          loadDiscoveredArtifacts();
+        }
+      } else if (tabId === 'handover') {
+        loadUserReports();
+      }
+    }
+
+    function loadTemplate(type = 'default') {
+      const srcProj = document.getElementById('srcProjectId');
+      const srcLoc = document.getElementById('srcLocation');
+      const srcColl = document.getElementById('srcCollectionId');
+      const srcApp = document.getElementById('srcAppId');
+
+      const tgtProj = document.getElementById('tgtProjectId');
+      const tgtLoc = document.getElementById('tgtLocation');
+      const tgtColl = document.getElementById('tgtCollectionId');
+      const tgtApp = document.getElementById('tgtAppId');
+
+      if (srcProj) srcProj.value = 'ancient-sandbox-322523';
+      if (srcLoc) srcLoc.value = 'global';
+      if (srcColl) srcColl.value = 'default_collection';
+      if (srcApp) srcApp.value = 'cosmere-1756136513915_1756136523768';
+
+      if (tgtProj) tgtProj.value = 'testgebackupandrestorev2';
+      if (tgtLoc) tgtLoc.value = 'global';
+      if (tgtColl) tgtColl.value = 'default_collection';
+      if (tgtApp) tgtApp.value = 'testnotebooks_1784725785748';
+
+      addLog('Loaded default configuration template into migration form.', 'INFO');
+    }
+
+    function addLog(msg, level = 'INFO') {
+      const liveLogs = document.getElementById('liveLogs');
+      const time = new Date().toLocaleTimeString();
+      let color = 'text-gray-300';
+      if (level === 'ERROR') color = 'text-red-400 font-semibold';
+      else if (level === 'WARN') color = 'text-amber-400';
+      else if (level === 'SUCCESS') color = 'text-emerald-400 font-medium';
+
+      const line = document.createElement('div');
+      line.className = color;
+      line.textContent = `[${time}] [${level}] ${msg}`;
+      liveLogs.appendChild(line);
+      liveLogs.scrollTop = liveLogs.scrollHeight;
+    }
+
+    function updateStage(stageId, status) {
+      const el = document.getElementById(`stage-${stageId}`);
+      if (!el) return;
+      if (status === 'active') {
+        el.className = 'bg-indigo-950/60 border border-indigo-500/50 p-3 rounded-lg flex items-center gap-2 text-indigo-300 font-medium animate-pulse';
+        el.querySelector('.stage-icon').textContent = '⏳';
+      } else if (status === 'done') {
+        el.className = 'bg-emerald-950/40 border border-emerald-500/40 p-3 rounded-lg flex items-center gap-2 text-emerald-300 font-medium';
+        el.querySelector('.stage-icon').textContent = '✅';
+      }
+    }
+
+    async function startMigration(isDryRun) {
+      const tracker = document.getElementById('trackerSection');
+      tracker.classList.remove('hidden');
+      tracker.scrollIntoView({ behavior: 'smooth' });
+
+      document.getElementById('progressBar').style.width = '10%';
+      document.getElementById('progressPercent').textContent = '10%';
+      document.getElementById('trackerTitle').textContent = isDryRun ? 'Simulating Dry Run...' : 'Executing Live Migration...';
+      document.getElementById('statusSpinner').classList.remove('hidden');
+
+      // Clear previous logs
+      document.getElementById('liveLogs').innerHTML = '';
+
+      updateStage('preflight', 'active');
+      addLog(`Initiating migration job (Dry Run: ${isDryRun})...`);
+
+      const config = {
+        source: {
+          projectId: document.getElementById('srcProjectId').value.trim(),
+          appLocation: document.getElementById('srcLocation').value.trim(),
+          collectionId: document.getElementById('srcCollectionId').value.trim(),
+          appId: document.getElementById('srcAppId').value.trim(),
+          assistantId: 'default_assistant'
+        },
+        target: {
+          projectId: document.getElementById('tgtProjectId').value.trim(),
+          appLocation: document.getElementById('tgtLocation').value.trim(),
+          collectionId: document.getElementById('tgtCollectionId').value.trim(),
+          appId: document.getElementById('tgtAppId').value.trim(),
+          assistantId: 'default_assistant'
+        },
+        options: {
+          migrateNotebooks: document.getElementById('optNotebooks').checked,
+          migrateAgents: document.getElementById('optAgents').checked,
+          migrateSessions: document.getElementById('optSessions').checked,
+          exportArtifacts: document.getElementById('optArtifacts').checked,
+          agentTypes: document.getElementById('optAgentType').value === 'LOW_CODE_WORKFLOWS' 
+            ? ['LOW_CODE', 'WORKFLOW'] 
+            : [document.getElementById('optAgentType').value],
+          preserveSharing: false,
+          publishAgents: false,
+          dryRun: isDryRun,
+          concurrency: 10,
+          preserveOwnership: true
+        }
+      };
+
+      try {
+        addLog('Connecting to real-time migration stream...');
+        const response = await fetch('/api/migrate/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+          body: JSON.stringify(config)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.message || `Migration failed with status ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let finalReport = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const ev of events) {
+            if (!ev.trim()) continue;
+            const lines = ev.split('\n');
+            let eventType = 'message';
+            let dataStr = '';
+
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventType = line.replace('event:', '').trim();
+              } else if (line.startsWith('data:')) {
+                dataStr = line.replace('data:', '').trim();
+              }
+            }
+
+            if (!dataStr) continue;
+            try {
+              const data = JSON.parse(dataStr);
+
+              if (eventType === 'log') {
+                const msg = data.message || data.line || '';
+                addLog(msg, data.level || 'INFO');
+
+                // Dynamic progress updates across all 6 phases
+                if (msg.includes('Executing Pre-Flight') || msg.includes('Verifying target')) {
+                  updateStage('preflight', 'active');
+                  document.getElementById('progressBar').style.width = '10%';
+                  document.getElementById('progressPercent').textContent = '10%';
+                } else if (msg.includes('Discovering source notebooks') || msg.includes('Discovering notebooks') || msg.includes('Restored')) {
+                  updateStage('preflight', 'done');
+                  updateStage('notebooks', 'active');
+                  document.getElementById('progressBar').style.width = '28%';
+                  document.getElementById('progressPercent').textContent = '28%';
+                } else if (msg.includes('Discovering agents') || msg.includes('Created target Agent') || msg.includes('Published agent')) {
+                  updateStage('notebooks', 'done');
+                  updateStage('agents', 'active');
+                  document.getElementById('progressBar').style.width = '52%';
+                  document.getElementById('progressPercent').textContent = '52%';
+                } else if (msg.includes('Multi-User Chat History') || msg.includes('Restored session')) {
+                  updateStage('agents', 'done');
+                  updateStage('sessions', 'active');
+                  document.getElementById('progressBar').style.width = '75%';
+                  document.getElementById('progressPercent').textContent = '75%';
+                } else if (msg.includes('user artifacts across') || msg.includes('Archived')) {
+                  updateStage('sessions', 'done');
+                  updateStage('artifacts', 'active');
+                  document.getElementById('progressBar').style.width = '90%';
+                  document.getElementById('progressPercent').textContent = '90%';
+                }
+              } else if (eventType === 'stage') {
+                if (data.stage === 'complete') {
+                  updateStage('artifacts', 'done');
+                  updateStage('reports', 'done');
+                  document.getElementById('progressBar').style.width = '100%';
+                  document.getElementById('progressPercent').textContent = '100%';
+                }
+              } else if (eventType === 'report') {
+                finalReport = data;
+                activeReportData = data;
+                renderReport(data);
+              } else if (eventType === 'error') {
+                throw new Error(data.message || 'Stream reported an error');
+              }
+            } catch (e) {
+              console.warn('Failed to parse stream event:', e, dataStr);
+            }
+          }
+        }
+
+        updateStage('preflight', 'done');
+        updateStage('notebooks', 'done');
+        updateStage('agents', 'done');
+        updateStage('sessions', 'done');
+        updateStage('artifacts', 'done');
+        updateStage('reports', 'done');
+
+        document.getElementById('progressBar').style.width = '100%';
+        document.getElementById('progressPercent').textContent = '100%';
+        document.getElementById('statusSpinner').classList.add('hidden');
+        document.getElementById('trackerTitle').textContent = isDryRun ? 'Dry Run Simulation Completed' : 'Migration Completed Successfully!';
+
+        if (finalReport) {
+          addLog(`Migration Job Completed in ${((finalReport.durationMs || 0) / 1000).toFixed(2)}s. Agents: ${finalReport.summary.totalMigratedAgents}, Notebooks: ${finalReport.summary.totalMigratedNotebooks}`, 'SUCCESS');
+
+          // Auto-deploy Low-Code agents in Gemini Enterprise to clear Draft state
+          if (finalReport.results && !isDryRun) {
+            const agentsToDeploy = finalReport.results.filter(r => r.type === 'AGENT' && r.targetId && r.status === 'SUCCESS');
+            if (agentsToDeploy.length > 0) {
+              const apiKey = localStorage.getItem('gemini_api_key') || '';
+              if (apiKey) {
+                addLog(`Triggering automated Gemini Enterprise UI deployment for ${agentsToDeploy.length} agents...`, 'INFO');
+                const configId = "85240219-d6ee-415c-9242-d270267fa247";
+
+                for (const ag of agentsToDeploy) {
+                  try {
+                    const res = await fetch(`https://discoveryengine.clients6.google.com/v1alpha/locations/global/widgetDeployLowCodeAgent?key=${apiKey}`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        configId: configId,
+                        additionalParams: { token: "-", origin: "LOW_CODE_AGENT" },
+                        deployLowCodeAgentRequest: { name: ag.targetId, deployMode: "DEPLOY" },
+                        location: "global"
+                      })
+                    });
+                    if (res.ok) {
+                      addLog(`✅ Published & cleared Draft badge in GE for: "${ag.displayName}"`, 'SUCCESS');
+                    } else {
+                      console.warn('Deploy notice:', await res.text());
+                    }
+                  } catch (e) {
+                    console.warn('Deploy fetch error:', e);
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        addLog(err.message, 'ERROR');
+        document.getElementById('trackerTitle').textContent = 'Migration Failed';
+        document.getElementById('statusSpinner').classList.add('hidden');
+      }
+    }
+
+    async function deployAllAgentsNow() {
+      const btn = document.getElementById('btnDeployNow');
+      btn.disabled = true;
+      btn.innerHTML = `
+        <div class="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+        Deploying Agents...
+      `;
+
+      document.getElementById('trackerSection').classList.remove('hidden');
+      document.getElementById('statusSpinner').classList.remove('hidden');
+      document.getElementById('trackerTitle').textContent = 'Deploying Agents in Gemini Enterprise...';
+      document.getElementById('trackerSubtitle').textContent = 'Executing widgetDeployLowCodeAgent to clear draft status';
+      
+      addLog('Fetching all target agents for direct Google Enterprise deployment...', 'INFO');
+
+      try {
+        const res = await fetch('/api/agents/list-target');
+        const data = await res.json();
+        const agents = data.agents || [];
+
+        if (agents.length === 0) {
+          addLog('No target agents found to deploy.', 'WARN');
+          return;
+        }
+
+        addLog(`Found ${agents.length} target agents. Initiating high-speed WidgetDeployLowCodeAgent calls...`, 'INFO');
+
+        const apiKey = localStorage.getItem('gemini_api_key') || '';
+        const configId = "85240219-d6ee-415c-9242-d270267fa247";
+        let successCount = 0;
+
+        for (let i = 0; i < agents.length; i++) {
+          const ag = agents[i];
+          const pct = Math.round(((i + 1) / agents.length) * 100);
+          document.getElementById('progressBar').style.width = `${pct}%`;
+          document.getElementById('progressPercent').textContent = `${pct}%`;
+
+          try {
+            addLog(`Deploying "${ag.displayName}" (${ag.id})...`, 'INFO');
+            const depRes = await fetch(`https://discoveryengine.clients6.google.com/v1alpha/locations/global/widgetDeployLowCodeAgent?key=${apiKey}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                configId: configId,
+                additionalParams: { token: "-", origin: "LOW_CODE_AGENT" },
+                deployLowCodeAgentRequest: { name: ag.id, deployMode: "DEPLOY" },
+                location: "global"
+              })
+            });
+
+            if (depRes.ok) {
+              successCount++;
+              addLog(`✅ Successfully deployed & cleared Draft badge for: "${ag.displayName}"`, 'SUCCESS');
+            } else {
+              const err = await depRes.text();
+              addLog(`⚠️ Deploy notice on "${ag.displayName}": ${err}`, 'WARN');
+            }
+          } catch (e) {
+            addLog(`❌ Network error deploying "${ag.displayName}": ${e.message}`, 'ERROR');
+          }
+          await new Promise(r => setTimeout(r, 150));
+        }
+
+        document.getElementById('trackerTitle').textContent = 'Deployment Completed!';
+        document.getElementById('statusSpinner').classList.add('hidden');
+        addLog(`🎉 Finished! Successfully deployed ${successCount}/${agents.length} agents. Switch to your Gemini Enterprise tab and refresh!`, 'SUCCESS');
+      } catch (err) {
+        addLog(`Deployment failed: ${err.message}`, 'ERROR');
+        document.getElementById('trackerTitle').textContent = 'Deployment Failed';
+        document.getElementById('statusSpinner').classList.add('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          ⚡ Deploy Target Agents
+        `;
+      }
+    }
+
+    function renderReport(report) {
+      if (!report) return;
+      const reportId = report.migrationId || report.id || 'N/A';
+      const genDate = new Date(report.startTime || report.timestamp || Date.now()).toLocaleString();
+      document.getElementById('reportTimestamp').textContent = `Report ID: ${reportId} | Generated: ${genDate}`;
+
+      document.getElementById('metricAgents').textContent = report.summary?.totalMigratedAgents ?? 0;
+      document.getElementById('metricNotebooks').textContent = report.summary?.totalMigratedNotebooks ?? 0;
+      document.getElementById('metricFailed').textContent = report.summary?.totalFailed ?? 0;
+      document.getElementById('metricDuration').textContent = `${((report.durationMs || 0) / 1000).toFixed(2)}s`;
+
+      tableItems = report.results || report.items || [];
+      renderReportTableRows(tableItems);
+    }
+
+    function renderReportTableRows(items) {
+      const tbody = document.getElementById('reportTableBody');
+      tbody.innerHTML = '';
+
+      if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-gray-500">No items found matching filter.</td></tr>';
+        return;
+      }
+
+      items.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-gray-900/60 transition';
+        const isSuccess = item.status === 'SUCCESS' || item.status === 'DRY_RUN';
+        const statusBadge = isSuccess 
+          ? '<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">SUCCESS</span>'
+          : '<span class="px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-medium">FAILED</span>';
+
+        const typeBadge = item.type === 'NOTEBOOK'
+          ? '<span class="text-blue-400 font-semibold">📓 Notebook</span>'
+          : '<span class="text-purple-400 font-semibold">🤖 Agent</span>';
+
+        tr.innerHTML = `
+          <td class="py-3 px-4">${typeBadge}</td>
+          <td class="py-3 px-4 font-medium text-white">${item.displayName || 'Untitled'}</td>
+          <td class="py-3 px-4">${statusBadge}</td>
+          <td class="py-3 px-4 font-mono text-[11px] text-gray-400">${item.targetOwner || item.originalOwner || 'admin'}</td>
+          <td class="py-3 px-4 font-mono text-[11px] text-gray-500">${item.targetId || '-'}</td>
+          <td class="py-3 px-4 text-gray-400">${item.durationMs ? (item.durationMs / 1000).toFixed(2) + 's' : '-'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function filterReportTable() {
+      const q = document.getElementById('tableFilter').value.toLowerCase();
+      const filtered = tableItems.filter(i => 
+        (i.displayName && i.displayName.toLowerCase().includes(q)) ||
+        (i.targetOwner && i.targetOwner.toLowerCase().includes(q)) ||
+        (i.type && i.type.toLowerCase().includes(q))
+      );
+      renderReportTableRows(filtered);
+    }
+
+    function downloadReport(format) {
+      if (!activeReportData) return alert('No active report available.');
+      let content = '', filename = '', type = '';
+
+      const reportId = activeReportData.migrationId || activeReportData.id || 'export';
+      if (format === 'json') {
+        content = JSON.stringify(activeReportData, null, 2);
+        filename = `migration-report-${reportId}.json`;
+        type = 'application/json';
+      } else {
+        content = `# Gemini Enterprise Migration Certificate\nID: ${reportId}\nDuration: ${((activeReportData.durationMs || 0)/1000).toFixed(2)}s\n\nTotal Migrated Agents: ${activeReportData.summary?.totalMigratedAgents || 0}\nTotal Migrated Notebooks: ${activeReportData.summary?.totalMigratedNotebooks || 0}\n`;
+        filename = `migration-report-${reportId}.md`;
+        type = 'text/markdown';
+      }
+
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+    }
+
+    async function loadHistoricalRuns() {
+      const tbody = document.getElementById('historyTableBody');
+      try {
+        const res = await fetch('/api/reports');
+        const data = await res.json();
+        tbody.innerHTML = '';
+        if (!data.reports || data.reports.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-500">No historical report files found on disk.</td></tr>';
+          return;
+        }
+
+        data.reports.forEach(r => {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-gray-900/60 transition';
+          tr.innerHTML = `
+            <td class="py-3 px-4 font-mono text-[11px] text-gray-300">${r.timestamp}</td>
+            <td class="py-3 px-4 font-mono text-[11px] text-indigo-400">${r.id}</td>
+            <td class="py-3 px-4"><span class="px-2 py-0.5 rounded bg-gray-800 text-gray-300 font-mono text-[10px]">${r.mode}</span></td>
+            <td class="py-3 px-4 text-gray-300 font-medium">${r.migratedAgents} Agents, ${r.migratedNotebooks} Notebooks</td>
+            <td class="py-3 px-4 text-right">
+              <button onclick="viewHistoricalReport('${r.id}')" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded text-xs">View Report</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-red-400">Failed to load history: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function viewHistoricalReport(id) {
+      try {
+        const res = await fetch(`/api/reports/${id}`);
+        const data = await res.json();
+        activeReportData = data.report;
+        renderReport(activeReportData);
+        switchTab('report');
+      } catch (err) {
+        alert('Could not load report: ' + err.message);
+      }
+    }
+
+    function getActiveEnvParams() {
+      const srcProjectId = (document.getElementById('srcProjectId')?.value || '').trim() || 'ancient-sandbox-322523';
+      const srcLocation = (document.getElementById('srcLocation')?.value || '').trim() || 'global';
+      const srcCollectionId = (document.getElementById('srcCollectionId')?.value || '').trim() || 'default_collection';
+      const srcAppId = (document.getElementById('srcAppId')?.value || '').trim() || 'cosmere-1756136513915_1756136523768';
+
+      const tgtProjectId = (document.getElementById('tgtProjectId')?.value || '').trim() || 'testgebackupandrestorev2';
+      const tgtLocation = (document.getElementById('tgtLocation')?.value || '').trim() || 'global';
+      const tgtCollectionId = (document.getElementById('tgtCollectionId')?.value || '').trim() || 'default_collection';
+      const tgtAppId = (document.getElementById('tgtAppId')?.value || '').trim() || 'testnotebooks_1784725785748';
+
+      const queryParams = new URLSearchParams({
+        srcProjectId, srcLocation, srcCollectionId, srcAppId,
+        tgtProjectId, tgtLocation, tgtCollectionId, tgtAppId
+      }).toString();
+
+      const payload = {
+        srcProjectId, srcLocation, srcCollectionId, srcAppId,
+        tgtProjectId, tgtLocation, tgtCollectionId, tgtAppId
+      };
+
+      return { queryParams, payload, srcProjectId, tgtProjectId, srcLocation, tgtLocation, srcCollectionId, tgtCollectionId, srcAppId, tgtAppId };
+    }
+
+    async function clearTargetDestination() {
+      const env = getActiveEnvParams();
+      if (!confirm(`Are you sure you want to reset the target instance (${env.tgtProjectId} / ${env.tgtAppId}) and clear reports?\n\nThis will delete:\n• All Destination Notebooks\n• All Custom Agents\n• All Chat History Sessions\n• All Migration Reports in ./reports/\n• All User Handover Checklists in ./user_handover_reports/\n• All Local Archived Artifacts\n\nThis action cannot be undone.`)) {
+        return;
+      }
+      const btn = document.getElementById('btnClearTarget');
+      btn.disabled = true;
+      btn.innerHTML = `
+        <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Resetting Target Destination & Reports...</span>
+      `;
+
+      try {
+        const res = await fetch('/api/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(env.payload)
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.message);
+
+        alert(`🎉 Full Reset Completed Successfully!\n\n• Deleted ${data.deletedNotebooks || 0} Notebooks\n• Deleted ${data.deletedAgents || 0} Custom Agents\n• Deleted ${data.deletedSessions || 0} Chat Sessions\n• Deleted ${data.clearedReports || 0} Migration Reports from ./reports/\n• Cleared User Handover Folders from ./user_handover_reports/\n• Cleared Local Artifact Archive`);
+
+        // Refresh tables if loaded
+        if (typeof loadHistoricalRuns === 'function') loadHistoricalRuns();
+        if (typeof loadUserReports === 'function') loadUserReports();
+        if (typeof loadTargetSessions === 'function') loadTargetSessions();
+        if (typeof loadDiscoveredArtifacts === 'function') loadDiscoveredArtifacts();
+      } catch (err) {
+        alert('Target Reset failed: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          <span>Reset Target (Notebooks, Agents, Chat History, Reports & Artifacts)</span>
+        `;
+      }
+    }
+
+    let publisherAgentsList = [];
+
+    function addPubLog(msg, level = 'INFO') {
+      const logs = document.getElementById('pubDebugLogs');
+      if (!logs) return;
+      const time = new Date().toLocaleTimeString();
+      let color = 'text-gray-300';
+      if (level === 'ERROR') color = 'text-red-400 font-semibold';
+      else if (level === 'WARN') color = 'text-amber-400';
+      else if (level === 'SUCCESS') color = 'text-emerald-400 font-medium';
+
+      const line = document.createElement('div');
+      line.className = color;
+      line.textContent = `[${time}] [${level}] ${msg}`;
+      logs.appendChild(line);
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    async function loadPublisherAgents() {
+      const env = getActiveEnvParams();
+      const pubTargetEl = document.getElementById('pubTargetEngine');
+      if (pubTargetEl) pubTargetEl.value = `${env.tgtProjectId} / ${env.tgtAppId}`;
+
+      const tbody = document.getElementById('pubAgentsTableBody');
+      if (!tbody) return;
+      tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-gray-500"><div class="flex flex-col items-center gap-2"><div class="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div><span class="text-xs">Fetching target agents from ${env.tgtProjectId}...</span></div></td></tr>`;
+
+      try {
+        const res = await fetch(`/api/agents/list-target?projectId=${encodeURIComponent(env.tgtProjectId)}&location=${encodeURIComponent(env.tgtLocation)}&collectionId=${encodeURIComponent(env.tgtCollectionId)}&engineId=${encodeURIComponent(env.tgtAppId)}`);
+        const data = await res.json();
+        publisherAgentsList = data.agents || [];
+
+        if (publisherAgentsList.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-gray-500">No agents found in target engine (${env.tgtProjectId}).</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = '';
+        publisherAgentsList.forEach(ag => {
+          const tr = document.createElement('tr');
+          tr.id = `pub-row-${ag.id}`;
+          tr.className = 'hover:bg-gray-900/60 transition';
+          const isManaged = (ag.name && ag.name.includes('deep_research')) || ag.id === 'deep_research';
+          
+          tr.innerHTML = `
+            <td class="py-3 px-4 font-sans font-medium text-white flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full ${isManaged ? 'bg-blue-400' : 'bg-emerald-400'}"></span>
+              ${ag.displayName || 'Untitled'}
+            </td>
+            <td class="py-3 px-4 text-gray-400">${ag.id}</td>
+            <td class="py-3 px-4">
+              <span class="px-2 py-0.5 rounded ${ag.state === 'ENABLED' ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'} font-semibold text-[10px]">
+                ${ag.state || 'PRIVATE'}
+              </span>
+            </td>
+            <td class="py-3 px-4 text-gray-500 truncate max-w-xs" title="${ag.activeRevision || 'None'}">
+              ${ag.activeRevision ? ag.activeRevision.split('/').pop() : 'Draft Only'}
+            </td>
+            <td class="py-3 px-4 text-right">
+              <button onclick="deploySingleAgent('${ag.id}', '${(ag.displayName || '').replace(/'/g, "\\'")}')" id="btn-dep-${ag.id}" class="px-3 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 rounded-lg text-xs font-semibold transition">
+                🚀 Test Deploy
+              </button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        addPubLog(`Loaded ${publisherAgentsList.length} target agents into publisher table for ${env.tgtProjectId}.`, 'SUCCESS');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-red-400">Failed to load target agents: ${err.message}</td></tr>`;
+        addPubLog(`Failed to load target agents: ${err.message}`, 'ERROR');
+      }
+    }
+
+    async function deploySingleAgent(agentId, displayName) {
+      const env = getActiveEnvParams();
+      const btn = document.getElementById(`btn-dep-${agentId}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Publishing...';
+      }
+
+      addPubLog(`➡️ Publishing Agent "${displayName}" (${agentId}) in project ${env.tgtProjectId}...`, 'INFO');
+      const payload = {
+        agentId: agentId,
+        projectId: env.tgtProjectId,
+        location: env.tgtLocation,
+        collectionId: env.tgtCollectionId,
+        engineId: env.tgtAppId
+      };
+
+      try {
+        const start = performance.now();
+        const res = await fetch('/api/agents/widget-deploy', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const duration = Math.round(performance.now() - start);
+        const resJson = await res.json().catch(() => ({}));
+
+        if (res.ok) {
+          addPubLog(`✅ HTTP ${res.status} OK (${duration}ms) - Successfully Published "${displayName}"!`, 'SUCCESS');
+          if (btn) {
+            btn.className = 'px-3 py-1 bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold';
+            btn.innerHTML = '✅ Published';
+          }
+        } else {
+          const errMsg = resJson.message || JSON.stringify(resJson);
+          if (errMsg.includes('consent not granted')) {
+            addPubLog(`⚠️ Consent Required (${duration}ms): "${displayName}" requires end-user tool consent before enabling live execution.`, 'WARN');
+          } else {
+            addPubLog(`❌ HTTP ${res.status} Error (${duration}ms): ${errMsg}`, 'ERROR');
+          }
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '⚠️ Retry';
+          }
+        }
+      } catch (e) {
+        addPubLog(`❌ Network Exception: ${e.message}`, 'ERROR');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '⚠️ Retry';
+        }
+      }
+    }
+
+    async function deployAllPublisherAgents() {
+      const btn = document.getElementById('btnPubDeployAll');
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Deploying All...';
+
+      if (publisherAgentsList.length === 0) {
+        await loadPublisherAgents();
+      }
+
+      addPubLog(`⚡ Starting bulk deployment for ${publisherAgentsList.length} target agents...`, 'INFO');
+      let success = 0;
+
+      for (const ag of publisherAgentsList) {
+        try {
+          await deploySingleAgent(ag.id, ag.displayName);
+          success++;
+          await new Promise(r => setTimeout(r, 150));
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+
+      addPubLog(`🎉 Batch Deploy Completed: ${success}/${publisherAgentsList.length} processed. Check your Gemini Enterprise tab!`, 'SUCCESS');
+      btn.disabled = false;
+      btn.innerHTML = `
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+        <span>⚡ Deploy All Draft Agents</span>
+      `;
+    }
+
+    let sourceSessionsList = [];
+    let targetSessionsList = [];
+
+    function addSessionLog(msg, level = 'INFO') {
+      const logs = document.getElementById('sessionDebugLogs');
+      if (!logs) return;
+      const time = new Date().toLocaleTimeString();
+      let color = 'text-cyan-400';
+      if (level === 'ERROR') color = 'text-red-400 font-semibold';
+      else if (level === 'SUCCESS') color = 'text-emerald-400 font-medium';
+      else if (level === 'WARN') color = 'text-amber-400';
+
+      const line = document.createElement('div');
+      line.className = color;
+      line.textContent = `[${time}] [${level}] ${msg}`;
+      logs.appendChild(line);
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    async function loadSourceSessions() {
+      const env = getActiveEnvParams();
+      const lblSrc = document.getElementById('lblSrcProject');
+      if (lblSrc) lblSrc.textContent = env.srcProjectId;
+
+      const tbody = document.getElementById('srcSessionsTableBody');
+      const countEl = document.getElementById('sourceSessionCount');
+      const btn = document.getElementById('btnDiscoverSessions');
+      if (btn) btn.disabled = true;
+
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="py-8 text-center text-gray-500">
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-xs">Discovering source chat sessions from ${env.srcProjectId}...</span>
+            </div>
+          </td>
+        </tr>
+      `;
+
+      addSessionLog(`🔍 Fetching source chat sessions from Discovery Engine API for project ${env.srcProjectId}...`, 'INFO');
+
+      try {
+        const res = await fetch(`/api/sessions/list-source?${env.queryParams}`);
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        sourceSessionsList = data.sessions || [];
+
+        countEl.textContent = `${sourceSessionsList.length} sessions found`;
+        tbody.innerHTML = '';
+
+        if (sourceSessionsList.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-gray-500">No chat sessions found in source engine (${env.srcProjectId}).</td></tr>`;
+          addSessionLog(`No chat sessions found in source engine (${env.srcProjectId}).`, 'WARN');
+          if (btn) btn.disabled = false;
+          return;
+        }
+
+        sourceSessionsList.forEach((s, idx) => {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-gray-800/40 transition';
+          const title = s.displayName || 'Untitled Chat';
+          const userId = s.userPseudoId || 'Anonymous';
+          const turnsCount = (s.turns && s.turns.length) || 0;
+          const state = s.state || 'IN_PROGRESS';
+
+          tr.innerHTML = `
+            <td class="py-3 px-4 text-white font-medium flex items-center gap-2">
+              <span class="text-cyan-400">💬</span>
+              <span>${title}</span>
+            </td>
+            <td class="py-3 px-4 text-gray-400 text-xs">${userId}</td>
+            <td class="py-3 px-4 text-cyan-300">${turnsCount} turn(s)</td>
+            <td class="py-3 px-4">
+              <span class="px-2 py-0.5 rounded text-[11px] font-semibold ${state === 'COMPLETED' ? 'bg-gray-800 text-gray-400' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}">
+                ${state}
+              </span>
+            </td>
+            <td class="py-3 px-4 text-right">
+              <div class="flex items-center justify-end gap-2">
+                <button onclick="openSessionModal(${idx})" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-cyan-300 hover:text-white border border-gray-700 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                  👁️ View Dialogue
+                </button>
+                <button onclick="migrateSingleSession(${idx})" id="btn-sess-${idx}" class="px-3 py-1 bg-cyan-600/30 hover:bg-cyan-600 text-cyan-300 hover:text-white border border-cyan-500/40 rounded-lg text-xs font-semibold transition">
+                  🚀 Restore
+                </button>
+              </div>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        addSessionLog(`Discovered ${sourceSessionsList.length} chat history sessions in source engine (${env.srcProjectId}).`, 'SUCCESS');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-red-400">Failed to list source sessions: ${err.message}</td></tr>`;
+        addSessionLog(`Failed to list source sessions: ${err.message}`, 'ERROR');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function loadTargetSessions() {
+      const env = getActiveEnvParams();
+      const lblTgt = document.getElementById('lblTgtProject');
+      if (lblTgt) lblTgt.textContent = env.tgtProjectId;
+
+      const tbody = document.getElementById('tgtSessionsTableBody');
+      const countEl = document.getElementById('targetSessionCount');
+
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="py-6 text-center text-gray-500">
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-xs">Verifying target engine sessions in ${env.tgtProjectId}...</span>
+            </div>
+          </td>
+        </tr>
+      `;
+
+      try {
+        const res = await fetch(`/api/sessions/list-target?${env.queryParams}`);
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        targetSessionsList = data.sessions || [];
+
+        countEl.textContent = `${targetSessionsList.length} sessions restored in target`;
+        tbody.innerHTML = '';
+
+        if (targetSessionsList.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-gray-500">No sessions currently in target engine (${env.tgtProjectId}). Click "Migrate All Sessions" to restore.</td></tr>`;
+          return;
+        }
+
+        targetSessionsList.forEach(s => {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-gray-800/40 transition';
+          const title = s.displayName || 'Untitled Chat';
+          const resId = s.name.split('/').pop();
+          const userId = s.userPseudoId || 'Anonymous';
+          const turnsCount = (s.turns && s.turns.length) || 0;
+
+          tr.innerHTML = `
+            <td class="py-3 px-4 text-emerald-300 font-medium flex items-center gap-2">
+              <span>📌</span>
+              <span>${title}</span>
+            </td>
+            <td class="py-3 px-4 text-gray-400 font-mono text-xs">${resId}</td>
+            <td class="py-3 px-4 text-gray-400 text-xs">${userId}</td>
+            <td class="py-3 px-4 text-cyan-300">${turnsCount} turn(s)</td>
+            <td class="py-3 px-4">
+              <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                ✅ Live in Target
+              </span>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        addSessionLog(`Target engine (${env.tgtProjectId}) has ${targetSessionsList.length} active sessions ready in sidebar.`, 'SUCCESS');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-red-400">Failed to list target sessions: ${err.message}</td></tr>`;
+        addSessionLog(`Failed to list target sessions: ${err.message}`, 'ERROR');
+      }
+    }
+
+    async function migrateSingleSession(idx) {
+      const env = getActiveEnvParams();
+      const session = sourceSessionsList[idx];
+      if (!session) return;
+
+      const btn = document.getElementById(`btn-sess-${idx}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Restoring...';
+      }
+
+      addSessionLog(`➡️ Restoring session "${session.displayName || 'Chat'}" to target ${env.tgtProjectId}...`, 'INFO');
+
+      try {
+        const res = await fetch('/api/sessions/migrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session, ...env.payload })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          addSessionLog(`✅ Restored session "${session.displayName}" -> Target Resource: ${data.session.name.split('/').pop()}`, 'SUCCESS');
+          if (btn) {
+            btn.className = 'px-3 py-1 bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold';
+            btn.innerHTML = '✅ Restored';
+          }
+          await loadTargetSessions();
+        } else {
+          throw new Error(data.message || 'Restoration failed');
+        }
+      } catch (err) {
+        addSessionLog(`❌ Failed to restore session: ${err.message}`, 'ERROR');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '⚠️ Retry';
+        }
+      }
+    }
+
+    async function migrateAllSessions() {
+      const env = getActiveEnvParams();
+      const btn = document.getElementById('btnMigrateAllSessions');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Migrating All Sessions...';
+      }
+
+      addSessionLog(`⚡ Starting bulk chat session migration to target engine ${env.tgtProjectId}...`, 'INFO');
+
+      try {
+        const res = await fetch('/api/sessions/migrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ all: true, ...env.payload })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          addSessionLog(`🎉 Bulk Session Migration Complete! ${data.results.filter(r => r.success).length}/${data.total} restored successfully.`, 'SUCCESS');
+          await loadTargetSessions();
+        } else {
+          throw new Error(data.message || 'Batch migration failed');
+        }
+      } catch (err) {
+        addSessionLog(`❌ Bulk migration error: ${err.message}`, 'ERROR');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = `
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span>⚡ Migrate All Sessions</span>
+          `;
+        }
+      }
+    }
+
+    let currentModalSession = null;
+    let currentModalTranscript = '';
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function extractTextFromResponse(result) {
+      if (!result) return '';
+      let text = '';
+
+      if (result.replies && Array.isArray(result.replies)) {
+        for (const reply of result.replies) {
+          const content = reply.groundedContent?.content;
+          if (content) {
+            if (!content.thought && content.text) {
+              text = content.text;
+              break;
+            }
+            if (content.inlineData?.data) {
+              try {
+                let b64 = content.inlineData.data;
+                const pad = b64.length % 4;
+                if (pad) b64 += '='.repeat(4 - pad);
+                const decoded = atob(b64);
+                const match = decoded.match(/<h1[^>]*>(.*?)<\/h1>/i) || decoded.match(/literalString":\s*"([^"]+)"/);
+                if (match) {
+                  text = `[Interactive Canvas Panel: ${match[1].replace(/<[^>]+>/g, '').trim()}]`;
+                  break;
+                }
+                text = '[Interactive UI Canvas Component]';
+                break;
+              } catch {}
+            }
+            if (content.file) {
+              text = `[Generated File: ${content.file.mimeType || 'attachment'}]`;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!text) {
+        if (typeof result === 'string') {
+          text = result;
+        } else if (result.answerText) {
+          text = result.answerText;
+        } else if (result.answer_text) {
+          text = result.answer_text;
+        } else if (result.steps) {
+          text = result.steps.map(s => s.description || s.thought || '').filter(Boolean).join('\n\n');
+        } else if (result.planStep?.parts) {
+          text = result.planStep.parts.map(p => p.text || '').join('');
+        } else {
+          const possibleKeys = ['text', 'content', 'message', 'reply'];
+          for (const k of possibleKeys) {
+            if (result[k] && typeof result[k] === 'string') {
+              text = result[k];
+              break;
+            }
+          }
+          if (!text && result.reply?.replyText) text = result.reply.replyText;
+        }
+      }
+
+      return text || JSON.stringify(result, null, 2);
+    }
+
+    async function openSessionModal(idx) {
+      const session = sourceSessionsList[idx];
+      if (!session) return;
+
+      currentModalSession = session;
+      const modal = document.getElementById('sessionModal');
+      const titleEl = document.getElementById('modalSessionTitle');
+      const subtitleEl = document.getElementById('modalSessionSubtitle');
+      const convoEl = document.getElementById('modalSessionConversation');
+      const turnsCountEl = document.getElementById('modalTurnsCount');
+
+      titleEl.textContent = session.displayName || 'Untitled Chat';
+      subtitleEl.textContent = `User: ${session.userPseudoId || 'Anonymous'} | Resource: ${session.name.split('/').pop()}`;
+      modal.classList.remove('hidden');
+
+      convoEl.innerHTML = `
+        <div class="flex flex-col items-center justify-center py-12 text-gray-500 gap-2">
+          <div class="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+          <span class="text-xs">Assembling full dialogue & fetching assistant responses...</span>
+        </div>
+      `;
+
+      // 1. Group & Deduplicate Turns
+      const rawTurns = session.turns || [];
+      const pairedTurns = [];
+
+      for (const turn of rawTurns) {
+        let userText = turn.query?.text;
+        if (!userText && turn.query?.parts) {
+          userText = turn.query.parts.map(p => p.text || '').join(' ').trim();
+        }
+
+        let answerContent = '';
+        let fileBadge = '';
+        const answerUri = turn.assistAnswer || turn.answer;
+
+        if (answerUri) {
+          if (typeof answerUri === 'string' && answerUri.startsWith('projects/')) {
+            try {
+              const res = await fetch(`/api/sessions/answer?resourceName=${encodeURIComponent(answerUri)}`);
+              if (res.ok) {
+                const data = await res.json();
+                answerContent = extractTextFromResponse(data.answer);
+                if (data.answer?.replies) {
+                  for (const rep of data.answer.replies) {
+                    const f = rep.groundedContent?.content?.file;
+                    if (f) {
+                      fileBadge = `<div class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 rounded-lg text-xs font-semibold mb-2">🖼️ Generated File (${escapeHtml(f.mimeType || 'image')})</div>`;
+                    }
+                  }
+                }
+              } else {
+                answerContent = `*(Assistant Answer reference: ${answerUri})*`;
+              }
+            } catch (e) {
+              answerContent = `*(Failed to fetch response: ${e.message})*`;
+            }
+          } else if (typeof answerUri === 'string') {
+            answerContent = answerUri;
+          }
+        }
+
+        if (userText) {
+          const last = pairedTurns[pairedTurns.length - 1];
+          if (last && last.userText === userText) {
+            if (answerContent && (!last.answerContent || last.answerContent.startsWith('*('))) {
+              last.answerContent = answerContent;
+              last.fileBadge = fileBadge;
+            }
+          } else {
+            pairedTurns.push({
+              userText,
+              answerContent: answerContent || '*(Prompt initiated / awaiting response)*',
+              fileBadge
+            });
+          }
+        }
+      }
+
+      turnsCountEl.textContent = `${pairedTurns.length} turn(s) in conversation`;
+
+      let transcriptMd = `# Chat Transcript: ${session.displayName || 'Untitled Chat'}\n`;
+      transcriptMd += `**User:** ${session.userPseudoId || 'Anonymous'}\n`;
+      transcriptMd += `**Date:** ${session.startTime || new Date().toISOString()}\n\n---\n\n`;
+
+      const turnCards = [];
+
+      for (let i = 0; i < pairedTurns.length; i++) {
+        const item = pairedTurns[i];
+        transcriptMd += `### Turn ${i + 1}\n\n**👤 User:**\n${item.userText}\n\n**🤖 Gemini Assistant:**\n${item.answerContent}\n\n---\n\n`;
+
+        turnCards.push(`
+          <div class="space-y-3">
+            <!-- User Query Bubble -->
+            <div class="flex items-start justify-end gap-3">
+              <div class="bg-indigo-600/30 border border-indigo-500/40 rounded-2xl rounded-tr-none px-4 py-3 max-w-xl text-white shadow-md">
+                <div class="text-[11px] font-semibold text-indigo-300 mb-1 flex items-center gap-1.5 justify-end">
+                  <span>User Query</span>
+                  <span>👤</span>
+                </div>
+                <div class="text-sm whitespace-pre-wrap leading-relaxed">${escapeHtml(item.userText)}</div>
+              </div>
+            </div>
+
+            <!-- Assistant Answer Card -->
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0 shadow-md">
+                GE
+              </div>
+              <div class="bg-gray-950 border border-gray-800 rounded-2xl rounded-tl-none p-4 max-w-2xl text-gray-200 shadow-md space-y-2 flex-1">
+                <div class="text-[11px] font-semibold text-cyan-400 flex items-center justify-between border-b border-gray-800/80 pb-2">
+                  <span>Gemini Assistant Response</span>
+                  <span class="text-[10px] text-gray-500 font-mono">Turn ${i + 1}</span>
+                </div>
+                ${item.fileBadge || ''}
+                <div class="text-sm whitespace-pre-wrap leading-relaxed font-sans text-gray-300">${escapeHtml(item.answerContent)}</div>
+              </div>
+            </div>
+          </div>
+        `);
+      }
+
+      currentModalTranscript = transcriptMd;
+      convoEl.innerHTML = turnCards.length > 0 ? turnCards.join('') : '<div class="text-center text-gray-500 py-8">No turns found in this session.</div>';
+    }
+
+    function closeSessionModal() {
+      document.getElementById('sessionModal').classList.add('hidden');
+      currentModalSession = null;
+    }
+
+    function downloadSessionTranscript() {
+      if (!currentModalTranscript) return;
+      const title = (currentModalSession?.displayName || 'chat_transcript').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const blob = new Blob([currentModalTranscript], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // ==========================================
+    // USER ARTIFACTS GALLERY LOGIC
+    // ==========================================
+    let loadedArtifacts = [];
+    let currentActiveFilter = 'ALL';
+    let currentPreviewArtifact = null;
+
+    async function loadDiscoveredArtifacts() {
+      const env = getActiveEnvParams();
+      const btn = document.getElementById('btnScanArtifacts');
+      btn.disabled = true;
+      btn.innerHTML = `
+        <svg class="animate-spin w-4 h-4 text-pink-400" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Scanning Sessions...</span>
+      `;
+
+      try {
+        const res = await fetch(`/api/artifacts/list?${env.queryParams}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.message);
+
+        loadedArtifacts = data.artifacts || [];
+
+        // Update Stats
+        const docsCount = loadedArtifacts.filter(a => a.type === 'CANVAS_DOCUMENT').length;
+        const slidesCount = loadedArtifacts.filter(a => a.type === 'SLIDE_DECK').length;
+        const canvasCount = loadedArtifacts.filter(a => a.type === 'CANVAS_WIDGET').length;
+        const filesCount = loadedArtifacts.filter(a => a.type === 'GENERATED_FILE' || a.type === 'GENERATED_IMAGE').length;
+
+        document.getElementById('statTotalArtifacts').textContent = loadedArtifacts.length;
+        document.getElementById('statCanvasDocs').textContent = docsCount;
+        document.getElementById('statSlideDecks').textContent = slidesCount;
+        document.getElementById('statCanvasWidgets').textContent = canvasCount;
+        document.getElementById('statGeneratedFiles').textContent = filesCount;
+        document.getElementById('artifactsCountBadge').textContent = `Discovered ${loadedArtifacts.length} total user artifacts for ${env.srcProjectId}`;
+
+        renderArtifactsTable();
+      } catch (err) {
+        alert('Failed to scan artifacts: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <span>🔍 Scan Artifacts</span>
+        `;
+      }
+    }
+
+    function filterArtifacts(type) {
+      currentActiveFilter = type;
+      document.querySelectorAll('.art-filter-btn').forEach(b => {
+        b.className = 'art-filter-btn px-3 py-1 bg-gray-800 text-gray-400 hover:text-white rounded-lg text-xs font-semibold';
+      });
+      const activeBtn = document.getElementById('filter-art-' + type);
+      if (activeBtn) activeBtn.className = 'art-filter-btn px-3 py-1 bg-pink-600 text-white rounded-lg text-xs font-semibold';
+      renderArtifactsTable();
+    }
+
+    function renderArtifactsTable() {
+      const tbody = document.getElementById('artifactsTableBody');
+      const filtered = currentActiveFilter === 'ALL' 
+        ? loadedArtifacts 
+        : loadedArtifacts.filter(a => a.type === currentActiveFilter || (currentActiveFilter === 'GENERATED_FILE' && a.type === 'GENERATED_IMAGE'));
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-8 text-center text-gray-500">
+              No artifacts match the selected filter.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((art, idx) => {
+        let typeBadge = '';
+        if (art.type === 'CANVAS_DOCUMENT') {
+          typeBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-950 text-purple-400 border border-purple-800 flex items-center gap-1 w-max">📄 Document</span>';
+        } else if (art.type === 'SLIDE_DECK') {
+          typeBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950 text-cyan-400 border border-cyan-800 flex items-center gap-1 w-max">📊 Slide Deck</span>';
+        } else if (art.type === 'CANVAS_WIDGET') {
+          typeBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-950 text-indigo-400 border border-indigo-800 flex items-center gap-1 w-max">🎮 Canvas WebApp</span>';
+        } else {
+          typeBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-1 w-max">🖼️ Media / File</span>';
+        }
+
+        const previewBtn = art.htmlContent ? `
+          <button onclick="previewArtifact('${art.id}')" class="px-2.5 py-1 bg-pink-600/20 hover:bg-pink-600 text-pink-300 hover:text-white border border-pink-500/30 rounded-lg text-[11px] font-medium transition flex items-center gap-1">
+            <span>👁️ Preview</span>
+          </button>
+        ` : '';
+
+        return `
+          <tr class="hover:bg-gray-900/60 transition">
+            <td class="py-3 px-4">${typeBadge}</td>
+            <td class="py-3 px-4 font-semibold text-white">${escapeHtml(art.title)}</td>
+            <td class="py-3 px-4 text-gray-300">${escapeHtml(art.sessionTitle)} (Turn ${art.turnIndex})</td>
+            <td class="py-3 px-4 text-gray-400 font-mono text-[11px]">${escapeHtml(art.userPseudoId || 'admin')}</td>
+            <td class="py-3 px-4 text-gray-400 text-[11px]">${escapeHtml(art.description || '')}</td>
+            <td class="py-3 px-4 text-right flex items-center justify-end gap-2">
+              ${previewBtn}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function previewArtifact(id) {
+      const art = loadedArtifacts.find(a => a.id === id);
+      if (!art) return;
+      currentPreviewArtifact = art;
+
+      document.getElementById('previewModalTitle').textContent = art.title;
+      document.getElementById('previewModalSubtitle').textContent = `From conversation: "${art.sessionTitle}" (Turn ${art.turnIndex})`;
+      document.getElementById('previewModalIcon').textContent = art.type === 'CANVAS_DOCUMENT' ? '📄' : (art.type === 'SLIDE_DECK' ? '📊' : (art.type === 'CANVAS_WIDGET' ? '🎮' : '🖼️'));
+
+      const iframe = document.getElementById('artifactIframe');
+      iframe.src = `/api/artifacts/render/${encodeURIComponent(art.id)}`;
+
+      document.getElementById('artifactPreviewModal').classList.remove('hidden');
+    }
+
+    function closeArtifactPreviewModal() {
+      document.getElementById('artifactPreviewModal').classList.add('hidden');
+      const iframe = document.getElementById('artifactIframe');
+      iframe.src = 'about:blank';
+      currentPreviewArtifact = null;
+    }
+
+    function downloadCurrentArtifactHtml() {
+      if (!currentPreviewArtifact || !currentPreviewArtifact.htmlContent) return;
+      const filename = `${currentPreviewArtifact.id}.html`;
+      const blob = new Blob([currentPreviewArtifact.htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    async function exportAllArtifactsToDisk() {
+      const env = getActiveEnvParams();
+      const btn = document.getElementById('btnExportArtifacts');
+      btn.disabled = true;
+      btn.innerHTML = `
+        <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Exporting to Disk...</span>
+      `;
+
+      try {
+        const res = await fetch('/api/artifacts/export-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(env.payload)
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.message);
+        alert(`🎉 Exported ${data.count} artifacts to local folder:\n${data.exportDir}`);
+      } catch (err) {
+        alert('Failed to export artifacts: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          <span>📦 Export All Artifacts to Disk</span>
+        `;
+      }
+    }
+
+    // ==========================================
+    // USER HANDOVER & EMAIL DISPATCHER
+    // ==========================================
+    let loadedUserReports = [];
+
+    async function loadUserReports() {
+      const tbody = document.getElementById('userReportsTableBody');
+      const badge = document.getElementById('userReportsBadge');
+      const sel = document.getElementById('selEmailUser');
+
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="4" class="py-8 text-center text-gray-500">
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-xs">Scanning migration results and discovered users...</span>
+            </div>
+          </td>
+        </tr>
+      `;
+
+      try {
+        const res = await fetch('/api/user-reports');
+        const data = await res.json();
+        loadedUserReports = data.users || [];
+
+        badge.textContent = `${loadedUserReports.length} User(s) Discovered`;
+
+        if (loadedUserReports.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="4" class="py-8 text-center text-gray-500">
+                No user records found. Run a migration in the Migration Studio first.
+              </td>
+            </tr>
+          `;
+          sel.innerHTML = '<option value="">No users available</option>';
+          return;
+        }
+
+        // Populate dropdown
+        sel.innerHTML = loadedUserReports.map(u => `
+          <option value="${escapeHtml(u.userEmail)}">${escapeHtml(u.userEmail)} (${u.notebooksCount} NBs, ${u.agentsCount} Agents, ${u.notebookArtifactsCount || 0} Artifacts)</option>
+        `).join('');
+
+        // Populate table
+        tbody.innerHTML = loadedUserReports.map(u => `
+          <tr class="hover:bg-gray-900/60 transition">
+            <td class="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+              <span class="w-7 h-7 rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center text-xs font-mono">👤</span>
+              <div>
+                <div>${escapeHtml(u.userEmail)}</div>
+                <div class="text-[10px] text-gray-500 font-mono">Role: Migration Target User</div>
+              </div>
+            </td>
+            <td class="py-3.5 px-4 text-gray-300">
+              <div class="flex flex-wrap gap-1.5">
+                <span class="px-2 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800 text-[10px] font-mono">📓 ${u.notebooksCount} NBs</span>
+                <span class="px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800 text-[10px] font-mono">🤖 ${u.agentsCount} Agents</span>
+                <span class="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800 text-[10px] font-mono">📑 ${u.notebookArtifactsCount || 0} NotebookLM Artifacts</span>
+                <span class="px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-800 text-[10px] font-mono">💬 ${u.sessionsCount} Chats</span>
+              </div>
+            </td>
+            <td class="py-3.5 px-4 text-gray-400 font-mono text-[11px]">
+              <div class="flex items-center gap-1.5 text-emerald-400">
+                <span>📁</span>
+                <span class="truncate max-w-[200px]" title="${escapeHtml(u.folderPath)}">${escapeHtml(u.folderPath)}</span>
+              </div>
+            </td>
+            <td class="py-3.5 px-4 text-right">
+              <div class="flex items-center justify-end gap-2">
+                <button onclick="previewUserChecklist('${escapeHtml(u.userEmail)}')" class="px-2.5 py-1 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                  <span>👁️ Preview HTML</span>
+                </button>
+                <button onclick="selectUserForEmail('${escapeHtml(u.userEmail)}')" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                  <span>✉️ Email</span>
+                </button>
+              </div>
+            </td>
+          </tr>
+        `).join('');
+
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-red-400">Failed to load users: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function generateAllUserBundles() {
+      const btn = document.getElementById('btnGenerateBundles');
+      btn.disabled = true;
+      btn.innerHTML = `<span>⏳ Generating Folders & Reports...</span>`;
+      try {
+        const res = await fetch('/api/user-reports/generate', { method: 'POST' });
+        const data = await res.json();
+        if (data.error) throw new Error(data.message);
+        alert(`🎉 Success!\n${data.message}\n\nAll user folders, markdown checklists, HTML emails, and artifact files have been written to ./user_handover_reports/ organized per user.`);
+        await loadUserReports();
+      } catch (err) {
+        alert('Error generating bundles: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>📦 Generate / Update All User Folders</span>`;
+      }
+    }
+
+    function previewUserChecklist(userEmail) {
+      document.getElementById('checklistModalTitle').textContent = `Migration Handover Checklist`;
+      document.getElementById('checklistModalSubtitle').textContent = `Target User: ${userEmail}`;
+      const iframe = document.getElementById('checklistIframe');
+      iframe.src = `/api/user-reports/render/${encodeURIComponent(userEmail)}`;
+      document.getElementById('userChecklistModal').classList.remove('hidden');
+    }
+
+    function selectUserForEmail(userEmail) {
+      document.getElementById('selEmailUser').value = userEmail;
+      document.getElementById('inputTestEmail').focus();
+    }
+
+    async function sendTestHandoverEmail() {
+      const selUser = document.getElementById('selEmailUser').value;
+      const senderEmail = (document.getElementById('inputSenderEmail')?.value || 'admin@wdufrin.altostrat.com').trim();
+      const targetEmail = document.getElementById('inputTestEmail').value.trim();
+      const btn = document.getElementById('btnSendTestEmail');
+      const feedback = document.getElementById('emailDispatchFeedback');
+      const statusText = document.getElementById('emailDispatchStatusText');
+      const msgEl = document.getElementById('emailDispatchMessage');
+
+      if (!selUser) {
+        alert('Please select a user handover bundle first.');
+        return;
+      }
+      if (!targetEmail) {
+        alert('Please provide a recipient email address.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<span>⏳ Dispatching via Google Gmail API...</span>`;
+      feedback.classList.remove('hidden');
+      statusText.textContent = 'Calling Gmail API...';
+      statusText.className = 'text-amber-400 font-mono text-[11px]';
+      msgEl.textContent = `Connecting to Google Gmail API (gmail.googleapis.com) to send from ${senderEmail} to ${targetEmail}...`;
+
+      try {
+        const env = getActiveEnvParams();
+        const headers = { 'Content-Type': 'application/json' };
+        if (env?.queryParams?.token) {
+          headers['Authorization'] = `Bearer ${env.queryParams.token}`;
+        }
+
+        const res = await fetch('/api/user-reports/send-email', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            userEmail: selUser,
+            senderEmail: senderEmail,
+            overrideRecipientEmail: targetEmail
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.message);
+
+        statusText.textContent = 'SENT (200 OK)';
+        statusText.className = 'text-emerald-400 font-mono text-[11px] font-bold';
+        msgEl.innerHTML = `
+          <div class="space-y-1">
+            <div class="text-emerald-400 font-semibold">✅ ${data.message}</div>
+            <div class="text-[11px] text-gray-400 font-mono">Gmail Message ID: <span class="text-white">${data.messageId || 'N/A'}</span></div>
+            ${data.emlPath ? `<div class="text-[11px] text-gray-400 font-mono">Local EML Backup: <span class="text-cyan-300">${data.emlPath}</span></div>` : ''}
+          </div>
+        `;
+      } catch (err) {
+        statusText.textContent = 'FAILED (403)';
+        statusText.className = 'text-red-400 font-mono text-[11px] font-bold';
+        if (err.message.includes('Insufficient authentication scopes') || err.message.includes('403')) {
+          msgEl.innerHTML = `
+            <div class="space-y-2 text-xs">
+              <div class="text-red-400 font-semibold flex items-center gap-1.5">
+                <span>⚠️</span>
+                <span>Gmail API Scope Required</span>
+              </div>
+              <p class="text-gray-300 text-[11px]">
+                Your gcloud credentials need the <code class="text-amber-300">gmail.send</code> scope to send messages on behalf of <code class="text-white">${senderEmail}</code>.
+              </p>
+              <div class="bg-black/90 p-2 rounded border border-gray-700 font-mono text-[11px] text-emerald-400 select-all overflow-x-auto">
+                gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/gmail.send
+              </div>
+              <p class="text-[10px] text-gray-400">
+                Run the command above in your terminal, then click Send again. Your message is also saved locally as an <code>.eml</code> file.
+              </p>
+            </div>
+          `;
+        } else {
+          msgEl.innerHTML = `<div class="text-red-400 font-medium text-xs">❌ ${escapeHtml(err.message)}</div>`;
+        }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>🚀 Send Email via Gmail API</span>`;
+      }
+    }
+  </script>
+</body>
+</html>
