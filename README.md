@@ -1,126 +1,312 @@
 # Gemini Enterprise Admin Migration Tool (`gemini-migrate`)
 
-Enterprise admin-driven headless tool and service for migrating Gemini Enterprise custom agents, notebooks, notes, sources, datastores, and associated IAM permissions across GCP environments on behalf of users.
+Enterprise admin-driven headless tool and web service for migrating **Gemini Enterprise (Discovery Engine)** custom agents, research notebooks, notes, grounding sources, chat conversation history, and associated IAM permissions across Google Cloud environments on behalf of users.
 
 ---
 
-## Architecture & InfoSec Compliance
+## 📋 Table of Contents
 
-Built specifically to satisfy the **Gemini Enterprise Admin Migration Report** (Security Review & Requirements EAI 3542282), this tool implements all required security controls:
-
-- **Mitigation #1: SSRF Prevention** — Strict GCP region allowlisting (`global`, `us`, `eu`, `us-central1`, etc.) and regex validation on all project/engine/datastore IDs.
-- **Mitigation #2: Server-Side Token Authentication** — Verifies Google OAuth Bearer tokens via `tokeninfo` and validates authorized corporate email domains (`@fedex.com`).
-- **Mitigation #3: CORS Lockdown** — Restricted to authorized internal origin.
-- **Mitigation #4: Header-Only Token Transport** — Tokens are passed strictly via HTTP `Authorization: Bearer` headers; zero tokens in JSON request bodies.
-- **Mitigation #5: NetworkPolicy Isolation** — Hardened ingress and outbound HTTPS egress allowlist.
-- **Mitigation #6 & #8: Hardened Container Runtime** — Runs as non-root (`UID 1000`), read-only root filesystem, with explicit CPU/Memory limits.
-- **Mitigation #7: Zero Secrets in Git** — Environment and secrets resolved via runtime environment / GCP Secret Manager.
+- [Key Features](#-key-features)
+- [Pre-Requisites for Customer Environment](#-pre-requisites-for-customer-environment)
+  - [1. Google Cloud APIs](#1-google-cloud-apis)
+  - [2. IAM Roles & Permissions](#2-iam-roles--permissions)
+  - [3. Service Account & Domain-Wide Delegation (DWD)](#3-service-account--domain-wide-delegation-dwd-setup)
+- [How to Run Locally](#-how-to-run-locally)
+  - [Step 1: Installation](#step-1-installation)
+  - [Step 2: Authentication](#step-2-authentication)
+  - [Step 3: Launch Admin Web Console](#step-3-launch-admin-web-console)
+  - [Step 4: (Optional) Run via CLI](#step-4-optional-run-via-cli)
+- [Deploying to Customer Environment](#-deploying-to-customer-environment)
+  - [Target Option A: Google Cloud Run (Recommended)](#target-option-a-google-cloud-run-recommended)
+  - [Target Option B: Google Kubernetes Engine (GKE) / Compute Engine](#target-option-b-google-kubernetes-engine-gke--compute-engine)
+- [Configuration Reference (`migration-config.json`)](#-configuration-reference-migration-configjson)
+- [User Handover & Email Notification Engine](#-user-handover--email-notification-engine)
+- [Architecture & InfoSec Compliance](#-architecture--infosec-compliance)
 
 ---
 
-## Quick Start (CLI Mode)
+## 🚀 Key Features
 
-### 1. Installation
+* **🤖 Custom Agent Migration**: Restores Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags.
+* **📓 NotebookLM Research Migration**: Deep-syncs all notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs.
+* **📊 Real Office Document Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (PowerPoint)** and briefing docs/study guides as native **`.docx` (Word)** files.
+* **💬 Complete Chat Session History**: Rehydrates full turn-by-turn question/answer dialogues, thoughts, and citations directly into users' left-hand History sidebar.
+* **👤 True User Ownership Preservation**: Uses Google Workspace **Domain-Wide Delegation (DWD)** to mint user-scoped tokens, ensuring migrated assets belong directly to the end users rather than a generic service account.
+* **📬 Automated End-User Handover Emails**: Dispatches friendly, card-based email checklists with interactive clickable task checkboxes and curated `.pptx`/`.docx` attachments via the **Gmail API**.
+* **🛡️ Enterprise InfoSec Hardened**: Zero hardcoded secrets, strict SSRF regex validation, non-root container (`UID 1000`), and domain allowlisting.
+
+---
+
+## 🔑 Pre-Requisites for Customer Environment
+
+Before deploying or running migrations in a customer environment, ensure the following Google Cloud and Google Workspace requirements are met.
+
+### 1. Google Cloud APIs
+Enable the following APIs in both the **Source** and **Target** GCP projects:
+
 ```bash
+gcloud services enable discoveryengine.googleapis.com \
+                       bigquery.googleapis.com \
+                       gmail.googleapis.com \
+                       iam.googleapis.com \
+                       secretmanager.googleapis.com \
+                       --project=<SOURCE_PROJECT_ID>
+
+gcloud services enable discoveryengine.googleapis.com \
+                       bigquery.googleapis.com \
+                       gmail.googleapis.com \
+                       iam.googleapis.com \
+                       secretmanager.googleapis.com \
+                       --project=<TARGET_PROJECT_ID>
+```
+
+---
+
+### 2. IAM Roles & Permissions
+
+The administrator or deployment service account executing the migration needs the following roles:
+
+| Project | Required IAM Role | Purpose |
+| :--- | :--- | :--- |
+| **Source Project** | `roles/discoveryengine.admin` *(or `.viewer`)* | Read source agents, notebooks, grounding sources, and chat sessions. |
+| **Source Project** | `roles/bigquery.dataViewer` *(Optional)* | Best-effort discovery of historical active creators from audit logs. |
+| **Target Project** | `roles/discoveryengine.admin` | Create target engines, datastores, agents, notebooks, and sessions. |
+| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Create user-impersonated OAuth2 tokens via DWD. |
+
+---
+
+### 3. Service Account & Domain-Wide Delegation (DWD) Setup
+
+To create target notebooks, custom agents, and send handover emails on behalf of actual domain users (e.g. `user@company.com`), configure a Service Account with Domain-Wide Delegation:
+
+#### A. Create the Service Account in GCP:
+```bash
+# Create Service Account
+gcloud iam service-accounts create gemini-dwd-migrator \
+    --display-name="Gemini Enterprise Migration Service Account" \
+    --project=<TARGET_PROJECT_ID>
+
+# Grant Discovery Engine Admin role
+gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+    --role="roles/discoveryengine.admin"
+
+# Generate Service Account Key
+gcloud iam service-accounts keys create sa-dwd-key.json \
+    --iam-account="gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com"
+```
+
+#### B. Authorize DWD in Google Workspace Admin Console:
+1. Open the [Google Workspace Admin Console](https://admin.google.com/).
+2. Navigate to **Security** &rarr; **Access and data control** &rarr; **API controls** &rarr; **Manage Domain Wide Delegation**.
+3. Click **Add new** and enter:
+   * **Client ID**: The numeric `client_id` from your `sa-dwd-key.json` file (or GCP IAM console).
+   * **OAuth Scopes (comma-separated)**:
+     ```text
+     https://www.googleapis.com/auth/discoveryengine.readwrite, https://www.googleapis.com/auth/discoveryengine.assist.readwrite, https://www.googleapis.com/auth/gmail.send
+     ```
+4. Click **Authorize**.
+
+---
+
+## 💻 How to Run Locally
+
+### Step 1: Installation
+Ensure **Node.js >= 20.0.0** is installed on your machine:
+
+```bash
+git clone <REPO_URL>
+cd "headless migration tool"
+
+# Install all dependencies
 npm install
+
+# Build TypeScript
 npm run build
 ```
 
-### 2. Run Dry Run (Simulation)
+---
+
+### Step 2: Authentication
+Place your authorized `sa-dwd-key.json` file in the project root directory, or authenticate via Google Cloud Application Default Credentials (ADC):
+
 ```bash
-npx tsx src/cli.ts --config config.example.json --dry-run
+# Option A: Place sa-dwd-key.json in root (Auto-detected)
+cp /path/to/sa-dwd-key.json ./sa-dwd-key.json
+
+# Option B: Authenticate via gcloud CLI
+gcloud auth login
+gcloud auth application-default login
 ```
 
-### 3. Execute Live Batch Migration on Behalf of Users
-```bash
-# Migrate all assets for specific users
-npx tsx src/cli.ts --config config.example.json --users "john.doe@fedex.com" "jane.doe@fedex.com"
+---
 
-# Migrate all organization assets with concurrency 15
+### Step 3: Launch Admin Web Console
+Start the local interactive Web Studio & Admin Dashboard:
+
+```bash
+npm run ui
+```
+
+Open your browser to: **`http://localhost:8080`**
+
+#### What you can do in the Web Console:
+1. **🚀 Migration Studio**: Select Source & Target GCP projects, configure agent/notebook filters, and run simulated **Dry Runs**.
+2. **⚡ Live Migration Stream**: Watch real-time multi-threaded execution with live color-coded logs.
+3. **📊 Audit Reports**: Search and inspect migrated items, verify identity mappings, and download Markdown/JSON certificates.
+4. **📬 User Handover & Email**: Preview user-specific checklist reports, view exported `.pptx`/`.docx` attachments, and send handover emails via Gmail.
+5. **🧹 Target Reset Utility**: Reset destination sandbox assets prior to fresh test runs.
+
+---
+
+### Step 4: (Optional) Run via CLI
+You can also run headless batch migrations directly from the terminal or CI/CD pipelines:
+
+```bash
+# 1. Run Dry-Run Simulation
+npx tsx src/cli.ts --config config.example.json --dry-run
+
+# 2. Execute Live Migration for specific users
+npx tsx src/cli.ts --config config.example.json --users "john.doe@company.com" "jane.doe@company.com"
+
+# 3. Execute Organization-Wide Batch Migration with Concurrency 15
 npx tsx src/cli.ts --config config.example.json --concurrency 15
 ```
 
 ---
 
-## Admin Web UI Console
+## ☁️ Deploying to Customer Environment
 
-Launch the interactive web dashboard to configure migrations, track progress live, review audit certificates, and manage target environments:
+### Target Option A: Google Cloud Run (Recommended)
 
+Google Cloud Run provides a serverless, secure HTTPS container deployment ideal for enterprise migration tooling.
+
+#### 1. Store the Service Account Key in Secret Manager:
 ```bash
-npm run ui
-# or
-npx tsx src/server.ts
+gcloud secrets create gemini-migration-dwd-key \
+    --data-file=sa-dwd-key.json \
+    --project=<TARGET_PROJECT_ID>
 ```
 
-Open your browser to: **`http://localhost:8080`**
+#### 2. Build and Deploy Container:
+```bash
+# Build container using Cloud Build
+gcloud builds submit --tag gcr.io/<TARGET_PROJECT_ID>/gemini-enterprise-migrator:v1
 
-### Features:
-- 🚀 **Migration Studio**: Interactive configuration builder, agent type filter (`Low-Code`, `ADK`, `A2A`, `ALL`), Dry Run simulation toggle, and Domain-Wide Delegation (DWD) key selection.
-- ⚡ **Live Progress Tracker**: Real-time progress bar, milestone stage trackers (Pre-flight, Discovery, Notebooks, Agents), and live color-coded streaming log console.
-- 📊 **Audit Report & Analytics**: Summary metrics (Total Migrated, Duration, Failures), searchable asset data table with owner identity verification, and one-click **Markdown (`.md`)** & **JSON (`.json`)** export.
-- 📁 **Historical Runs Archive**: Browse and inspect past migration certificates stored on disk.
-- 🧹 **Target Maintenance Utility**: One-click cleanup to safely reset destination notebooks and custom agents before new migration runs.
+# Deploy to Cloud Run
+gcloud run deploy gemini-enterprise-migrator \
+    --image gcr.io/<TARGET_PROJECT_ID>/gemini-enterprise-migrator:v1 \
+    --platform managed \
+    --region us-central1 \
+    --allow-unauthenticated=false \
+    --memory 2Gi \
+    --cpu 2 \
+    --timeout 3600 \
+    --set-secrets="/app/sa-dwd-key.json=gemini-migration-dwd-key:latest" \
+    --set-env-vars="NODE_ENV=production,DEFAULT_USER_EMAIL=admin@company.com" \
+    --project=<TARGET_PROJECT_ID>
+```
 
 ---
 
-## Running as an Admin Service (REST API)
+### Target Option B: Google Kubernetes Engine (GKE) / Compute Engine
 
-### Start Server
+Run the container on internal VPC clusters or VMs using Workload Identity:
+
 ```bash
-npm start
+docker build -t gemini-enterprise-migrator:latest .
+docker run -d \
+    -p 8080:8080 \
+    -v $(pwd)/sa-dwd-key.json:/app/sa-dwd-key.json:ro \
+    -v $(pwd)/reports:/app/reports \
+    -v $(pwd)/user_handover_reports:/app/user_handover_reports \
+    -e DEFAULT_USER_EMAIL="admin@company.com" \
+    gemini-enterprise-migrator:latest
 ```
-
-### Endpoints
-- `GET /`: Serves the Admin Web UI Console.
-- `POST /api/preflight`: Executes pre-flight validation on target project, engine, and datastore mappings.
-- `POST /api/migrate`: Executes the full admin migration pipeline.
-- `GET /api/reports`: Lists all past migration run reports and summaries.
-- `GET /api/reports/:id`: Retrieves full details and telemetry for a specific migration run.
-- `POST /api/cleanup`: Clears target engine agents and destination notebooks.
-- `GET /api/users`: Discovers active creators via BigQuery audit logs.
-- `GET /healthz`: Kubernetes liveness / readiness probe.
 
 ---
 
-## Configuration Schema (`migration-config.json`)
+## ⚙️ Configuration Reference (`migration-config.json`)
 
 ```json
 {
   "source": {
-    "projectId": "gemini-enterprise-test",
+    "projectId": "source-gcp-project-id",
     "appLocation": "global",
     "collectionId": "default_collection",
-    "appId": "ge-chat-engine",
+    "appId": "ge-source-engine",
     "assistantId": "default_assistant"
   },
   "target": {
-    "projectId": "gemini-enterprise-prod",
+    "projectId": "target-gcp-project-id",
     "appLocation": "global",
     "collectionId": "default_collection",
-    "appId": "ge-chat-engine-prod",
+    "appId": "ge-target-engine",
     "assistantId": "default_assistant"
   },
   "options": {
     "migrateNotebooks": true,
     "migrateAgents": true,
+    "migrateSessions": true,
     "dryRun": false,
     "concurrency": 10,
-    "userFilter": ["*@fedex.com"],
+    "userFilter": ["*@company.com"],
     "preserveOwnership": true
   },
   "datastoreMapping": {
-    "test-hr-policy-ds": "prod-hr-policy-ds"
+    "source-policy-datastore": "target-policy-datastore"
   },
   "identityMapping": {
-    "user:john.doe@test-tenant.com": "user:john.doe@fedex.com"
+    "user:external-user@onmicrosoft.com": "user:internal-user@company.com"
   }
 }
 ```
 
 ---
 
-## Running Tests
+## 📬 User Handover & Email Notification Engine
+
+Following a migration, each end-user receives an individual handover bundle:
+
+1. **Checklist Email with Interactive Checkboxes**:
+   * Lists each transferred Custom Agent with step-by-step instructions:
+     * `☑ Step 1: Click into agent and press Publish to activate.`
+     * `☑ Step 2: Click Share and re-add collaborators.`
+   * Lists each Research Notebook with verification links.
+   * Clarifies that past chat histories and citations are restored automatically.
+2. **Native Office Document Attachments**:
+   * Slide Decks &rarr; Attached as real **`.pptx` (Microsoft PowerPoint)** presentations.
+   * Reports & Study Guides &rarr; Attached as real **`.docx` (Microsoft Word)** documents.
+3. **Dispatch Options**:
+   * **Google Gmail REST API**: Native OAuth2 dispatch using Domain-Wide Delegation.
+   * **Corporate SMTP**: Direct integration with corporate relays (Office 365, Postfix, SendGrid).
+
+---
+
+## 🛡️ Architecture & InfoSec Compliance
+
+Built specifically to satisfy enterprise security reviews, this tool implements the following controls:
+
+* **Mitigation #1: SSRF Prevention** — Strict GCP region allowlisting (`global`, `us`, `eu`, `us-central1`, etc.) and regex validation on all project/engine IDs.
+* **Mitigation #2: Server-Side Token Authentication** — Verifies Google OAuth Bearer tokens via `tokeninfo` and validates authorized corporate domains.
+* **Mitigation #3: CORS Lockdown** — Restricted to authorized internal origin.
+* **Mitigation #4: Header-Only Token Transport** — Tokens are passed strictly via HTTP `Authorization: Bearer` headers; zero tokens in JSON request bodies.
+* **Mitigation #5: Hardened Container Runtime** — Runs as non-root (`UID 1000:1000`) with read-only root filesystems and explicit CPU/memory limits.
+* **Mitigation #6: Zero Hardcoded Secrets** — All credentials resolved dynamically via Google Auth Library, DWD Service Account Keys, or GCP Secret Manager.
+
+---
+
+## 🧪 Testing
 
 ```bash
+# Run unit & integration test suite
 npm test
+
+# Type-check TypeScript
+npm run typecheck
 ```
+
+---
+
+## 📄 License
+Copyright 2026 Google LLC. Licensed under the [Apache-2.0 License](LICENSE).
