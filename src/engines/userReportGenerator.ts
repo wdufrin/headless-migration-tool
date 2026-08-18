@@ -250,31 +250,28 @@ All of your past search and chat conversations (**${data.sessions.length} conver
 
           return `
             <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <a href="${directAgentUrl}" target="_blank" style="color: #60a5fa; font-weight: 700; font-size: 14px; text-decoration: none;">🤖 ${ag.displayName} &rarr;</a>
                 ${badge}
               </div>
               
-              <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
-                <tr>
-                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
-                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
-                  </td>
-                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4; padding-bottom: ${isPrivate ? '0' : '6px'};">
+              <div style="margin-top: 4px;">
+                <label style="display: flex; align-items: flex-start; cursor: pointer; user-select: none; margin-bottom: ${isPrivate ? '0' : '8px'};">
+                  <input type="checkbox" style="margin: 2px 10px 0 0; width: 16px; height: 16px; accent-color: #2563eb; cursor: pointer;">
+                  <span style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
                     <strong>Step 1:</strong> Click into agent and press <strong>Publish</strong> in the top right to activate.
-                  </td>
-                </tr>
+                  </span>
+                </label>
+
                 ${!isPrivate ? `
-                <tr>
-                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
-                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
-                  </td>
-                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4;">
-                    <strong>Step 2:</strong> Click <strong>Share</strong> and re-add: <code style="background-color: #0f172a; padding: 2px 6px; border-radius: 4px; color: #93c5fd; font-size: 11px;">${filteredCollaborators.join(', ')}</code>
-                  </td>
-                </tr>
+                <label style="display: flex; align-items: flex-start; cursor: pointer; user-select: none;">
+                  <input type="checkbox" style="margin: 2px 10px 0 0; width: 16px; height: 16px; accent-color: #2563eb; cursor: pointer;">
+                  <span style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
+                    <strong>Step 2:</strong> Click <strong>Share</strong> and re-add: <code style="background-color: #0f172a; padding: 2px 6px; border-radius: 4px; color: #93c5fd; font-size: 12px;">${filteredCollaborators.join(', ')}</code>
+                  </span>
+                </label>
                 ` : ''}
-              </table>
+              </div>
             </div>
           `;
         }).join('')
@@ -286,28 +283,25 @@ All of your past search and chat conversations (**${data.sessions.length} conver
 
           return `
             <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;">
-              <div style="margin-bottom: 10px;">
+              <div style="margin-bottom: 12px;">
                 <a href="${directNbUrl}" target="_blank" style="color: #34d399; font-weight: 700; font-size: 14px; text-decoration: none;">📓 ${nb.displayName} &rarr;</a>
               </div>
 
-              <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
-                <tr>
-                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
-                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
-                  </td>
-                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4; padding-bottom: 6px;">
+              <div style="margin-top: 4px;">
+                <label style="display: flex; align-items: flex-start; cursor: pointer; user-select: none; margin-bottom: 8px;">
+                  <input type="checkbox" style="margin: 2px 10px 0 0; width: 16px; height: 16px; accent-color: #059669; cursor: pointer;">
+                  <span style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
                     <strong>Step 1:</strong> Open notebook to verify restored sources and study materials.
-                  </td>
-                </tr>
-                <tr>
-                  <td style="width: 24px; vertical-align: top; padding-top: 2px;">
-                    <div style="width: 15px; height: 15px; border: 2px solid #64748b; border-radius: 4px; background-color: #0f172a;"></div>
-                  </td>
-                  <td style="font-size: 12px; color: #e2e8f0; line-height: 1.4;">
+                  </span>
+                </label>
+
+                <label style="display: flex; align-items: flex-start; cursor: pointer; user-select: none;">
+                  <input type="checkbox" style="margin: 2px 10px 0 0; width: 16px; height: 16px; accent-color: #059669; cursor: pointer;">
+                  <span style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
                     <strong>Step 2:</strong> (Optional) Click <strong>Share</strong> inside the notebook if you'd like to invite team members.
-                  </td>
-                </tr>
-              </table>
+                  </span>
+                </label>
+              </div>
             </div>
           `;
         }).join('')
