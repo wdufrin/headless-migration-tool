@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:matrix": "tsx scripts/run-e2e-matrix.ts",
+    "test:e2e-matrix": "tsx scripts/run-e2e-matrix.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

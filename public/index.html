@@ -1692,10 +1692,18 @@
                   <h3 class="text-sm font-bold text-white">Generate Client Configuration JSON</h3>
                 </div>
                 <div class="flex items-center gap-2">
-                <pre id="wizWifScript" class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 font-mono text-[11px] text-purple-300 overflow-x-auto select-all"></pre>
+                  <button type="button" onclick="generateAndSaveWifConfig(true)" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+                    <span>💾</span> Save to Project
+                  </button>
+                  <button type="button" onclick="downloadWifConfigJson()" class="px-3.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold border border-gray-700 transition flex items-center gap-1.5">
+                    <span>📥</span> Download JSON
+                  </button>
+                </div>
               </div>
+              <pre id="wifJsonViewer" class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 font-mono text-[11px] text-purple-300 overflow-x-auto select-all"></pre>
             </div>
 
+            <!-- Step 4: Test WiF & SA Impersonation Live -->
             <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
               <div class="flex items-center gap-2.5">
                 <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
@@ -2151,8 +2159,40 @@
         panelAudit.classList.remove('hidden');
         panelDwd.classList.add('hidden');
         panelWif.classList.add('hidden');
-        loadAuditSourceEngines();
-        loadAuditTargetEngines();
+
+        // Auto-sync parameters from Migration Studio if audit inputs are empty
+        const studioSrcProj = document.getElementById('srcProject')?.value?.trim();
+        const studioSrcLoc = document.getElementById('srcRegion')?.value;
+        const studioSrcApp = getFieldValue('srcEngine');
+        const studioSrcUser = document.getElementById('srcUser')?.value?.trim();
+        const studioSrcIdp = document.getElementById('srcIdp')?.value;
+
+        const studioTgtProj = document.getElementById('tgtProject')?.value?.trim();
+        const studioTgtLoc = document.getElementById('tgtRegion')?.value;
+        const studioTgtApp = getFieldValue('tgtEngine');
+        const studioTgtUser = document.getElementById('tgtUser')?.value?.trim();
+        const studioTgtIdp = document.getElementById('tgtIdp')?.value;
+
+        const auditSrcProjInput = document.getElementById('auditSrcProj');
+        if (auditSrcProjInput && !auditSrcProjInput.value && studioSrcProj) auditSrcProjInput.value = studioSrcProj;
+        const auditSrcLocInput = document.getElementById('auditSrcLoc');
+        if (auditSrcLocInput && studioSrcLoc) auditSrcLocInput.value = studioSrcLoc;
+        const auditSrcUserInput = document.getElementById('auditSrcUser');
+        if (auditSrcUserInput && !auditSrcUserInput.value && studioSrcUser) auditSrcUserInput.value = studioSrcUser;
+        const auditSrcIdpInput = document.getElementById('auditSrcIdp');
+        if (auditSrcIdpInput && studioSrcIdp) auditSrcIdpInput.value = studioSrcIdp;
+
+        const auditTgtProjInput = document.getElementById('auditTgtProj');
+        if (auditTgtProjInput && !auditTgtProjInput.value && studioTgtProj) auditTgtProjInput.value = studioTgtProj;
+        const auditTgtLocInput = document.getElementById('auditTgtLoc');
+        if (auditTgtLocInput && studioTgtLoc) auditTgtLocInput.value = studioTgtLoc;
+        const auditTgtUserInput = document.getElementById('auditTgtUser');
+        if (auditTgtUserInput && !auditTgtUserInput.value && studioTgtUser) auditTgtUserInput.value = studioTgtUser;
+        const auditTgtIdpInput = document.getElementById('auditTgtIdp');
+        if (auditTgtIdpInput && studioTgtIdp) auditTgtIdpInput.value = studioTgtIdp;
+
+        loadAuditSourceEngines(studioSrcApp);
+        loadAuditTargetEngines(studioTgtApp);
       }
     }
 

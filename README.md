@@ -1,43 +1,64 @@
-# Gemini Enterprise Admin Migration Tool (`gemini-migrate`)
+# 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-Enterprise admin-driven headless tool and web service for migrating **Gemini Enterprise (Discovery Engine)** custom agents, research notebooks, notes, grounding sources, chat conversation history, and associated IAM permissions across Google Cloud environments on behalf of users.
+An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, research notebooks, studio artifacts, grounding sources, chat conversation history, and associated IAM permissions across Google Cloud environments and Identity Providers.
 
 ---
 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [Pre-Requisites for Customer Environment](#-pre-requisites-for-customer-environment)
+- [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
+- [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
   - [1. Google Cloud APIs](#1-google-cloud-apis)
   - [2. IAM Roles & Permissions](#2-iam-roles--permissions)
   - [3. Service Account & Domain-Wide Delegation (DWD)](#3-service-account--domain-wide-delegation-dwd-setup)
+  - [4. Workforce Identity Federation (WiF for Entra ID / Okta)](#4-workforce-identity-federation-wif-setup)
 - [How to Run Locally on Administrator Workstation](#-how-to-run-locally-on-administrator-workstation)
   - [Step 1: Installation](#step-1-installation)
-  - [Step 2: Local Authentication & DWD Keys](#step-2-local-authentication--dwd-keys)
+  - [Step 2: Authentication Setup](#step-2-authentication-setup)
   - [Step 3: Launch Local Web Console](#step-3-launch-local-web-console)
-  - [Step 4: Run Headless via Terminal CLI](#step-4-run-headless-via-terminal-cli)
+  - [Step 4: Headless CLI Execution](#step-4-headless-cli-execution)
+  - [Step 5: Automated E2E Permutations Test Suite](#step-5-automated-e2e-permutations-test-suite)
+- [Web Console Feature Tour (`http://localhost:8080`)](#-web-console-feature-tour)
 - [Local Workstation Security & Isolation](#-local-workstation-security--isolation)
 - [Configuration Reference (`migration-config.json`)](#-configuration-reference-migration-configjson)
-- [User Handover & Email Notification Engine](#-user-handover--email-notification-engine)
+- [User Handover, SSO Gateway & Email Notification Engine](#-user-handover-sso-gateway--email-notification-engine)
 - [Architecture & InfoSec Compliance](#-architecture--infosec-compliance)
+- [Automated Testing](#-automated-testing)
 
 ---
 
-## 🚀 Key Features
+## 🌟 Key Features
 
-* **🤖 Custom Agent Migration**: Restores Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags.
-* **📓 NotebookLM Research Migration**: Deep-syncs all notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs.
-* **📊 Real Office Document Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (PowerPoint)** and briefing docs/study guides as native **`.docx` (Word)** files.
-* **💬 Complete Chat Session History**: Rehydrates full turn-by-turn question/answer dialogues, thoughts, and citations directly into users' left-hand History sidebar.
-* **👤 True User Ownership Preservation**: Uses Google Workspace **Domain-Wide Delegation (DWD)** to mint user-scoped tokens, ensuring migrated assets belong directly to the end users rather than a generic service account.
-* **📬 Automated End-User Handover Emails**: Dispatches friendly, card-based email checklists with interactive clickable task checkboxes and curated `.pptx`/`.docx` attachments via the **Gmail API**.
-* **🛡️ Enterprise InfoSec Hardened**: Zero hardcoded secrets, strict SSRF regex validation, non-root container (`UID 1000`), and domain allowlisting.
+* **🤖 Custom Agent Migration & Auto-Publishing**: Deep-copies Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags. Automatically assigns `scope: ALL_USERS` and publishes them so they immediately appear in the user's left sidebar and Agent Gallery.
+* **📔 Research Notebooks & Studio Notes**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs directly into the target environment.
+* **📊 Office Document & Artifact Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (Microsoft PowerPoint)** and briefing docs/study guides as native **`.docx` (Microsoft Word)** files into `./exports/artifacts`.
+* **💬 Multi-turn Chat Conversation History**: Rehydrates full turn-by-turn question/answer dialogues, thoughts, and citations in chronological order (oldest $\rightarrow$ newest) directly into users' left-hand History sidebar.
+* **👤 Multi-Tenant Identity Resolution & Auto-Auth Detection**:
+  * **Google Workspace / Cloud Identity**: Uses Domain-Wide Delegation (DWD) with `sa-dwd-key.json` to mint user-scoped OAuth2 tokens.
+  * **Microsoft Entra ID / Okta / Ping**: Uses Google Cloud Security Token Service (STS) with RSA-signed OIDC assertions via `workforce-identity-config.json`.
+  * **Auto-Resolution**: Authentication mode is automatically determined from selected Identity Providers and user email domains.
+* **🔄 Context-Aware Cross-IdP Transformation Matrix**: Supports domain transformation rules (e.g. `user@onmicrosoft.com` $\rightarrow$ `user@company.com`). The mapping interface is hidden when IdPs match and automatically reveals preset suggestions when switching between different IdPs.
+* **🛡️ Built-in Permissions & Least-Privilege Auditor**: Evaluates live IAM permissions, flags over-provisioned OAuth scopes, assigns security letter grades (A/B/C/F), verifies Google SAIF compliance, and provides 1-click `gcloud` IAM policy auto-fixes.
+* **🧹 Selective Target Destination Maintenance**: Granular controls to selectively clean Chats, Agents, Notebooks, Exported Artifacts, or Migration Reports prior to fresh migration runs.
+* **📬 End-User Handover Bundle & Authenticated SSO Links**: Generates personalized Markdown and HTML handover checklists with direct Google Cloud Workforce Sign-In gateway URLs (`auth.cloud.google/signin/...`) and Step 1 connector authorization walkthroughs.
 
 ---
 
-## 🔑 Pre-Requisites for Customer Environment
+## 🔄 Supported Migration Matrix & Identity Providers
 
-Before deploying or running migrations in a customer environment, ensure the following Google Cloud and Google Workspace requirements are met.
+The platform supports seamless migrations across all identity combinations:
+
+| Source IdP / Auth | Target IdP / Auth | Typical Scenario | Auth Mechanism |
+| :--- | :--- | :--- | :--- |
+| **Google Workspace (DWD)** | **Google Workspace (DWD)** | Tenant-to-Tenant or Dev-to-Prod GCP Migration | Service Account DWD Impersonation |
+| **Google Workspace (DWD)** | **Microsoft Entra ID (WiF)** | M365 / Azure AD Consolidation to CMEK Engine | DWD Source Discovery &rarr; WiF STS Target Restore |
+| **Microsoft Entra ID (WiF)** | **Microsoft Entra ID (WiF)** | Multi-Region / CMEK Entra ID Migration | WiF STS Token Minting |
+| **Microsoft Entra ID (WiF)** | **Google Workspace (DWD)** | Entra ID to Google Cloud Identity Transition | WiF STS Discovery &rarr; DWD Target Restore |
+
+---
+
+## 🔑 Pre-Requisites for Customer Environments
 
 ### 1. Google Cloud APIs
 Enable the following APIs in both the **Source** and **Target** GCP projects:
@@ -46,12 +67,14 @@ Enable the following APIs in both the **Source** and **Target** GCP projects:
 gcloud services enable discoveryengine.googleapis.com \
                        gmail.googleapis.com \
                        iam.googleapis.com \
+                       sts.googleapis.com \
                        secretmanager.googleapis.com \
                        --project=<SOURCE_PROJECT_ID>
 
 gcloud services enable discoveryengine.googleapis.com \
                        gmail.googleapis.com \
                        iam.googleapis.com \
+                       sts.googleapis.com \
                        secretmanager.googleapis.com \
                        --project=<TARGET_PROJECT_ID>
 ```
@@ -60,19 +83,19 @@ gcloud services enable discoveryengine.googleapis.com \
 
 ### 2. IAM Roles & Permissions
 
-The administrator or deployment service account executing the migration needs the following roles:
+The migration administrator or execution service account requires the following roles:
 
 | Project | Required IAM Role | Purpose |
 | :--- | :--- | :--- |
-| **Source Project** | `roles/discoveryengine.viewer` | Read-only discovery of source agents, notebooks, grounding sources, and chat sessions (Least Privilege). |
-| **Target Project** | `roles/discoveryengine.admin` | Create and restore target engines, datastores, agents, notebooks, and chat sessions. |
+| **Source Project** | `roles/discoveryengine.viewer` | Read-only discovery of source custom agents, notebooks, datastores, and chat sessions. |
+| **Target Project** | `roles/discoveryengine.admin` | Create and restore target engines, datastores, custom agents, notebooks, and chat sessions. |
 | **Target Project** | `roles/iam.serviceAccountTokenCreator` | Create user-impersonated OAuth2 tokens via Domain-Wide Delegation (DWD). |
 
 ---
 
 ### 3. Service Account & Domain-Wide Delegation (DWD) Setup
 
-To create target notebooks, custom agents, and send handover emails on behalf of actual domain users (e.g. `user@company.com`), configure a Service Account with Domain-Wide Delegation:
+To restore assets and send handover emails on behalf of Google Workspace users:
 
 #### A. Create the Service Account in GCP:
 ```bash
@@ -95,7 +118,7 @@ gcloud iam service-accounts keys create sa-dwd-key.json \
 1. Open the [Google Workspace Admin Console](https://admin.google.com/).
 2. Navigate to **Security** &rarr; **Access and data control** &rarr; **API controls** &rarr; **Manage Domain Wide Delegation**.
 3. Click **Add new** and enter:
-   * **Client ID**: The numeric `client_id` from your `sa-dwd-key.json` file (or GCP IAM console).
+   * **Client ID**: The numeric `client_id` from your `sa-dwd-key.json` file.
    * **OAuth Scopes (comma-separated)**:
      ```text
      https://www.googleapis.com/auth/discoveryengine.readwrite, https://www.googleapis.com/auth/discoveryengine.assist.readwrite, https://www.googleapis.com/auth/gmail.send
@@ -104,10 +127,19 @@ gcloud iam service-accounts keys create sa-dwd-key.json \
 
 ---
 
+### 4. Workforce Identity Federation (WiF Setup for Entra ID / Okta)
+
+For organizations using Microsoft Entra ID or Okta:
+1. Open the local web console at `http://localhost:8080` and navigate to **"🔐 Auth & WiF Wizard" &rarr; "🌐 Workforce Identity Federation (WiF)"**.
+2. Select your IdP (Microsoft Entra ID, Okta, or Ping).
+3. The wizard will generate the exact `gcloud iam workforce-pools` commands for your organization and create the `workforce-identity-config.json` client configuration.
+
+---
+
 ## 💻 How to Run Locally
 
 ### Step 1: Installation
-Ensure **Node.js >= 20.0.0** is installed on your machine:
+Ensure **Node.js >= 20.0.0** is installed on your workstation:
 
 ```bash
 git clone <REPO_URL>
@@ -122,66 +154,135 @@ npm run build
 
 ---
 
-### Step 2: Authentication
-Place your authorized `sa-dwd-key.json` file in the project root directory, or authenticate via Google Cloud Application Default Credentials (ADC):
+### Step 2: Authentication Setup
+Place your authorized `sa-dwd-key.json` (and/or `workforce-identity-config.json`) in the project root directory:
 
 ```bash
 # Option A: Place sa-dwd-key.json in root (Auto-detected)
 cp /path/to/sa-dwd-key.json ./sa-dwd-key.json
 
-# Option B: Authenticate via gcloud CLI
-gcloud auth login
+# Option B: Authenticate via gcloud Application Default Credentials (ADC)
 gcloud auth application-default login
 ```
 
 ---
 
-### Step 3: Launch Admin Web Console
-Start the local interactive Web Studio & Admin Dashboard:
+### Step 3: Launch Local Web Console
+Start the interactive migration console:
 
 ```bash
 npm run ui
 ```
 
-Open your browser to: **`http://localhost:8080`**
-
-#### What you can do in the Web Console:
-1. **🚀 Migration Studio**: Select Source & Target GCP projects, configure agent/notebook filters, and run simulated **Dry Runs**.
-2. **⚡ Live Migration Stream**: Watch real-time multi-threaded execution with live color-coded logs.
-3. **📊 Audit Reports**: Search and inspect migrated items, verify identity mappings, and download Markdown/JSON certificates.
-4. **📬 User Handover & Email**: Preview user-specific checklist reports, view exported `.pptx`/`.docx` attachments, and send handover emails via Gmail.
-5. **🧹 Target Reset Utility**: Reset destination sandbox assets prior to fresh test runs.
+Open your browser to: **`http://127.0.0.1:8080`**
 
 ---
 
-### Step 4: (Optional) Run via CLI
-You can also run headless batch migrations directly from the terminal or CI/CD pipelines:
+### Step 4: Headless CLI Execution
+
+The platform is designed to be executed **headlessly via the command line** (for CI/CD pipelines, automated cron jobs, or bastion scripts) without launching the web server.
+
+#### A. Run Headless with a JSON Configuration File
+```bash
+# 1. Run Dry-Run Simulation (no changes applied to target)
+npx tsx src/cli.ts --config migration-config.json --dry-run
+
+# 2. Execute Live Batch Migration for specific users
+npx tsx src/cli.ts --config migration-config.json --users "alice@company.com" "bob@company.com"
+
+# 3. Execute Organization-Wide Migration with high concurrency
+npx tsx src/cli.ts --config migration-config.json --concurrency 15
+
+# 4. Skip specific asset types or enable artifact extraction
+npx tsx src/cli.ts --config migration-config.json --no-sessions --export-artifacts
+```
+
+#### B. Run Headless with Environment Variables (Zero Configuration File)
+You can supply migration parameters directly via standard environment variables:
+```bash
+export SOURCE_PROJECT_ID="source-gcp-project-id"
+export SOURCE_APP_ID="source-engine-id"
+export SOURCE_LOCATION="global"
+export TARGET_PROJECT_ID="target-gcp-project-id"
+export TARGET_APP_ID="target-engine-id"
+export TARGET_LOCATION="global"
+export SERVICE_ACCOUNT_KEY_PATH="./sa-dwd-key.json"
+
+# Execute headless migration directly
+npx tsx src/cli.ts --dry-run --users "*@company.com"
+```
+
+#### C. Full CLI Flags Reference
+
+| CLI Flag | Description | Default Value |
+| :--- | :--- | :--- |
+| `-c, --config <path>` | Path to JSON migration configuration file | Auto-detected from ENV |
+| `--dry-run` | Simulate discovery and restoration without modifying target environment | `false` |
+| `--users <users...>` | Filter migration to specific emails or domain patterns (e.g. `*@company.com`) | All discovered users |
+| `--concurrency <number>` | Maximum parallel worker threads | `10` |
+| `--no-notebooks` | Skip Gemini / NotebookLM notebooks migration | Migrates notebooks |
+| `--no-agents` | Skip Custom Agents migration | Migrates agents |
+| `--no-sessions` | Skip Chat conversation histories and turns migration | Migrates chat history |
+| `--agent-types <types...>` | Filter agent types (`LOW_CODE`, `WORKFLOW`, `ADK`, `A2A`, `ALL`) | `ALL` |
+| `--publish-agents` | Automatically publish migrated agents for immediate organization visibility | `true` |
+| `--export-artifacts` | Extract presentations, Canva-style docs, and HTML artifacts to `./exports` | `true` |
+| `--no-preserve-sharing` | Do not replicate sharing configurations (`ALL_USERS` / `RESTRICTED`) | Preserves sharing |
+| `--service-account-key <path>` | Path to Google Cloud Service Account JSON key (for DWD) | Auto-detects `./sa-dwd-key.json` |
+| `--token <token>` | Explicit Google OAuth Access Token (overrides ADC/DWD) | Optional |
+| `--output-dir <dir>` | Directory where Markdown and JSON audit reports are saved | `./reports` |
+
+#### D. Headless Outputs & CI/CD Integration
+When executed headlessly:
+* **Stdout Stream**: Outputs color-coded progress, discovery summaries, and pre-flight validation.
+* **Audit Certificates**: Generates both a human-readable Markdown report (`reports/migration-report-<id>.md`) and a structured JSON certificate (`reports/migration-report-<id>.json`).
+* **Artifact Extraction**: Exports `.pptx` slide decks, `.docx` study guides, and HTML dashboards to `./exports/artifacts/`.
+* **POSIX Exit Codes**: Exits with code `0` on success and code `1` on failure, allowing seamless integration into automation workflows.
+
+---
+
+### Step 5: Automated E2E Permutations Test Suite
+Run the automated end-to-end matrix test pipeline covering all auth permutations (DWD-WiF, DWD-DWD, WiF-DWD, WiF-WiF):
 
 ```bash
-# 1. Run Dry-Run Simulation
-npx tsx src/cli.ts --config config.example.json --dry-run
-
-# 2. Execute Live Migration for specific users
-npx tsx src/cli.ts --config config.example.json --users "john.doe@company.com" "jane.doe@company.com"
-
-# 3. Execute Organization-Wide Batch Migration with Concurrency 15
-npx tsx src/cli.ts --config config.example.json --concurrency 15
+npm run test:e2e-matrix
 ```
+
+---
+
+## 🖥️ Web Console Feature Tour
+
+The local Web Console provides 6 dedicated modules:
+
+1. **🚀 Migration Studio**:
+   - Interactive engine picker for Source and Target GCP environments.
+   - Dynamic asset discovery with user selection table.
+   - Context-aware Cross-IdP transformation matrix with preset domain rules.
+   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and reconciliation summary.
+2. **📊 Latest Report & Historical Runs**:
+   - View and search comprehensive migration certificates and audit tables.
+   - Export reports in both Markdown (`.md`) and structured JSON (`.json`).
+3. **📬 User Handover & Email Dispatch**:
+   - Individual user checklists with deep links to target Gemini Enterprise apps.
+   - Step 1 First-Time Login and Connector Authorization (Google Workspace, M365, Jira, etc.) walkthroughs.
+   - One-click handover dispatch via Gmail API or SMTP.
+4. **🔐 Auth & Identity Provider Wizard**:
+   - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, and live impersonation test.
+   - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, and live token test.
+   - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
+5. **🗑️ Target Destination Cleanup Utility**:
+   - Selective checkboxes to clean Chats, Custom Agents, Notebooks, Exported Artifacts, or Migration Reports prior to test runs.
 
 ---
 
 ## 🔒 Local Workstation Security & Isolation
 
-This migration tool is designed to run **strictly on the administrator's local machine** or secure bastion terminal, rather than being hosted on public web services or cloud run containers.
+Designed to run **strictly on the administrator's local machine**:
 
-* **🔒 Localhost Loopback Binding (`127.0.0.1`)**:
-  * The web console listens strictly on loopback (`http://127.0.0.1:8080`), ensuring no inbound access is permitted from other network devices or the public internet.
-* **🛡️ Direct Google Cloud REST Calling**:
-  * All API calls (Discovery Engine, IAM, Gmail) originate directly from the administrator's authenticated workstation over TLS/HTTPS.
-* **📁 Local Key & File Isolation**:
-  * DWD Service Account keys (`sa-dwd-key.json`), exported research files, and audit reports stay entirely within the local directory on the administrator's disk.
-* **🛡️ SSRF & Header-Only Token Protection**:
-  * Strict URL allowlisting for Discovery Engine endpoints and header-only Bearer token injection to prevent credentials from appearing in URLs or browser history.
+* **🔒 Localhost Loopback Binding (`127.0.0.1`)**: The web console listens strictly on loopback (`http://127.0.0.1:8080`), blocking inbound access from the external network.
+* **🛡️ Direct Google Cloud REST Calling**: All API calls originate directly from the administrator's authenticated workstation over TLS/HTTPS.
+* **📁 Local Key & File Isolation**: Keys (`sa-dwd-key.json`), exported research docs, and audit reports stay entirely on the local disk.
+* **🛡️ SSRF & Header-Only Token Protection**: Strict URL allowlisting for Discovery Engine endpoints and header-only Bearer token injection.
+* **🚫 Hardened `.gitignore`**: Blocks all private keys, JWTs, certificates, PII reports, and exported artifacts from Git tracking.
 
 ---
 
@@ -203,69 +304,75 @@ This migration tool is designed to run **strictly on the administrator's local m
     "appId": "ge-target-engine",
     "assistantId": "default_assistant"
   },
+  "auth": {
+    "authType": "SERVICE_ACCOUNT_KEY",
+    "serviceAccountKeyPath": "./sa-dwd-key.json"
+  },
   "options": {
     "migrateNotebooks": true,
     "migrateAgents": true,
     "migrateSessions": true,
+    "exportArtifacts": true,
     "dryRun": false,
     "concurrency": 10,
     "userFilter": ["*@company.com"],
     "preserveOwnership": true
   },
-  "datastoreMapping": {
-    "source-policy-datastore": "target-policy-datastore"
+  "idpMapping": {
+    "sourceIdp": "ENTRA_ID",
+    "targetIdp": "GOOGLE_CLOUD_IDENTITY",
+    "domainRules": [
+      {
+        "sourceDomain": "onmicrosoft.com",
+        "targetDomain": "company.com"
+      }
+    ]
   },
   "identityMapping": {
-    "user:external-user@onmicrosoft.com": "user:internal-user@company.com"
+    "external-user@onmicrosoft.com": "internal-user@company.com"
+  },
+  "datastoreMapping": {
+    "source-policy-datastore": "target-policy-datastore"
   }
 }
 ```
 
 ---
 
-## 📬 User Handover & Email Notification Engine
+## 📬 User Handover, SSO Gateway & Email Notification Engine
 
-Following a migration, each end-user receives an individual handover bundle:
+Following a migration, end-users receive an individual handover bundle:
 
-1. **Checklist Email with Interactive Checkboxes**:
-   * Lists each transferred Custom Agent with step-by-step instructions:
-     * `☑ Step 1: Click into agent and press Publish to activate.`
-     * `☑ Step 2: Click Share and re-add collaborators.`
-   * Lists each Research Notebook with verification links.
-   * Clarifies that past chat histories and citations are restored automatically.
+1. **Checklist Email with Interactive Checkboxes & SSO Links**:
+   * Generates location-aware Google Cloud Workforce Sign-In gateway URLs:
+     `https://auth.cloud.google/signin/locations/global/workforcePools/<poolId>/providers/<providerId>?continueUrl=<encodedAppUrl>`
+   * Step 1: Login & Authorize Connected Workplace Tools (Google Workspace, M365, OneDrive, Jira).
+   * Step 2: Access Transferred Custom Agents in the left sidebar and Agent Gallery.
+   * Step 3: Access Research Notebooks & Sources.
 2. **Native Office Document Attachments**:
    * Slide Decks &rarr; Attached as real **`.pptx` (Microsoft PowerPoint)** presentations.
    * Reports & Study Guides &rarr; Attached as real **`.docx` (Microsoft Word)** documents.
 3. **Dispatch Options**:
    * **Google Gmail REST API**: Native OAuth2 dispatch using Domain-Wide Delegation.
-   * **Corporate SMTP**: Direct integration with corporate relays (Office 365, Postfix, SendGrid).
+   * **Corporate SMTP**: Integration with corporate relays (Office 365, Postfix, SendGrid).
 
 ---
 
-## 🛡️ Architecture & InfoSec Compliance
-
-Built specifically to satisfy enterprise security reviews, this tool implements the following controls:
-
-* **Mitigation #1: SSRF Prevention** — Strict GCP region allowlisting (`global`, `us`, `eu`, `us-central1`, etc.) and regex validation on all project/engine IDs.
-* **Mitigation #2: Server-Side Token Authentication** — Verifies Google OAuth Bearer tokens via `tokeninfo` and validates authorized corporate domains.
-* **Mitigation #3: CORS Lockdown** — Restricted to authorized internal origin.
-* **Mitigation #4: Header-Only Token Transport** — Tokens are passed strictly via HTTP `Authorization: Bearer` headers; zero tokens in JSON request bodies.
-* **Mitigation #5: Hardened Container Runtime** — Runs as non-root (`UID 1000:1000`) with read-only root filesystems and explicit CPU/memory limits.
-* **Mitigation #6: Zero Hardcoded Secrets** — All credentials resolved dynamically via Google Auth Library, DWD Service Account Keys, or GCP Secret Manager.
-
----
-
-## 🧪 Testing
+## 🧪 Automated Testing
 
 ```bash
-# Run unit & integration test suite
+# Run complete unit and integration test suite
 npm test
 
-# Type-check TypeScript
+# Type-check TypeScript codebase
 npm run typecheck
+
+# Build TypeScript to dist/
+npm run build
 ```
 
 ---
 
 ## 📄 License
 Copyright 2026 Google LLC. Licensed under the [Apache-2.0 License](LICENSE).
+

@@ -78,8 +78,12 @@ export interface MigrationReport {
   summary: {
     totalDiscoveredAgents: number;
     totalDiscoveredNotebooks: number;
+    totalDiscoveredSessions?: number;
+    totalDiscoveredArtifacts?: number;
     totalMigratedAgents: number;
     totalMigratedNotebooks: number;
+    totalMigratedSessions?: number;
+    totalMigratedArtifacts?: number;
     totalSkipped: number;
     totalFailed: number;
   };

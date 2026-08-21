@@ -18,7 +18,7 @@
     "migrateAgents": true,
     "dryRun": false,
     "concurrency": 10,
-    "userFilter": ["*@fedex.com"],
+    "userFilter": ["*@company.com"],
     "preserveOwnership": true,
     "allowOverwrite": false,
     "logLevel": "INFO"
@@ -31,7 +31,7 @@
     "default_collection": "default_collection"
   },
   "identityMapping": {
-    "user:john.doe@test-tenant.com": "user:john.doe@fedex.com"
+    "user:john.doe@test-tenant.com": "user:john.doe@company.com"
   },
   "defaultOwnerFallback": "admin-sa@gemini-enterprise-prod-project.iam.gserviceaccount.com"
 }
