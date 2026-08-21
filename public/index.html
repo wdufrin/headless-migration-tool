@@ -5900,6 +5900,16 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       renderUserSelectionTable();
       updateAppQuickLinks();
       onIdpSelectionChanged();
+
+      const params = new URLSearchParams(window.location.search);
+      const targetTab = params.get('tab');
+      if (targetTab && typeof switchTab === 'function') {
+        switchTab(targetTab);
+      }
+      const wizardSubTab = params.get('wizardTab');
+      if (wizardSubTab && typeof switchWizardTab === 'function') {
+        switchWizardTab(wizardSubTab);
+      }
     });
   </script>
 </body>

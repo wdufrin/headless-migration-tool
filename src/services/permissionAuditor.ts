@@ -124,6 +124,8 @@ export class PermissionAuditor {
 
     let wifAudience = '';
 
+    let srcToken: string | null = null;
+
     // 1. Audit Source Auth (WiF or DWD)
     if (isSourceWif) {
       // 1a. Check Workforce Identity Federation Configuration
@@ -185,7 +187,7 @@ export class PermissionAuditor {
     } else {
       // Source is Google Workspace DWD
       try {
-        const srcToken = await this.authService.getAccessToken(rawUser);
+        srcToken = await this.authService.getAccessToken(rawUser);
         permissions.push({
           id: 'AUTH_SRC_DWD_TOKEN',
           category: 'WORKSPACE_OAUTH',
@@ -323,8 +325,8 @@ export class PermissionAuditor {
       totalGranted++;
     }
 
-    // 3. Audit Source Project Read Access (Using GCP Service Account / DWD / WiF token)
-    const effectiveToken = dwdToken || (await this.authService.getAccessToken().catch(() => null));
+    // 3. Audit Source Project Read Access (Using user-delegated DWD / WiF / Service Account token)
+    const effectiveToken = srcToken || dwdToken || (await this.authService.getAccessToken().catch(() => null));
 
     if (effectiveToken) {
       // 3a. Discovery Engine Chat Sessions (Read)
@@ -417,7 +419,7 @@ export class PermissionAuditor {
         const srcBaseUrl = getSafeDiscoveryEngineUrl(sourceLocation);
         const nbRes = await fetch(`${srcBaseUrl}/v1alpha/projects/${sourceProject}/locations/${sourceLocation}/notebooks:listRecentlyViewed`, {
           headers: { 
-            'Authorization': `Bearer ${effectiveToken}`,
+            'Authorization': `Bearer ${srcToken || effectiveToken}`,
             'X-Goog-User-Project': sourceProject
           }
         });
