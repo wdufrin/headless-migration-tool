@@ -43,12 +43,12 @@ export async function mapConcurrent<T, R>(
 }
 
 /**
- * Executes a function with exponential backoff retries for rate-limited (HTTP 429/503) requests.
+ * Executes a function with exponential backoff retries for rate-limited (HTTP 429/503/500/502/504) requests.
  */
 export async function retryWithBackoff<T>(
   operation: () => Promise<T>,
-  maxRetries: number = 4,
-  baseDelayMs: number = 500
+  maxRetries: number = 5,
+  baseDelayMs: number = 750
 ): Promise<T> {
   let attempt = 0;
   while (true) {
@@ -56,16 +56,34 @@ export async function retryWithBackoff<T>(
       return await operation();
     } catch (err: any) {
       attempt++;
-      const isRateLimit = err.status === 429 || err.statusCode === 429 || String(err.message).includes('429') || String(err.message).includes('RESOURCE_EXHAUSTED');
-      const isTransient = err.status === 503 || err.statusCode === 503 || String(err.message).includes('503') || String(err.message).includes('UNAVAILABLE');
+      const msg = String(err?.message || '').toLowerCase();
+      const status = err?.status || err?.statusCode || 0;
+      
+      const isRateLimit = status === 429 || 
+        msg.includes('429') || 
+        msg.includes('resource_exhausted') || 
+        msg.includes('quota') || 
+        msg.includes('rate limit');
+        
+      const isTransient = status === 503 || 
+        status === 500 || 
+        status === 502 || 
+        status === 504 || 
+        msg.includes('503') || 
+        msg.includes('unavailable') || 
+        msg.includes('econnreset') || 
+        msg.includes('etimedout');
 
       if (attempt > maxRetries || (!isRateLimit && !isTransient)) {
         throw err;
       }
 
-      const jitter = Math.random() * 200;
-      const delay = Math.pow(2, attempt) * baseDelayMs + jitter;
-      await new Promise(res => setTimeout(res, delay));
+      // Full Jitter Exponential Backoff: baseDelay * 2^(attempt-1) + random jitter
+      const exponentialDelay = Math.pow(2, attempt - 1) * baseDelayMs;
+      const jitter = Math.random() * baseDelayMs;
+      const totalDelay = Math.min(exponentialDelay + jitter, 15000); // Cap at 15s max delay
+
+      await new Promise(res => setTimeout(res, totalDelay));
     }
   }
 }

@@ -166,14 +166,20 @@ wizardRouter.post('/wizard/auto-fix-iam', async (req, res) => {
     const safeRole = role.replace(/[^a-zA-Z0-9\-_./]/g, '');
     const safeMember = member.replace(/[^a-zA-Z0-9\-_.@:/]/g, '');
 
-    const { exec } = await import('child_process');
+    const { execFile } = await import('child_process');
     const { promisify } = await import('util');
-    const execAsync = promisify(exec);
+    const execFileAsync = promisify(execFile);
 
-    const cmd = `gcloud projects add-iam-policy-binding ${safeProj} --member="${safeMember}" --role="${safeRole}" --quiet`;
-    logger.info(`Executing Auto-Fix IAM: ${cmd}`);
+    logger.info(`Executing Auto-Fix IAM: gcloud projects add-iam-policy-binding ${safeProj} --member="${safeMember}" --role="${safeRole}"`);
 
-    const { stdout } = await execAsync(cmd);
+    const { stdout } = await execFileAsync('gcloud', [
+      'projects',
+      'add-iam-policy-binding',
+      safeProj,
+      `--member=${safeMember}`,
+      `--role=${safeRole}`,
+      '--quiet'
+    ]);
     return res.status(200).json({
       success: true,
       message: `Successfully granted "${safeRole}" to "${safeMember}" on project "${safeProj}".`,
@@ -198,18 +204,31 @@ wizardRouter.post('/wizard/verify-wif-pool', async (req, res) => {
     const safeLoc = location.replace(/[^a-zA-Z0-9\-_]/g, '');
     const safeProvider = providerId.replace(/[^a-zA-Z0-9\-_]/g, '');
 
-    const { exec } = await import('child_process');
+    const { execFile } = await import('child_process');
     const { promisify } = await import('util');
-    const execAsync = promisify(exec);
+    const execFileAsync = promisify(execFile);
 
     // 1. Describe Pool
-    const poolCmd = `gcloud iam workforce-pools describe "${safePool}" --location="${safeLoc}" --format=json`;
-    const { stdout: poolOut } = await execAsync(poolCmd);
+    const { stdout: poolOut } = await execFileAsync('gcloud', [
+      'iam',
+      'workforce-pools',
+      'describe',
+      safePool,
+      `--location=${safeLoc}`,
+      '--format=json'
+    ]);
     const poolData = JSON.parse(poolOut || '{}');
 
     // 2. List Providers
-    const provCmd = `gcloud iam workforce-pools providers list --workforce-pool="${safePool}" --location="${safeLoc}" --format=json`;
-    const { stdout: provOut } = await execAsync(provCmd);
+    const { stdout: provOut } = await execFileAsync('gcloud', [
+      'iam',
+      'workforce-pools',
+      'providers',
+      'list',
+      `--workforce-pool=${safePool}`,
+      `--location=${safeLoc}`,
+      '--format=json'
+    ]);
     const providers = JSON.parse(provOut || '[]');
 
     const activeProvider = providers.find((p: any) => p.name?.endsWith(`/providers/${safeProvider}`)) || providers[0] || null;

@@ -4471,7 +4471,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         return;
       }
 
-      if (!confirm(`Are you sure you want to clean the following selected categories from target instance (${env.tgtProjectId} / ${env.tgtAppId})?\n\n• ${selectedNames.join('\n• ')}\n\nThis action cannot be undone.`)) {
+      const typedConfirmation = prompt(`⚠️ CAUTION: Irreversible Destructive Operation\n\nYou are about to wipe selected categories from target project "${env.tgtProjectId}":\n\n• ${selectedNames.join('\n• ')}\n\nTo confirm, please type the Target Project ID (${env.tgtProjectId}) below:`);
+      if (!typedConfirmation || typedConfirmation.trim() !== env.tgtProjectId.trim()) {
+        if (typedConfirmation !== null) {
+          alert(`❌ Confirmation failed: Project ID "${typedConfirmation}" did not match "${env.tgtProjectId}". Operation cancelled.`);
+        }
         return;
       }
 
@@ -4489,6 +4493,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       try {
         const payload = {
           ...env.payload,
+          confirmProjectId: typedConfirmation.trim(),
           cleanSessions,
           cleanAgents,
           cleanNotebooks,

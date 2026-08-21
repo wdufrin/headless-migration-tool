@@ -41,6 +41,15 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
     const targetLocation = req.body?.tgtLocation || req.body?.location || req.body?.target?.appLocation || process.env.TARGET_LOCATION || 'global';
     const targetCollection = req.body?.tgtCollectionId || req.body?.collectionId || req.body?.target?.collectionId || process.env.TARGET_COLLECTION_ID || 'default_collection';
 
+    // SEC-05 Safety Confirmation: Require matching confirmProjectId to prevent accidental misclicks
+    const confirmProject = (req.body?.confirmProjectId || req.body?.confirmProject || '').trim();
+    if (confirmProject !== targetProject) {
+      return res.status(400).json({
+        error: 'ConfirmationMismatch',
+        message: `Safety check failed: You must provide 'confirmProjectId' matching the exact target project ID ("${targetProject}"). Received: "${confirmProject}".`
+      });
+    }
+
     const cleanNotebooks = req.body?.cleanNotebooks !== false && req.body?.cleanNotebooks !== 'false';
     const cleanAgents = req.body?.cleanAgents !== false && req.body?.cleanAgents !== 'false';
     const cleanSessions = req.body?.cleanSessions !== false && req.body?.cleanSessions !== 'false';

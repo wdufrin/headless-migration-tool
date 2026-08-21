@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import { JWT, GoogleAuth } from 'google-auth-library';
 import { logger } from '../utils/logger.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface TokenProviderOptions {
   staticToken?: string;
@@ -275,7 +275,7 @@ export class GcpAuthService {
 
     // 3. Fallback to local gcloud ADC
     try {
-      const { stdout } = await execAsync('gcloud auth print-access-token');
+      const { stdout } = await execFileAsync('gcloud', ['auth', 'print-access-token']);
       const token = stdout.trim();
       if (token) {
         this.cachedAdcToken = {
