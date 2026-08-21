@@ -23,7 +23,6 @@ export * from './config/configSchema.js';
 export * from './config/loader.js';
 export * from './services/gcpAuth.js';
 export * from './services/discoveryEngine.js';
-export * from './services/bigQueryDiscovery.js';
 export * from './services/reporter.js';
 export * from './engines/notebookMigrator.js';
 export * from './engines/agentMigrator.js';

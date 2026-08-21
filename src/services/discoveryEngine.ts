@@ -43,13 +43,16 @@ export class DiscoveryEngineClient {
       ...customHeaders
     };
 
+    const homeProject = process.env.SOURCE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
     if (userProject) {
       headers['X-Goog-User-Project'] = userProject;
+    } else if (homeProject) {
+      headers['X-Goog-User-Project'] = homeProject;
     }
 
     return retryWithBackoff(async () => {
       logger.debug(`HTTP ${method} ${url}`);
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined
@@ -62,6 +65,25 @@ export class DiscoveryEngineClient {
           parsedError = JSON.parse(errorText);
         } catch {
           parsedError = null;
+        }
+
+        // If target quota project is denied (caller lacks serviceusage.services.use on target), retry with home project
+        if (response.status === 403 && headers['X-Goog-User-Project'] !== homeProject && homeProject) {
+          const reason = parsedError?.error?.details?.[0]?.reason || '';
+          const msg = parsedError?.error?.message || errorText;
+          if (reason === 'USER_PROJECT_DENIED' || msg.includes('USER_PROJECT_DENIED') || msg.includes('serviceusage.services.use')) {
+            logger.debug(`Target quota project denied; retrying request with home quota project: ${homeProject}`);
+            headers['X-Goog-User-Project'] = homeProject;
+            response = await fetch(url, {
+              method,
+              headers,
+              body: body ? JSON.stringify(body) : undefined
+            });
+            if (response.ok) {
+              if (response.status === 204) return {} as T;
+              return (await response.json()) as T;
+            }
+          }
         }
 
         const msg = parsedError?.error?.message || errorText || response.statusText;
@@ -173,17 +195,24 @@ export class DiscoveryEngineClient {
     return notebooks;
   }
 
-  async batchDeleteNotebooks(projectId: string, location: string, notebookNames: string[]): Promise<any> {
+  async batchDeleteNotebooks(projectId: string, location: string, notebookNames: string[], forUserEmail?: string): Promise<any> {
     const baseUrl = getSafeDiscoveryEngineUrl(location);
     const url = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/notebooks:batchDelete`;
-    return this.request<any>(url, 'POST', { names: notebookNames }, projectId);
+    for (const name of notebookNames) {
+      try {
+        await this.request<any>(url, 'POST', { names: [name] }, projectId, undefined, forUserEmail);
+      } catch (err: any) {
+        logger.warn(`Could not delete notebook ${name}: ${err.message}`);
+      }
+    }
+    return { success: true, count: notebookNames.length };
   }
 
-  async getNotebook(notebookId: string, env: EnvironmentConfig): Promise<Notebook> {
+  async getNotebook(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<Notebook> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}`;
-    return this.request<Notebook>(url, 'GET', undefined, env.projectId);
+    return this.request<Notebook>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
   }
 
   async createNotebook(env: EnvironmentConfig, payload: any, forUserEmail?: string): Promise<Notebook> {
@@ -192,10 +221,10 @@ export class DiscoveryEngineClient {
     return this.request<Notebook>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
   }
 
-  async getNotebookSource(notebookId: string, sourceId: string, env: EnvironmentConfig): Promise<NotebookSource> {
+  async getNotebookSource(notebookId: string, sourceId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookSource> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/sources/${sourceId}`;
-    return this.request<NotebookSource>(url, 'GET', undefined, env.projectId);
+    return this.request<NotebookSource>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
   }
 
   async batchCreateNotebookSources(notebookId: string, userContents: any[], env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
@@ -205,12 +234,12 @@ export class DiscoveryEngineClient {
     return this.request<any>(url, 'POST', { userContents }, env.projectId, undefined, forUserEmail);
   }
 
-  async listNotes(notebookId: string, env: EnvironmentConfig): Promise<NotebookNote[]> {
+  async listNotes(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote[]> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes:batchGet`;
+    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes`;
     try {
-      const res = await this.request<{ notes?: NotebookNote[] }>(url, 'GET', undefined, env.projectId);
+      const res = await this.request<{ notes?: NotebookNote[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
       return res.notes || [];
     } catch {
       return [];
@@ -224,12 +253,12 @@ export class DiscoveryEngineClient {
     return this.request<NotebookNote>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
   }
 
-  async listArtifacts(notebookId: string, env: EnvironmentConfig): Promise<any[]> {
+  async listArtifacts(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any[]> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/artifacts`;
     try {
-      const res = await this.request<{ artifacts?: any[] }>(url, 'GET', undefined, env.projectId);
+      const res = await this.request<{ artifacts?: any[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
       return res.artifacts || [];
     } catch {
       return [];
@@ -243,7 +272,23 @@ export class DiscoveryEngineClient {
     return this.request<any>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
   }
 
-  // --- Engines & DataStores ---
+  async listEngines(env: { projectId: string; appLocation: string; collectionId?: string }): Promise<AppEngine[]> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const collection = env.collectionId || 'default_collection';
+    const url = `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?pageSize=100`;
+    try {
+      const res = await this.request<{ engines?: AppEngine[] }>(url, 'GET', undefined, env.projectId);
+      return res.engines || [];
+    } catch (err: any) {
+      try {
+        const fallbackUrl = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?pageSize=100`;
+        const resFallback = await this.request<{ engines?: AppEngine[] }>(fallbackUrl, 'GET', undefined, env.projectId);
+        return resFallback.engines || [];
+      } catch (e) {
+        return [];
+      }
+    }
+  }
 
   async getEngine(env: EnvironmentConfig): Promise<AppEngine> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
@@ -266,5 +311,69 @@ export class DiscoveryEngineClient {
     const collection = env.collectionId || 'default_collection';
     const url = `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/dataStores/${dataStoreId}`;
     return this.request<DataStore>(url, 'GET', undefined, env.projectId);
+  }
+
+  /**
+   * Dynamically inspects the Identity Provider (IdP) configuration of a Gemini Enterprise Engine/App
+   * by inspecting its live engine metadata, mobile deeplink URL, workforce identity pools, and data connector types.
+   */
+  async detectEngineIdpConfig(env: EnvironmentConfig): Promise<{
+    type: 'WORKFORCE_IDENTITY_FEDERATION' | 'GOOGLE_CLOUD_IDENTITY';
+    provider?: string;
+    tenantId?: string;
+    clientId?: string;
+    cid?: string;
+    isExternalIdp: boolean;
+    dataStoreIds?: string[];
+  }> {
+    try {
+      const engine = await this.getEngine(env);
+      if (engine?.mobileDeeplinkUrl) {
+        try {
+          const parsed = new URL(engine.mobileDeeplinkUrl);
+          const idp = parsed.searchParams.get('idp');
+          const tenantId = parsed.searchParams.get('tenant_id');
+          const clientId = parsed.searchParams.get('client_id');
+          const cid = parsed.searchParams.get('cid') || engine.widgetConfigConfigId;
+
+          if (idp || tenantId) {
+            return {
+              type: 'WORKFORCE_IDENTITY_FEDERATION',
+              provider: idp ? decodeURIComponent(idp) : undefined,
+              tenantId: tenantId || undefined,
+              clientId: clientId || undefined,
+              cid: cid || undefined,
+              isExternalIdp: true,
+              dataStoreIds: engine.dataStoreIds
+            };
+          }
+        } catch {
+          if (engine.mobileDeeplinkUrl.includes('workforcePools') || engine.mobileDeeplinkUrl.includes('tenant_id')) {
+            return {
+              type: 'WORKFORCE_IDENTITY_FEDERATION',
+              isExternalIdp: true,
+              dataStoreIds: engine.dataStoreIds
+            };
+          }
+        }
+      }
+
+      const hasExternalConnectors = engine?.dataStoreIds?.some(ds =>
+        ds.includes('entraid') || ds.includes('outlook') || ds.includes('onedrive') || ds.includes('sharepoint')
+      );
+
+      return {
+        type: hasExternalConnectors ? 'WORKFORCE_IDENTITY_FEDERATION' : 'GOOGLE_CLOUD_IDENTITY',
+        cid: engine?.widgetConfigConfigId,
+        isExternalIdp: !!hasExternalConnectors,
+        dataStoreIds: engine?.dataStoreIds
+      };
+    } catch (err: any) {
+      logger.debug(`Could not dynamically detect engine IdP config: ${err.message}`);
+      return {
+        type: 'GOOGLE_CLOUD_IDENTITY',
+        isExternalIdp: false
+      };
+    }
   }
 }

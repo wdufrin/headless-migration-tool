@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
+import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
 import { logger } from '../utils/logger.js';
 
 export interface ChatSessionTurn {
@@ -51,7 +52,11 @@ export class SessionMigrator {
   public async getAnswer(resourceName: string): Promise<any> {
     const token = await this.getAuthToken();
     const projectId = resourceName.split('/')[1] || this.config.source.projectId;
-    const url = `https://discoveryengine.googleapis.com/v1alpha/${resourceName}`;
+    const parts = resourceName.split('/');
+    const locIndex = parts.indexOf('locations');
+    const location = locIndex !== -1 ? parts[locIndex + 1] : this.config.source.appLocation || 'global';
+    const baseUrl = getSafeDiscoveryEngineUrl(location);
+    const url = `${baseUrl}/v1alpha/${resourceName}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -143,48 +148,92 @@ export class SessionMigrator {
     return '';
   }
 
-  public async listSourceSessions(): Promise<ChatSession[]> {
+  public async listSourceSessions(candidateUsers: string[] = []): Promise<ChatSession[]> {
     const env = this.config.source;
-    const token = await this.getAuthToken();
-    const url = `https://discoveryengine.googleapis.com/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-Goog-User-Project': env.projectId
+    const usersToScan = new Set<string>();
+    for (const u of candidateUsers) {
+      if (u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
+    }
+    if (this.config.options?.userFilter) {
+      for (const u of this.config.options.userFilter) {
+        if (u.includes('@') && !u.includes('*')) usersToScan.add(u.replace(/^user:/i, '').trim());
       }
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Failed to list source sessions (${response.status}): ${errText}`);
+    }
+    if (usersToScan.size === 0) {
+      const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
+      if (defaultAdmin) usersToScan.add(defaultAdmin);
     }
 
-    const data = await response.json() as any;
-    return (data.sessions || []) as ChatSession[];
+    const allSessions: ChatSession[] = [];
+    const seenSessionIds = new Set<string>();
+
+    for (const email of usersToScan) {
+      try {
+        const token = await this.getAuthToken(email);
+        const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+        const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100`;
+
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-Goog-User-Project': env.projectId
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json() as any;
+          for (const s of (data.sessions || [])) {
+            const sid = s.name.split('/').pop() || s.name;
+            if (!seenSessionIds.has(sid)) {
+              seenSessionIds.add(sid);
+              if (!s.userPseudoId || !s.userPseudoId.includes('@')) {
+                s.userPseudoId = email;
+              }
+              allSessions.push(s);
+            }
+          }
+        }
+      } catch (err: any) {
+        logger.debug(`Could not list sessions for user ${email}: ${err.message}`);
+      }
+    }
+
+    return allSessions;
   }
 
-  public async listTargetSessions(): Promise<ChatSession[]> {
+  public async listTargetSessions(userEmail?: string): Promise<ChatSession[]> {
     const env = this.config.target;
-    const token = await this.getAuthToken();
-    const url = `https://discoveryengine.googleapis.com/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100`;
+    const token = await this.getAuthToken(userEmail);
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const allSessions: ChatSession[] = [];
+    let pageToken = '';
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-Goog-User-Project': env.projectId
+    do {
+      const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+      const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100${pageParam}`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Goog-User-Project': env.projectId
+        }
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Failed to list target sessions (${response.status}): ${errText}`);
       }
-    });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Failed to list target sessions (${response.status}): ${errText}`);
-    }
+      const data = await response.json() as any;
+      if (data.sessions && Array.isArray(data.sessions)) {
+        allSessions.push(...data.sessions);
+      }
+      pageToken = data.nextPageToken || '';
+    } while (pageToken);
 
-    const data = await response.json() as any;
-    return (data.sessions || []) as ChatSession[];
+    return allSessions;
   }
 
   public async migrateSession(session: ChatSession, targetUserOverride?: string): Promise<ChatSession> {
@@ -194,12 +243,15 @@ export class SessionMigrator {
     let targetUserId = targetUserOverride;
     if (!targetUserId) {
       const srcUser = session.userPseudoId;
+      const defaultUser = this.config.options?.userFilter?.[0]?.replace(/^user:/i, '').trim();
       if (srcUser && this.config.identityMapping?.[srcUser]) {
         targetUserId = this.config.identityMapping[srcUser];
       } else if (srcUser && srcUser.includes('@')) {
         targetUserId = srcUser;
+      } else if (defaultUser && defaultUser.includes('@')) {
+        targetUserId = defaultUser;
       } else {
-        targetUserId = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'admin@wdufrin.altostrat.com';
+        targetUserId = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'admin';
       }
     }
 
@@ -276,7 +328,8 @@ export class SessionMigrator {
       turns: hydratedTurns
     };
 
-    const targetUrl = `https://discoveryengine.googleapis.com/v1alpha/projects/${target.projectId}/locations/${target.appLocation}/collections/${target.collectionId || 'default_collection'}/engines/${target.appId}/sessions`;
+    const baseUrl = getSafeDiscoveryEngineUrl(target.appLocation);
+    const targetUrl = `${baseUrl}/v1alpha/projects/${target.projectId}/locations/${target.appLocation}/collections/${target.collectionId || 'default_collection'}/engines/${target.appId}/sessions`;
 
     const response = await fetch(targetUrl, {
       method: 'POST',

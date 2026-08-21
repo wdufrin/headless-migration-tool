@@ -35,17 +35,55 @@ export class AgentMigrator {
       return true;
     }
 
+    const lowerFilters = userFilter.map(u => u.toLowerCase().trim().replace(/^user:/i, ''));
+
+    // 1. Resolve Primary Owner (prioritize agentOwner IAM binding, then agent.owner)
+    let primaryOwner = agent.owner;
+    if (agent.iamPolicy?.bindings) {
+      const ownerBinding = agent.iamPolicy.bindings.find(b => b.role === 'roles/discoveryengine.agentOwner');
+      if (ownerBinding && ownerBinding.members && ownerBinding.members.length > 0) {
+        primaryOwner = ownerBinding.members[0];
+      }
+    }
+
+    if (primaryOwner) {
+      const cleanOwner = primaryOwner
+        .replace(/^.*\/subject\//i, '')
+        .replace(/^.*_subject_/i, '')
+        .replace(/^principal(set)?:\/\/.*?\//i, '')
+        .replace(/^user:/i, '')
+        .replace(/^serviceAccount:/i, '')
+        .toLowerCase().trim();
+
+      return lowerFilters.some(filter => {
+        if (filter.startsWith('*@')) {
+          const domain = filter.substring(2);
+          return cleanOwner.endsWith(`@${domain}`);
+        }
+        return cleanOwner === filter;
+      });
+    }
+
+    // 2. If no explicit owner role is attached, check all members
     const members: string[] = [];
     if (agent.iamPolicy?.bindings) {
       for (const b of agent.iamPolicy.bindings) {
         members.push(...b.members);
       }
     }
-    if (agent.owner) members.push(agent.owner);
+    if (members.length === 0) {
+      return false;
+    }
 
-    const lowerFilters = userFilter.map(u => u.toLowerCase().trim());
     return members.some(member => {
-      const cleanMember = member.replace(/^user:/i, '').replace(/^serviceAccount:/i, '').toLowerCase().trim();
+      let cleanMember = member
+        .replace(/^.*\/subject\//i, '')
+        .replace(/^.*_subject_/i, '')
+        .replace(/^principal(set)?:\/\/.*?\//i, '')
+        .replace(/^user:/i, '')
+        .replace(/^serviceAccount:/i, '')
+        .toLowerCase().trim();
+      
       return lowerFilters.some(filter => {
         if (filter.startsWith('*@')) {
           const domain = filter.substring(2);
@@ -122,9 +160,13 @@ export class AgentMigrator {
             continue;
           }
 
-          const mappedTargetId = datastoreMapping[oldDsId];
-          if (mappedTargetId === undefined || mappedTargetId === '') {
-            logger.warn(`Datastore "${oldDsId}" is unmapped in target environment. Skipping.`);
+          let mappedTargetId = datastoreMapping[oldDsId];
+          if (mappedTargetId === undefined) {
+            // Default to same DataStore ID in target environment if not explicitly overridden
+            mappedTargetId = oldDsId;
+          }
+          if (mappedTargetId === '' || mappedTargetId === null) {
+            logger.warn(`Datastore "${oldDsId}" is explicitly skipped in target environment.`);
             continue;
           }
 
@@ -179,6 +221,9 @@ export class AgentMigrator {
 
         let defStr = JSON.stringify(definition);
 
+        // Universal Project ID / Numeric Number & Location replacement
+        defStr = defStr.replace(/projects\/[0-9a-zA-Z_-]+\/locations\/([0-9a-zA-Z_-]+)\//g, `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || '$1'}/`);
+
         // Project / Location / Engine string replacement
         if (sourceEnv.appId && targetEnv.appId) {
           defStr = defStr.split(sourceEnv.appId).join(targetEnv.appId);
@@ -206,6 +251,11 @@ export class AgentMigrator {
               defStr = defStr.split(oldDs).join(newDs);
             }
           });
+
+        // Common DataStore Connector pattern rewriting (e.g. outlook-federated -> outlook-cmek)
+        defStr = defStr.replace(/outlook-federated_[0-9]+/g, 'outlook-cmek_1787169366114');
+        defStr = defStr.replace(/onedrive-federated_[0-9]+/g, 'onedrive-cmek_1787169277352');
+        defStr = defStr.replace(/entraid-connector_[0-9]+/g, 'entraid-cmek_1787169408505');
 
         payload[key] = JSON.parse(defStr);
       }
@@ -313,8 +363,16 @@ export class AgentMigrator {
       const allowedTypes = new Set(options.agentTypes);
       filteredAgents = filteredAgents.filter(a => allowedTypes.has(this.getAgentType(a)));
       logger.info(`Filtered agents by type [${options.agentTypes.join(', ')}]: ${filteredAgents.length} matching agents.`);
+    }
+
+    if (options.excludeDraftAgents || options.agentStatusFilter === 'PUBLISHED_ONLY') {
+      filteredAgents = filteredAgents.filter(a => this.isSourceAgentPublished(a));
+      logger.info(`Filtered agents to published/shared only (drafts excluded): ${filteredAgents.length} matching agents.`);
+    } else if (options.agentStatusFilter === 'DRAFTS_ONLY') {
+      filteredAgents = filteredAgents.filter(a => !this.isSourceAgentPublished(a));
+      logger.info(`Filtered agents to drafts only: ${filteredAgents.length} matching agents.`);
     } else {
-      logger.info(`Selected ${filteredAgents.length} agents matching user filters.`);
+      logger.info(`Selected ${filteredAgents.length} agents matching user & lifecycle filters.`);
     }
 
     const concurrency = options.concurrency || 10;
@@ -323,8 +381,15 @@ export class AgentMigrator {
     return mapConcurrent(filteredAgents, concurrency, async (agent: Agent) => {
       const startTime = Date.now();
       const originalAgentId = agent.name.split('/').pop() || '';
-      const originalOwner = agent.owner || agent.iamPolicy?.bindings?.[0]?.members?.[0] || 'unknown';
-      const targetOwner = identityMapping[originalOwner] || originalOwner;
+      const rawOriginalOwner = agent.owner || agent.iamPolicy?.bindings?.[0]?.members?.[0] || 'unknown';
+      let cleanOwner = rawOriginalOwner;
+      cleanOwner = cleanOwner.replace(/^.*\/subject\//i, '');
+      cleanOwner = cleanOwner.replace(/^.*_subject_/i, '');
+      cleanOwner = cleanOwner.replace(/^principal(set)?:\/\/.*?\//i, '');
+      cleanOwner = cleanOwner.replace(/^user:/i, '').trim();
+
+      const originalOwner = cleanOwner;
+      const targetOwner = identityMapping[cleanOwner] || identityMapping[rawOriginalOwner] || cleanOwner;
 
       const result: MigrationItemResult = {
         id: originalAgentId,
@@ -345,25 +410,62 @@ export class AgentMigrator {
 
         const userOwner = (targetOwner && targetOwner !== 'unknown') ? targetOwner : undefined;
         const createPayload = this.buildAgentPayload(agent, sourceEnv, targetEnv, datastoreMapping, collectionMapping);
-        const createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, userOwner);
+        
+        let createdAgent;
+        try {
+          createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, userOwner);
+        } catch (createErr: any) {
+          if (
+            createErr.message.includes('DWD Impersonation Failed') ||
+            createErr.message.includes('User does not exist') ||
+            createErr.message.includes('client_is_not_authorized') ||
+            createErr.message.includes('unauthorized_client') ||
+            createErr.message.includes('invalid_grant')
+          ) {
+            logger.warn(`DWD impersonation not available for "${userOwner}". Restoring Agent "${result.displayName}" directly into target engine via Service Account.`);
+            createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, undefined);
+          } else if (
+            createErr.message.includes('authorization') ||
+            createErr.message.includes('Authorization') ||
+            createErr.message.includes('dataStore') ||
+            createErr.message.includes('DataStore') ||
+            createErr.message.includes('FAILED_PRECONDITION')
+          ) {
+            logger.warn(`Agent "${result.displayName}" encountered federated connector constraint (${createErr.message}). Retrying in safe unlinked draft mode...`);
+            const fallbackPayload = { ...createPayload };
+            delete fallbackPayload.authorizationConfig;
+            delete fallbackPayload.authorizations;
+            createdAgent = await this.client.createAgent(targetEnv, fallbackPayload, agent.targetId, undefined);
+            logger.info(`Agent "${result.displayName}" restored successfully as native draft. User can reconnect federated OAuth credentials on first login.`);
+          } else {
+            throw createErr;
+          }
+        }
+
         const newAgentName = createdAgent.name;
         const newAgentId = newAgentName.split('/').pop() || '';
 
         result.targetId = newAgentId;
         logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
 
-        // 1. Replicate sharing configuration ONLY if the source agent had it defined
-        if (agent.sharingConfig && options.preserveSharing !== false) {
+        // 1. Replicate sharing configuration so the restored agent is visible in the UI
+        const effectiveSharing = agent.sharingConfig || { scope: 'ALL_USERS' };
+        if (options.preserveSharing !== false) {
           try {
-            await this.client.patchAgentSharing(newAgentName, agent.sharingConfig, targetEnv, userOwner);
-            logger.info(`Sharing configuration mirrored for agent "${result.displayName}" (Scope: ${agent.sharingConfig.scope})`);
+            await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, userOwner);
+            logger.info(`Sharing configuration configured for agent "${result.displayName}" (Scope: ${effectiveSharing.scope})`);
           } catch (shareErr: any) {
-            logger.warn(`Could not set sharing config on agent "${result.displayName}": ${shareErr.message}`);
+            try {
+              await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, undefined);
+              logger.info(`Sharing configuration configured via Service Account for agent "${result.displayName}"`);
+            } catch (retryErr: any) {
+              logger.warn(`Could not set sharing config on agent "${result.displayName}": ${shareErr.message}`);
+            }
           }
         }
 
         // 2. Replicate IAM policy ONLY if the agent is shared (Google rejects IAM on private agents)
-        if (agent.sharingConfig && agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
+        if (agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
           try {
             await this.restoreAgentIamPolicy(newAgentName, agent.iamPolicy, targetEnv, identityMapping);
           } catch (iamErr: any) {
@@ -371,17 +473,21 @@ export class AgentMigrator {
           }
         }
 
-        // 3. Headless publishing is disabled by default to prevent UI revision lockouts and OAuth consent errors.
-        // Agents migrate cleanly as native author drafts, ready to be published seamlessly via the UI.
-        if (options.publishAgents === true) {
+        // 3. Publish agent if requested or if published in source
+        if (options.publishAgents !== false && (options.publishAgents === true || this.isSourceAgentPublished(agent))) {
           try {
             await this.client.publishAgent(newAgentName, targetEnv, userOwner);
             logger.info(`Published agent "${result.displayName}".`);
           } catch (pubErr: any) {
-            logger.warn(`Notice for agent "${result.displayName}": ${pubErr.message}`);
+            try {
+              await this.client.publishAgent(newAgentName, targetEnv, undefined);
+              logger.info(`Published agent "${result.displayName}" via Service Account.`);
+            } catch (retryPubErr: any) {
+              logger.warn(`Notice for agent "${result.displayName}": ${pubErr.message}`);
+            }
           }
         } else {
-          logger.info(`Preserved agent "${result.displayName}" as native editable draft (Ready for UI 1-click publishing).`);
+          logger.info(`Preserved agent "${result.displayName}" as native editable draft.`);
         }
 
         const cleanOriginalOwner = (originalOwner || '').replace(/^user:/i, '').replace(/^serviceAccount:/i, '').toLowerCase().trim();
@@ -425,9 +531,15 @@ export class AgentMigrator {
 
         result.status = 'SUCCESS';
       } catch (err: any) {
-        logger.error(`Failed to migrate Agent "${result.displayName}" (${originalAgentId}): ${err.message}`);
-        result.status = 'FAILED';
-        result.error = err.message;
+        if (err.message.includes('DWD Impersonation Failed') || err.message.includes('User does not exist') || err.message.includes('client_is_not_authorized') || err.message.includes('unauthorized_client') || err.message.includes('Invalid impersonation')) {
+          logger.warn(`[DROPPED / SKIPPED] Agent "${result.displayName}" for offboarded/unmapped user "${originalOwner}" was dropped. Admin account will not be polluted.`);
+          result.status = 'SKIPPED';
+          result.error = `Skipped: User "${targetOwner || originalOwner}" not found in target Google Identity. Data safely dropped to prevent admin account pollution.`;
+        } else {
+          logger.error(`Failed to migrate Agent "${result.displayName}" (${originalAgentId}): ${err.message}`);
+          result.status = 'FAILED';
+          result.error = err.message;
+        }
       }
 
       result.durationMs = Date.now() - startTime;

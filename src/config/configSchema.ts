@@ -33,6 +33,9 @@ export const MigrationOptionsSchema = z.object({
   migrateSessions: z.boolean().default(true),
   exportArtifacts: z.boolean().default(true),
   agentTypes: z.array(z.enum(['LOW_CODE', 'WORKFLOW', 'ADK', 'A2A', 'OTHER', 'ALL'])).default(['ALL']),
+  agentStatusFilter: z.enum(['ALL', 'PUBLISHED_ONLY', 'DRAFTS_ONLY']).default('ALL'),
+  excludeDraftAgents: z.boolean().default(false),
+  notebookIds: z.array(z.string()).default([]),
   dryRun: z.boolean().default(false),
   concurrency: z.number().int().min(1).max(50).default(10),
   userFilter: z.array(z.string()).default([]),
@@ -57,8 +60,8 @@ export const DomainRuleSchema = z.object({
 });
 
 export const IdpMappingSchema = z.object({
-  sourceIdp: z.enum(['MICROSOFT_ENTRA', 'OKTA', 'PING', 'GOOGLE_WORKSPACE', 'CUSTOM']).default('CUSTOM'),
-  targetIdp: z.enum(['GOOGLE_CLOUD_IDENTITY', 'GOOGLE_WORKSPACE', 'CUSTOM']).default('GOOGLE_CLOUD_IDENTITY'),
+  sourceIdp: z.string().default('CUSTOM'),
+  targetIdp: z.string().default('GOOGLE_CLOUD_IDENTITY'),
   domainRules: z.array(DomainRuleSchema).default([]),
   fallbackUserEmail: z.string().optional()
 }).default({});

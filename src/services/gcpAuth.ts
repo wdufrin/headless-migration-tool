@@ -47,13 +47,13 @@ export class GcpAuthService {
     this.staticToken = options.staticToken;
     this.authType = options.authType || 'SERVICE_ACCOUNT_KEY';
     this.wifConfigPath = options.wifConfigPath;
-    this.wifConfig = options.wifConfigJson;
-
-    if (options.wifConfigPath && fs.existsSync(options.wifConfigPath)) {
+    // Auto-load Workforce Identity Federation (WiF) Config if present
+    if (options.wifConfigJson) {
+      this.wifConfig = options.wifConfigJson;
+    } else if (options.wifConfigPath && fs.existsSync(options.wifConfigPath)) {
       try {
         const content = fs.readFileSync(options.wifConfigPath, 'utf-8');
         this.wifConfig = JSON.parse(content);
-        this.authType = 'WORKFORCE_IDENTITY_FEDERATION';
         logger.info(`Loaded Workforce Identity Federation (WiF) Config from: ${options.wifConfigPath}`);
       } catch (err: any) {
         logger.warn(`Failed to parse WiF config file: ${err.message}`);
@@ -62,7 +62,6 @@ export class GcpAuthService {
       try {
         const content = fs.readFileSync('./workforce-identity-config.json', 'utf-8');
         this.wifConfig = JSON.parse(content);
-        this.authType = 'WORKFORCE_IDENTITY_FEDERATION';
         logger.info('Auto-loaded Workforce Identity Federation (WiF) Config from ./workforce-identity-config.json');
       } catch {}
     }
@@ -125,53 +124,78 @@ export class GcpAuthService {
    * with literal user ownership.
    */
   async getAccessToken(forUserEmail?: string, scopes?: string[]): Promise<string> {
-    const cleanEmail = forUserEmail?.replace(/^user:/i, '').trim();
+    const cleanEmail = typeof forUserEmail === 'string' ? forUserEmail.replace(/^user:/i, '').trim() : undefined;
     const requestedScopes = scopes && scopes.length > 0 ? scopes : [
       'https://www.googleapis.com/auth/discoveryengine.readwrite',
       'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
     ];
     const cacheKey = `${cleanEmail || 'default'}_${requestedScopes.slice().sort().join(',')}`;
 
-    // 1. Domain-Wide Delegation Impersonation
-    if (cleanEmail && this.serviceAccountKey) {
+    const cached = this.userTokenCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now() + 60000) {
+      return cached.token;
+    }
+
+    // 1. User Impersonation Flow
+    if (cleanEmail) {
+      // 1.a Workforce Identity Federation Impersonation (active if WIF configured or external domain)
       const lower = cleanEmail.toLowerCase();
-      const isEligible = (
-        lower.includes('@') &&
-        !lower.endsWith('.gserviceaccount.com') &&
-        !lower.includes('serviceaccount') &&
-        !lower.startsWith('service-') &&
-        !lower.endsWith('@example.com') &&
-        lower !== 'unknown' &&
-        lower !== 'admin'
-      );
-
-      if (isEligible) {
-        const cached = this.userTokenCache.get(cacheKey);
-        if (cached && cached.expiresAt > Date.now() + 60000) {
-          return cached.token;
-        }
-
+      const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
+      if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' || isExternalDomain || fs.existsSync('wif-migration-key.pem')) {
         try {
-          logger.debug(`Minting DWD impersonated token for user: ${cleanEmail} with scopes: ${requestedScopes.join(', ')}`);
-          const jwtClient = new JWT({
-            email: this.serviceAccountKey.client_email,
-            key: this.serviceAccountKey.private_key,
-            subject: cleanEmail,
-            scopes: requestedScopes
-          });
-
-          const tokenResponse = await jwtClient.getAccessToken();
-          if (tokenResponse.token) {
+          const wifToken = await this.mintWorkforceToken(cleanEmail);
+          if (wifToken) {
             this.userTokenCache.set(cacheKey, {
-              token: tokenResponse.token,
+              token: wifToken,
               expiresAt: Date.now() + 3000 * 1000
             });
-            return tokenResponse.token;
+            return wifToken;
           }
-        } catch (err: any) {
-          if (!this.failedDwdUsers.has(cleanEmail)) {
-            this.failedDwdUsers.add(cleanEmail);
-            logger.warn(`DWD impersonation skipped/failed for ${cleanEmail} (${err.message}). Using admin credentials.`);
+        } catch (wifErr: any) {
+          logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
+        }
+      }
+
+      // 1.b Domain-Wide Delegation Impersonation
+      if (this.serviceAccountKey && !isExternalDomain) {
+        const isEligible = (
+          lower.includes('@') &&
+          !lower.endsWith('.gserviceaccount.com') &&
+          !lower.includes('serviceaccount') &&
+          !lower.startsWith('service-') &&
+          !lower.endsWith('@example.com') &&
+          lower !== 'unknown' &&
+          lower !== 'admin'
+        );
+
+        if (isEligible) {
+          try {
+            logger.debug(`Minting DWD impersonated token for user: ${cleanEmail} with scopes: ${requestedScopes.join(', ')}`);
+            const jwtClient = new JWT({
+              email: this.serviceAccountKey.client_email,
+              key: this.serviceAccountKey.private_key,
+              subject: cleanEmail,
+              scopes: requestedScopes
+            });
+
+            const tokenResponse = await jwtClient.getAccessToken();
+            if (tokenResponse.token) {
+              this.userTokenCache.set(cacheKey, {
+                token: tokenResponse.token,
+                expiresAt: Date.now() + 3000 * 1000
+              });
+              return tokenResponse.token;
+            }
+          } catch (err: any) {
+            if (!this.failedDwdUsers.has(cleanEmail)) {
+              this.failedDwdUsers.add(cleanEmail);
+              logger.warn(`DWD impersonation failed for ${cleanEmail} (${err.message}). Falling back to Workforce / Service Account token.`);
+            }
+            // Try WiF token minting as fallback before giving up
+            try {
+              const fallbackWifToken = await this.mintWorkforceToken(cleanEmail);
+              if (fallbackWifToken) return fallbackWifToken;
+            } catch {}
           }
         }
       }
@@ -181,8 +205,29 @@ export class GcpAuthService {
       return this.staticToken;
     }
 
-    // 2. Workforce Identity Federation (WiF) Token Exchange via GCP STS
-    if (this.wifConfig) {
+    // 2. Service Account Token for service-level non-impersonated calls
+    if (this.authType === 'SERVICE_ACCOUNT_KEY' && this.serviceAccountKey) {
+      try {
+        const jwtClient = new JWT({
+          email: this.serviceAccountKey.client_email,
+          key: this.serviceAccountKey.private_key,
+          scopes: requestedScopes
+        });
+        const tokenResponse = await jwtClient.getAccessToken();
+        if (tokenResponse.token) {
+          this.userTokenCache.set(cacheKey, {
+            token: tokenResponse.token,
+            expiresAt: Date.now() + 3000 * 1000
+          });
+          return tokenResponse.token;
+        }
+      } catch (err: any) {
+        logger.warn(`Service Account token minting failed: ${err.message}`);
+      }
+    }
+
+    // 3. Workforce Identity Federation (WiF) Token Exchange via GCP STS
+    if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' && this.wifConfig) {
       if (this.cachedWifToken && this.cachedWifToken.expiresAt > Date.now() + 60000) {
         return this.cachedWifToken.token;
       }
@@ -244,5 +289,78 @@ export class GcpAuthService {
     }
 
     throw new Error('No valid GCP credentials found. Please run "gcloud auth login", configure a Service Account Key with DWD, or provide an Authorization Bearer token.');
+  }
+
+  /**
+   * Mints a GCP Workforce Identity access token by signing an OIDC JWT and exchanging it with GCP STS.
+   */
+  public async mintWorkforceToken(userEmail: string, poolName?: string): Promise<string | undefined> {
+    const keyPath = 'wif-migration-key.pem';
+    if (!fs.existsSync(keyPath)) {
+      return undefined;
+    }
+
+    const audience = this.wifConfig?.audience || '';
+    const pool = poolName || (audience.match(/workforcePools\/([^\/]+)/)?.[1]) || process.env.WIF_POOL_ID || '';
+    const provider = (audience.match(/providers\/([^\/]+)/)?.[1]) || process.env.WIF_PROVIDER_ID || 'migration-dwd-provider';
+
+    try {
+      const privateKeyPem = fs.readFileSync(keyPath, 'utf8');
+      const header = {
+        alg: 'RS256',
+        typ: 'JWT',
+        kid: 'wif-migration-key-1'
+      };
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        iss: 'https://gemini-migration.internal',
+        sub: userEmail,
+        email: userEmail,
+        aud: 'gemini-migration-tool',
+        iat: now,
+        exp: now + 3600
+      };
+
+      const encodeBase64Url = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+      const unsignedToken = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
+
+      const crypto = await import('crypto');
+      const sign = crypto.createSign('RSA-SHA256');
+      sign.update(unsignedToken);
+      sign.end();
+      const signature = sign.sign(privateKeyPem, 'base64url');
+      const signedJwt = `${unsignedToken}.${signature}`;
+
+      const stsUrl = 'https://sts.googleapis.com/v1/token';
+      const effectiveAudience = audience || `//iam.googleapis.com/locations/global/workforcePools/${pool}/providers/${provider}`;
+
+      const stsRes = await fetch(stsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audience: effectiveAudience,
+          grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
+          requestedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+          scope: 'https://www.googleapis.com/auth/cloud-platform',
+          subjectTokenType: 'urn:ietf:params:oauth:token-type:id_token',
+          subjectToken: signedJwt
+        })
+      });
+
+      if (!stsRes.ok) {
+        const errBody = await stsRes.text();
+        logger.debug(`STS workforce token exchange returned ${stsRes.status}: ${errBody}`);
+        return undefined;
+      }
+
+      const stsData: any = await stsRes.json();
+      if (stsData.access_token) {
+        logger.info(`Minted GCP Workforce Identity Token for "${userEmail}" via migration-dwd-provider.`);
+        return stsData.access_token;
+      }
+    } catch (err: any) {
+      logger.debug(`Could not mint workforce token for ${userEmail}: ${err.message}`);
+    }
+    return undefined;
   }
 }

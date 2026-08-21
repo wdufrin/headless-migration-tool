@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { SessionMigrator, ChatSession } from './sessionMigrator.js';
+import { GcpAuthService } from '../services/gcpAuth.js';
 import { logger } from '../utils/logger.js';
 
 export interface DiscoveredArtifact {
@@ -28,9 +29,9 @@ export class ArtifactExtractor {
   private config: ValidatedMigrationConfig;
   private migrator: SessionMigrator;
 
-  constructor(config: ValidatedMigrationConfig) {
+  constructor(config: ValidatedMigrationConfig, authService?: GcpAuthService) {
     this.config = config;
-    this.migrator = new SessionMigrator(config);
+    this.migrator = new SessionMigrator(config, authService);
   }
 
   public async scanAllArtifacts(): Promise<DiscoveredArtifact[]> {

@@ -58,9 +58,6 @@ describe('MigrationRunner Orchestrator', () => {
       { name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/ag-1', displayName: 'Agent A' }
     ]);
     (runner as any).client.getAgentIamPolicy = vi.fn().mockResolvedValue({ bindings: [] });
-    (runner as any).bqDiscovery.discoverUsersFromBigQuery = vi.fn().mockResolvedValue([
-      { userEmail: 'user@fedex.com', agentNames: ['Agent A'], interactionCount: 42 }
-    ]);
 
     const report = await runner.run(sampleConfig);
 

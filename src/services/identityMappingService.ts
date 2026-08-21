@@ -22,8 +22,8 @@ export interface DomainRule {
 }
 
 export interface IdpMappingConfig {
-  sourceIdp?: 'MICROSOFT_ENTRA' | 'OKTA' | 'PING' | 'GOOGLE_WORKSPACE' | 'CUSTOM';
-  targetIdp?: 'GOOGLE_CLOUD_IDENTITY' | 'GOOGLE_WORKSPACE' | 'CUSTOM';
+  sourceIdp?: string;
+  targetIdp?: string;
   domainRules?: DomainRule[];
   explicitMappings?: Record<string, string>;
   defaultFallbackEmail?: string;
@@ -46,8 +46,8 @@ export class IdentityMappingService {
   constructor(config: IdpMappingConfig = {}) {
     this.config = config;
     this.domainRules = (config.domainRules || []).map(r => ({
-      fromDomain: r.fromDomain.startsWith('@') ? r.fromDomain.toLowerCase() : `@${r.fromDomain.toLowerCase()}`,
-      toDomain: r.toDomain.startsWith('@') ? r.toDomain.toLowerCase() : `@${r.toDomain.toLowerCase()}`
+      fromDomain: r.fromDomain.toLowerCase().trim(),
+      toDomain: r.toDomain.toLowerCase().trim()
     }));
 
     if (config.explicitMappings) {
@@ -63,10 +63,13 @@ export class IdentityMappingService {
   normalizeEmail(identity: string): string {
     if (!identity) return '';
     let clean = identity.trim().toLowerCase();
+    clean = clean.replace(/^.*\/subject\//i, '');
+    clean = clean.replace(/^.*_subject_/i, '');
+    clean = clean.replace(/^principal(set)?:\/\/.*?\//i, '');
     clean = clean.replace(/^user:/i, '');
     clean = clean.replace(/^group:/i, '');
     clean = clean.replace(/^corp\\/i, '');
-    return clean;
+    return clean.trim();
   }
 
   /**
@@ -97,13 +100,33 @@ export class IdentityMappingService {
 
     // 2. Check Domain / Suffix transformation rules
     for (const rule of this.domainRules) {
-      if (rawClean.endsWith(rule.fromDomain)) {
-        const usernamePart = rawClean.slice(0, rawClean.length - rule.fromDomain.length);
-        const target = `${usernamePart}${rule.toDomain}`;
+      const from = rule.fromDomain;
+      const to = rule.toDomain.startsWith('@') ? rule.toDomain : `@${rule.toDomain}`;
+
+      // Case A: Exact domain match (e.g. "@company.onmicrosoft.com")
+      const normalizedFrom = from.startsWith('@') ? from : `@${from}`;
+      if (!from.includes('*') && !from.startsWith('.') && rawClean.endsWith(normalizedFrom)) {
+        const usernamePart = rawClean.slice(0, rawClean.length - normalizedFrom.length);
+        const target = `${usernamePart}${to}`;
         return {
           sourceIdentity,
           targetIdentity: target,
           matchedRule: `${rule.fromDomain} -> ${rule.toDomain}`,
+          isCustomOverride: false,
+          status: 'AUTO_MAPPED'
+        };
+      }
+
+      // Case B: Wildcard or Subdomain Suffix match (e.g. ".onmicrosoft.com", "*.onmicrosoft.com", "@*.onmicrosoft.com", "onmicrosoft.com")
+      const cleanSuffix = from.replace(/^[@*.]*/, ''); // e.g. "onmicrosoft.com"
+      if (cleanSuffix && (rawClean.endsWith(`.${cleanSuffix}`) || rawClean.endsWith(`@${cleanSuffix}`))) {
+        const atIndex = rawClean.indexOf('@');
+        const usernamePart = atIndex > -1 ? rawClean.substring(0, atIndex) : rawClean;
+        const target = `${usernamePart}${to}`;
+        return {
+          sourceIdentity,
+          targetIdentity: target,
+          matchedRule: `*.${cleanSuffix} -> ${rule.toDomain}`,
           isCustomOverride: false,
           status: 'AUTO_MAPPED'
         };
@@ -121,56 +144,53 @@ export class IdentityMappingService {
       };
     }
 
-    // 4. Default: keep unchanged
+    // 4. Default: Unchanged identity
     return {
       sourceIdentity,
-      targetIdentity: rawClean,
+      targetIdentity: sourceIdentity,
       isCustomOverride: false,
       status: 'UNCHANGED'
     };
   }
 
   /**
-   * Bulk auto-maps a collection of discovered source identities.
+   * Bulk auto-maps a list of users discovered from the source project.
    */
-  autoMapUserList(sourceIdentities: string[]): MappedIdentityResult[] {
+  autoMapUserList(users: string[]): MappedIdentityResult[] {
     const results: MappedIdentityResult[] = [];
     const seen = new Set<string>();
 
-    for (const raw of sourceIdentities) {
-      const clean = this.normalizeEmail(raw);
+    for (const u of users) {
+      const clean = this.normalizeEmail(u);
       if (!clean || seen.has(clean)) continue;
       seen.add(clean);
-      results.push(this.resolveIdentity(clean));
+      results.push(this.resolveIdentity(u));
     }
 
     return results;
   }
 
   /**
-   * Returns standard preset domain transformation templates for enterprise IdP migrations.
+   * Returns standard preset identity mapping configurations.
    */
-  static getIdpPresets(): Record<string, { name: string; description: string; domainRules: DomainRule[] }> {
+  static getIdpPresets(): Record<string, { name: string; domainRules: DomainRule[] }> {
     return {
-      'ENTRA_TO_GOOGLE': {
-        name: 'Microsoft Entra ID to Google Cloud Identity',
-        description: 'Translates Azure AD / Entra ID .onmicrosoft.com or corporate UPNs to Google Cloud Identity domain.',
+      ENTRA_TO_GOOGLE: {
+        name: 'Microsoft Entra ID -> Google Cloud Identity',
         domainRules: [
-          { fromDomain: '@company.onmicrosoft.com', toDomain: '@company.com' }
+          { fromDomain: '.onmicrosoft.com', toDomain: '@company.com' }
         ]
       },
-      'OKTA_TO_GOOGLE': {
-        name: 'Okta Universal Directory to Google Cloud Identity',
-        description: 'Translates Okta federated tenant users into Google Cloud Identity accounts.',
+      OKTA_TO_GOOGLE: {
+        name: 'Okta Universal Directory -> Google Cloud Identity',
         domainRules: [
-          { fromDomain: '@company.okta.com', toDomain: '@company.com' }
+          { fromDomain: '.okta.com', toDomain: '@company.com' }
         ]
       },
-      'PING_TO_GOOGLE': {
-        name: 'Ping Identity (PingFederate) to Google Cloud Identity',
-        description: 'Translates PingFederate SAML assertions into target Google Cloud Identity accounts.',
+      PING_TO_GOOGLE: {
+        name: 'Ping Identity -> Google Cloud Identity',
         domainRules: [
-          { fromDomain: '@ping.company.com', toDomain: '@company.com' }
+          { fromDomain: '.pingidentity.com', toDomain: '@company.com' }
         ]
       }
     };

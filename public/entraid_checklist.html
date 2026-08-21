@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Microsoft Entra ID & GCP Workforce Federation Fix Checklist</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 1rem; }
+    .step-checkbox { width: 1.35rem; height: 1.35rem; accent-color: #3b82f6; cursor: pointer; border-radius: 0.375rem; }
+    .step-item.completed { opacity: 0.65; }
+    .step-item.completed span.step-title { text-decoration: line-through; color: #94a3b8; }
+  </style>
+</head>
+<body class="p-6 md:p-12 min-h-screen flex flex-col items-center">
+  <div class="max-w-4xl w-full space-y-8">
+    
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+      <div>
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center font-bold text-xl border border-blue-500/30">
+            <i class="fab fa-microsoft"></i>
+          </div>
+          <h1 class="text-2xl md:text-3xl font-extrabold text-white">Microsoft Entra ID & GCP WiF Fix Checklist</h1>
+        </div>
+        <p class="text-slate-400 mt-2 text-sm">Step-by-step resolution guide for workforce identity alignment, token claims, and agent ownership.</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button onclick="resetChecklist()" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors border border-slate-700">
+          <i class="fas fa-rotate-left mr-1.5"></i> Reset All
+        </button>
+        <a href="/" class="px-4 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors shadow-lg shadow-blue-500/20 flex items-center gap-1.5">
+          <i class="fas fa-play"></i> Open Migration Studio
+        </a>
+      </div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="glass-card p-6 space-y-3">
+      <div class="flex items-center justify-between text-sm font-semibold">
+        <span class="text-slate-300">Overall Progress</span>
+        <span id="progress-text" class="text-blue-400 font-mono">0 / 14 Completed (0%)</span>
+      </div>
+      <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+        <div id="progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-full w-0 transition-all duration-300"></div>
+      </div>
+    </div>
+
+    <!-- Phase 1 -->
+    <div class="glass-card p-6 space-y-4">
+      <div class="flex items-center gap-3 pb-3 border-b border-slate-800">
+        <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">Phase 1</span>
+        <h2 class="text-lg font-bold text-white">Microsoft Entra ID Configuration (Azure Portal)</h2>
+      </div>
+      <div class="space-y-4">
+        
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-1-1">
+          <input type="checkbox" id="chk-1-1" class="step-checkbox mt-1" onchange="toggleStep('1-1')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-1-1" class="cursor-pointer font-semibold text-slate-200 step-title">Step 1.1 — Verify Enterprise Application & App Registration</label>
+            <p class="text-xs text-slate-400">Open <a href="https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/~/RegisteredApps" target="_blank" class="text-blue-400 underline">Entra Admin Center &rarr; App registrations</a> and verify Tenant ID <code class="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300">5ae87d26-ea67-46a2-9e69-845111b8ad75</code> and Client ID <code class="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300">b56052a7-6ac1-4b35-b511-d5e0be2afd2a</code>.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-1-2">
+          <input type="checkbox" id="chk-1-2" class="step-checkbox mt-1" onchange="toggleStep('1-2')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-1-2" class="cursor-pointer font-semibold text-slate-200 step-title">Step 1.2 — Configure Optional Claims (email, preferred_username, upn)</label>
+            <p class="text-xs text-slate-400">Under <strong>Token configuration &rarr; Optional claims</strong>, ensure <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">email</code> and <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">preferred_username</code> are emitted in both ID and Access tokens.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-1-3">
+          <input type="checkbox" id="chk-1-3" class="step-checkbox mt-1" onchange="toggleStep('1-3')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-1-3" class="cursor-pointer font-semibold text-slate-200 step-title">Step 1.3 — Assign Users & Groups</label>
+            <p class="text-xs text-slate-400">Under <strong>Enterprise applications &rarr; Users and groups</strong>, ensure the target Entra ID users/groups are explicitly assigned to the enterprise application.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-1-4">
+          <input type="checkbox" id="chk-1-4" class="step-checkbox mt-1" onchange="toggleStep('1-4')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-1-4" class="cursor-pointer font-semibold text-slate-200 step-title">Step 1.4 — Grant Admin Consent for Microsoft Graph API</label>
+            <p class="text-xs text-slate-400">Under <strong>API permissions</strong>, grant tenant admin consent for <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">Mail.Read</code>, <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">Calendars.Read</code>, <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">Contacts.Read</code>, and <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">Files.Read.All</code> for CMEK federated connectors.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Phase 2 -->
+    <div class="glass-card p-6 space-y-4">
+      <div class="flex items-center gap-3 pb-3 border-b border-slate-800">
+        <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Phase 2</span>
+        <h2 class="text-lg font-bold text-white">Google Cloud Workforce Identity Federation (GCP Console)</h2>
+      </div>
+      <div class="space-y-4">
+        
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-2-1">
+          <input type="checkbox" id="chk-2-1" class="step-checkbox mt-1" onchange="toggleStep('2-1')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-2-1" class="cursor-pointer font-semibold text-slate-200 step-title">Step 2.1 — Verify Workforce Identity Pool</label>
+            <p class="text-xs text-slate-400">Confirm pool <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">locations/global/workforcePools/&lt;WORKFORCE_POOL_ID&gt;</code> is active in GCP.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-2-2">
+          <input type="checkbox" id="chk-2-2" class="step-checkbox mt-1" onchange="toggleStep('2-2')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-2-2" class="cursor-pointer font-semibold text-slate-200 step-title">Step 2.2 — Verify Workforce Identity Provider (OIDC)</label>
+            <p class="text-xs text-slate-400">Confirm Provider <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">providers/&lt;PROVIDER_ID&gt;</code> points to Issuer <code class="bg-slate-900 px-1 py-0.5 rounded text-slate-300">https://login.microsoftonline.com/&lt;TENANT_ID&gt;/v2.0</code>.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-2-3">
+          <input type="checkbox" id="chk-2-3" class="step-checkbox mt-1" onchange="toggleStep('2-3')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-2-3" class="cursor-pointer font-semibold text-slate-200 step-title">Step 2.3 — Confirm Attribute Mapping (google.subject & email)</label>
+            <p class="text-xs text-slate-400">Verify <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">google.subject = assertion.sub</code> and <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">attribute.user_email = assertion.email</code> in GCP STS.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-2-4">
+          <input type="checkbox" id="chk-2-4" class="step-checkbox mt-1" onchange="toggleStep('2-4')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-2-4" class="cursor-pointer font-semibold text-slate-200 step-title">Step 2.4 — Grant Discovery Engine Roles to Workforce Pool PrincipalSet</label>
+            <p class="text-xs text-slate-400">In the target project, grant <code class="bg-slate-900 px-1 py-0.5 rounded text-emerald-300">roles/discoveryengine.agentUser</code> to <code class="bg-slate-900 px-1 py-0.5 rounded text-indigo-300">principalSet://iam.googleapis.com/locations/global/workforcePools/&lt;WORKFORCE_POOL_ID&gt;/*</code>.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Phase 3 -->
+    <div class="glass-card p-6 space-y-4">
+      <div class="flex items-center gap-3 pb-3 border-b border-slate-800">
+        <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Phase 3</span>
+        <h2 class="text-lg font-bold text-white">Gemini Enterprise Engine & Agent Sharing</h2>
+      </div>
+      <div class="space-y-4">
+        
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-3-1">
+          <input type="checkbox" id="chk-3-1" class="step-checkbox mt-1" onchange="toggleStep('3-1')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-3-1" class="cursor-pointer font-semibold text-slate-200 step-title">Step 3.1 — Verify Target Engine Workforce Pool Association</label>
+            <p class="text-xs text-slate-400">Ensure the target Engine is configured with the expected Workforce Pool.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-3-2">
+          <input type="checkbox" id="chk-3-2" class="step-checkbox mt-1" onchange="toggleStep('3-2')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-3-2" class="cursor-pointer font-semibold text-slate-200 step-title">Step 3.2 — Configure Restored Agents with Org-Wide Sharing</label>
+            <p class="text-xs text-slate-400">Set <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">sharingConfig: { scope: 'ALL_USERS' }</code> and publish agents so they appear in <strong>"Agents from your organization"</strong> for all Entra ID users.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-3-3">
+          <input type="checkbox" id="chk-3-3" class="step-checkbox mt-1" onchange="toggleStep('3-3')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-3-3" class="cursor-pointer font-semibold text-slate-200 step-title">Step 3.3 — Grant Agent Owner Binding to Entra ID Subject</label>
+            <p class="text-xs text-slate-400">Assign <code class="bg-slate-900 px-1 py-0.5 rounded text-purple-300">roles/discoveryengine.agentOwner</code> to <code class="bg-slate-900 px-1 py-0.5 rounded text-emerald-300">principal://iam.googleapis.com/locations/global/workforcePools/&lt;WORKFORCE_POOL_ID&gt;/subject/&lt;USER_PRINCIPAL&gt;</code>.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Phase 4 -->
+    <div class="glass-card p-6 space-y-4">
+      <div class="flex items-center gap-3 pb-3 border-b border-slate-800">
+        <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">Phase 4</span>
+        <h2 class="text-lg font-bold text-white">Execute Live Migration & Verification</h2>
+      </div>
+      <div class="space-y-4">
+        
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-4-1">
+          <input type="checkbox" id="chk-4-1" class="step-checkbox mt-1" onchange="toggleStep('4-1')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-4-1" class="cursor-pointer font-semibold text-slate-200 step-title">Step 4.1 — Run Live Migration for Target Users</label>
+            <p class="text-xs text-slate-400">In Migration Studio, select target users and click <strong>Execute Live Migration</strong>.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-4-2">
+          <input type="checkbox" id="chk-4-2" class="step-checkbox mt-1" onchange="toggleStep('4-2')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-4-2" class="cursor-pointer font-semibold text-slate-200 step-title">Step 4.2 — Confirm DataStore & CMEK Connector Remapping</label>
+            <p class="text-xs text-slate-400">Verify connectors are remapped to <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">outlook-cmek_...</code>, <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">onedrive-cmek_...</code>, and <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">entraid-cmek_...</code>.</p>
+          </div>
+        </div>
+
+        <div class="step-item p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 transition-all flex items-start gap-4" id="step-4-3">
+          <input type="checkbox" id="chk-4-3" class="step-checkbox mt-1" onchange="toggleStep('4-3')">
+          <div class="flex-1 space-y-1">
+            <label for="chk-4-3" class="cursor-pointer font-semibold text-slate-200 step-title">Step 4.3 — Sign into Gemini Enterprise as Entra ID User</label>
+            <p class="text-xs text-slate-400">Open the Gemini Enterprise Web App for <code class="bg-slate-900 px-1 py-0.5 rounded text-emerald-300">test_entra</code> and verify Agents, Chat History, and Notebooks are accessible.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const totalSteps = 14;
+    const STORAGE_KEY = 'entraid_wif_checklist_v1';
+
+    function loadState() {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      let completedCount = 0;
+      
+      document.querySelectorAll('.step-checkbox').forEach(chk => {
+        const id = chk.id.replace('chk-', '');
+        if (saved[id]) {
+          chk.checked = true;
+          document.getElementById('step-' + id)?.classList.add('completed');
+          completedCount++;
+        }
+      });
+      updateProgress(completedCount);
+    }
+
+    function toggleStep(id) {
+      const chk = document.getElementById('chk-' + id);
+      const row = document.getElementById('step-' + id);
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      
+      if (chk.checked) {
+        row?.classList.add('completed');
+        saved[id] = true;
+      } else {
+        row?.classList.remove('completed');
+        delete saved[id];
+      }
+      
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      const completedCount = Object.keys(saved).length;
+      updateProgress(completedCount);
+    }
+
+    function updateProgress(count) {
+      const pct = Math.round((count / totalSteps) * 100);
+      document.getElementById('progress-bar').style.width = pct + '%';
+      document.getElementById('progress-text').textContent = `${count} / ${totalSteps} Completed (${pct}%)`;
+    }
+
+    function resetChecklist() {
+      if (confirm('Are you sure you want to reset all checklist items?')) {
+        localStorage.removeItem(STORAGE_KEY);
+        document.querySelectorAll('.step-checkbox').forEach(chk => {
+          chk.checked = false;
+        });
+        document.querySelectorAll('.step-item').forEach(item => {
+          item.classList.remove('completed');
+        });
+        updateProgress(0);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadState);
+  </script>
+</body>
+</html>

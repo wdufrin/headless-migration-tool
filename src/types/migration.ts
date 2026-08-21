@@ -30,6 +30,9 @@ export interface MigrationOptions {
   migrateSessions?: boolean;
   exportArtifacts?: boolean;
   agentTypes?: ('LOW_CODE' | 'WORKFLOW' | 'ADK' | 'A2A' | 'OTHER' | 'ALL')[];
+  agentStatusFilter?: 'ALL' | 'PUBLISHED_ONLY' | 'DRAFTS_ONLY';
+  excludeDraftAgents?: boolean;
+  notebookIds?: string[];
   dryRun?: boolean;
   concurrency?: number;
   userFilter?: string[];

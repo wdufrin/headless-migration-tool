@@ -47,8 +47,55 @@ export class MigrationReporter {
     lines.push(`| **Skipped Items** | ${report.summary.totalSkipped} |`);
     lines.push(`| **Failed Items** | ${report.summary.totalFailed} |\n`);
 
+    // Group results by original user for reconciliation
+    const userGroups = new Map<string, { migrated: number; skipped: number; failed: number; targetOwner: string; reasons: string[] }>();
+    for (const r of report.results) {
+      const u = r.originalOwner || 'Unknown User';
+      if (!userGroups.has(u)) {
+        userGroups.set(u, { migrated: 0, skipped: 0, failed: 0, targetOwner: r.targetOwner || 'N/A', reasons: [] });
+      }
+      const grp = userGroups.get(u)!;
+      if (r.status === 'SUCCESS' || r.status === 'DRY_RUN') {
+        grp.migrated++;
+      } else if (r.status === 'SKIPPED') {
+        grp.skipped++;
+        if (r.error && !grp.reasons.includes(r.error)) grp.reasons.push(r.error);
+      } else if (r.status === 'FAILED') {
+        grp.failed++;
+        if (r.error && !grp.reasons.includes(r.error)) grp.reasons.push(r.error);
+      }
+    }
+
+    if (userGroups.size > 0) {
+      lines.push(`---`);
+      lines.push(`## 3. User Reconciliation & Migration Status`);
+      lines.push(`| Source User Identity | Target Google Identity | Status | Migrated Items | Dropped/Skipped | Notes / Reason |`);
+      lines.push(`| :--- | :--- | :---: | :---: | :---: | :--- |`);
+
+      for (const [userEmail, stats] of userGroups.entries()) {
+        let userStatus = '✅ FULLY MIGRATED';
+        let statusBadge = '✅';
+        if (stats.migrated === 0 && stats.skipped > 0) {
+          userStatus = '⚠️ DROPPED (OFFBOARDED / UNMAPPED)';
+          statusBadge = '⚠️';
+        } else if (stats.skipped > 0 || stats.failed > 0) {
+          userStatus = '🟡 PARTIALLY MIGRATED';
+          statusBadge = '🟡';
+        }
+
+        const notes = stats.reasons.length > 0 
+          ? stats.reasons.join('; ') 
+          : stats.migrated > 0 ? 'All assets restored to personal library' : 'No assets found';
+
+        lines.push(
+          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | **${stats.migrated}** | **${stats.skipped}** | ${notes} |`
+        );
+      }
+      lines.push('');
+    }
+
     lines.push(`---`);
-    lines.push(`## 3. Detailed Asset Migration Results`);
+    lines.push(`## 4. Detailed Asset Migration Results`);
     lines.push(`| Type | Display Name / Title | Status | Original Owner | Target Owner / ID | Notes / Error |`);
     lines.push(`| :--- | :--- | :---: | :--- | :--- | :--- |`);
 
@@ -61,7 +108,7 @@ export class MigrationReporter {
 
     if (report.discoveredUsers.length > 0) {
       lines.push(`\n---`);
-      lines.push(`## 4. Discovered User Principals (${report.discoveredUsers.length})`);
+      lines.push(`## 5. Discovered User Principals (${report.discoveredUsers.length})`);
       for (const u of report.discoveredUsers) {
         lines.push(`- \`${u}\``);
       }

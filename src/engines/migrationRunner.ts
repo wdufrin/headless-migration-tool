@@ -19,7 +19,6 @@ import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { MigrationReport, MigrationItemResult } from '../types/migration.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
-import { BigQueryDiscoveryService } from '../services/bigQueryDiscovery.js';
 import { NotebookMigrator } from './notebookMigrator.js';
 import { AgentMigrator } from './agentMigrator.js';
 import { DryRunSimulator } from './dryRunSimulator.js';
@@ -35,7 +34,6 @@ export interface MigrationRunnerOptions {
 export class MigrationRunner {
   private auth: GcpAuthService;
   private client: DiscoveryEngineClient;
-  private bqDiscovery: BigQueryDiscoveryService;
   private notebookMigrator: NotebookMigrator;
   private agentMigrator: AgentMigrator;
   private simulator: DryRunSimulator;
@@ -44,7 +42,6 @@ export class MigrationRunner {
   constructor(options: MigrationRunnerOptions = {}) {
     this.auth = options.authService || new GcpAuthService();
     this.client = new DiscoveryEngineClient(this.auth);
-    this.bqDiscovery = new BigQueryDiscoveryService(this.auth);
     this.notebookMigrator = new NotebookMigrator(this.client);
     this.agentMigrator = new AgentMigrator(this.client);
     this.simulator = new DryRunSimulator(this.client);
@@ -82,43 +79,48 @@ export class MigrationRunner {
       }
     }
 
-    // Resolve Target Engine CID for accurate web gallery links
+    // Resolve Live IdP Configuration for Source & Target Engines
     try {
-      const targetEngine = await this.client.getEngine(config.target);
-      if (targetEngine?.widgetConfigConfigId) {
-        (config.target as any).widgetConfigConfigId = targetEngine.widgetConfigConfigId;
-        (config.target as any).cid = targetEngine.widgetConfigConfigId;
-        logger.info(`Resolved target engine CID: ${targetEngine.widgetConfigConfigId}`);
+      const srcIdp = await this.client.detectEngineIdpConfig(config.source);
+      const tgtIdp = await this.client.detectEngineIdpConfig(config.target);
+
+      if (srcIdp.type === 'WORKFORCE_IDENTITY_FEDERATION') {
+        logger.info(`Source Engine IdP: Workforce Identity Federation (${srcIdp.provider ? `Provider: ${srcIdp.provider}` : 'Entra ID / WiF'})`);
+      } else {
+        logger.info(`Source Engine IdP: Google Cloud Identity / Workspace`);
+      }
+
+      if (tgtIdp.type === 'WORKFORCE_IDENTITY_FEDERATION') {
+        logger.info(`Target Engine IdP: Workforce Identity Federation (${tgtIdp.provider ? `Provider: ${tgtIdp.provider}` : 'Entra ID / WiF / Connectors Active'})`);
+        (config.target as any).isExternalIdp = true;
+      } else {
+        logger.info(`Target Engine IdP: Google Cloud Identity / Workspace`);
+      }
+
+      if (tgtIdp.cid) {
+        (config.target as any).widgetConfigConfigId = tgtIdp.cid;
+        (config.target as any).cid = tgtIdp.cid;
+        logger.info(`Resolved target engine CID: ${tgtIdp.cid}`);
       }
     } catch (e: any) {
-      logger.debug(`Could not retrieve target engine CID: ${e.message}`);
+      logger.debug(`Could not retrieve engine IdP configs: ${e.message}`);
     }
 
-    // Step 2: User Asset Discovery via BigQuery, UserFilters, & IdentityMapping
-    const discoveredUsers: string[] = [];
-    try {
-      const bqUsers = await this.bqDiscovery.discoverUsersFromBigQuery(config.source.projectId);
-      for (const u of bqUsers) {
-        if (u.userEmail && u.userEmail !== 'unknown' && !discoveredUsers.includes(u.userEmail)) {
-          discoveredUsers.push(u.userEmail);
-        }
-      }
-      if (discoveredUsers.length > 0) {
-        logger.info(`Discovered ${discoveredUsers.length} active users from BigQuery audit telemetry.`);
-      }
-    } catch (bqErr: any) {
-      logger.debug(`BigQuery discovery skipped: ${bqErr.message}`);
-    }
+    // Step 2: User Asset Discovery via UserFilters & IdentityMapping
+    let discoveredUsers: string[] = [];
 
-    if (config.options?.userFilter) {
-      for (const f of config.options.userFilter) {
-        const cleanF = f.replace(/^user:/, '').trim();
-        if (cleanF.includes('@') && !cleanF.includes('*') && !discoveredUsers.includes(cleanF)) {
-          discoveredUsers.push(cleanF);
+    if (config.options?.userFilter && config.options.userFilter.length > 0) {
+      const allowed = config.options.userFilter.map(f => f.replace(/^user:/, '').trim().toLowerCase());
+      if (allowed.length > 0 && !allowed.includes('*')) {
+        discoveredUsers = discoveredUsers.filter(u => allowed.includes(u.toLowerCase()));
+        for (const f of allowed) {
+          if (f.includes('@') && !discoveredUsers.map(u => u.toLowerCase()).includes(f)) {
+            discoveredUsers.push(f);
+          }
         }
+        logger.info(`Targeted user filter applied: Migrating ${discoveredUsers.length} user(s): ${discoveredUsers.join(', ')}`);
       }
-    }
-    if (config.identityMapping) {
+    } else if (config.identityMapping) {
       for (const k of Object.keys(config.identityMapping)) {
         const cleanK = k.replace(/^user:/, '').trim();
         if (cleanK.includes('@') && !discoveredUsers.includes(cleanK)) {
@@ -187,7 +189,7 @@ export class MigrationRunner {
       try {
         const { SessionMigrator } = await import('./sessionMigrator.js');
         const sessionMigrator = new SessionMigrator(config, this.auth);
-        const sourceSessions = await sessionMigrator.listSourceSessions();
+        const sourceSessions = await sessionMigrator.listSourceSessions(discoveredUsers);
         logger.info(`Starting Multi-User Chat History Migration for ${sourceSessions.length} sessions (Sorted Chronologically: Oldest -> Newest)...`);
 
         // Sort chronologically (oldest first -> newest last) so that in the target engine,
@@ -198,17 +200,26 @@ export class MigrationRunner {
           return tA - tB;
         });
 
+        const selectedUser = (config.options?.userFilter && config.options.userFilter.length === 1 && !config.options.userFilter[0].includes('*'))
+          ? config.options.userFilter[0].replace(/^user:/i, '').trim()
+          : (discoveredUsers[0] || 'user@example.com');
+
         for (const s of chronologicalSessions) {
+          const rawOwner = s.userPseudoId || selectedUser;
+          const origOwner = (rawOwner && rawOwner.includes('@')) ? rawOwner : selectedUser;
+          const tgtOwner = config.identityMapping?.[origOwner] || config.identityMapping?.[`user:${origOwner}`] || (selectedUser || origOwner);
+
           try {
             if (!config.options?.dryRun) {
-              await sessionMigrator.migrateSession(s);
+              await sessionMigrator.migrateSession(s, tgtOwner);
             }
             allResults.push({
               id: s.name.split('/').pop() || 'unknown',
               displayName: s.displayName || 'Untitled Chat',
               type: 'SESSION',
               status: config.options?.dryRun ? 'DRY_RUN' : 'SUCCESS',
-              originalOwner: s.userPseudoId
+              originalOwner: origOwner,
+              targetOwner: tgtOwner
             });
           } catch (sErr: any) {
             allResults.push({
@@ -216,7 +227,8 @@ export class MigrationRunner {
               displayName: s.displayName || 'Untitled Chat',
               type: 'SESSION',
               status: 'FAILED',
-              originalOwner: s.userPseudoId,
+              originalOwner: origOwner,
+              targetOwner: tgtOwner,
               error: sErr.message
             });
           }
@@ -230,7 +242,7 @@ export class MigrationRunner {
     if (config.options?.exportArtifacts !== false) {
       try {
         const { ArtifactExtractor } = await import('./artifactExtractor.js');
-        const artifactExtractor = new ArtifactExtractor(config);
+        const artifactExtractor = new ArtifactExtractor(config, this.auth);
         const artResult = await artifactExtractor.exportAllToDirectory('./exports/artifacts');
         logger.info(`Archived ${artResult.count} user presentations, dashboards, and media manifests to ${artResult.exportDir}`);
       } catch (artErr: any) {
@@ -241,13 +253,22 @@ export class MigrationRunner {
     const endTime = new Date().toISOString();
     const durationMs = Date.now() - startMs;
 
+    let totalArtifactsCount = 0;
+    for (const r of allResults) {
+      if (r.details?.artifactsCount || r.details?.notesCount) {
+        totalArtifactsCount += (r.details.artifactsCount || 0) + (r.details.notesCount || 0);
+      }
+    }
+
     const summary = {
       totalDiscoveredAgents: allResults.filter(r => r.type === 'AGENT').length,
       totalDiscoveredNotebooks: allResults.filter(r => r.type === 'NOTEBOOK').length,
       totalDiscoveredSessions: allResults.filter(r => (r.type as string) === 'SESSION').length,
+      totalDiscoveredArtifacts: totalArtifactsCount,
       totalMigratedAgents: allResults.filter(r => r.type === 'AGENT' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedNotebooks: allResults.filter(r => r.type === 'NOTEBOOK' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedSessions: allResults.filter(r => (r.type as string) === 'SESSION' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
+      totalMigratedArtifacts: totalArtifactsCount,
       totalSkipped: allResults.filter(r => r.status === 'SKIPPED').length,
       totalFailed: allResults.filter(r => r.status === 'FAILED').length
     };

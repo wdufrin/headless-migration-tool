@@ -11,14 +11,12 @@ Enterprise admin-driven headless tool and web service for migrating **Gemini Ent
   - [1. Google Cloud APIs](#1-google-cloud-apis)
   - [2. IAM Roles & Permissions](#2-iam-roles--permissions)
   - [3. Service Account & Domain-Wide Delegation (DWD)](#3-service-account--domain-wide-delegation-dwd-setup)
-- [How to Run Locally](#-how-to-run-locally)
+- [How to Run Locally on Administrator Workstation](#-how-to-run-locally-on-administrator-workstation)
   - [Step 1: Installation](#step-1-installation)
-  - [Step 2: Authentication](#step-2-authentication)
-  - [Step 3: Launch Admin Web Console](#step-3-launch-admin-web-console)
-  - [Step 4: (Optional) Run via CLI](#step-4-optional-run-via-cli)
-- [Deploying to Customer Environment](#-deploying-to-customer-environment)
-  - [Target Option A: Google Cloud Run (Recommended)](#target-option-a-google-cloud-run-recommended)
-  - [Target Option B: Google Kubernetes Engine (GKE) / Compute Engine](#target-option-b-google-kubernetes-engine-gke--compute-engine)
+  - [Step 2: Local Authentication & DWD Keys](#step-2-local-authentication--dwd-keys)
+  - [Step 3: Launch Local Web Console](#step-3-launch-local-web-console)
+  - [Step 4: Run Headless via Terminal CLI](#step-4-run-headless-via-terminal-cli)
+- [Local Workstation Security & Isolation](#-local-workstation-security--isolation)
 - [Configuration Reference (`migration-config.json`)](#-configuration-reference-migration-configjson)
 - [User Handover & Email Notification Engine](#-user-handover--email-notification-engine)
 - [Architecture & InfoSec Compliance](#-architecture--infosec-compliance)
@@ -46,14 +44,12 @@ Enable the following APIs in both the **Source** and **Target** GCP projects:
 
 ```bash
 gcloud services enable discoveryengine.googleapis.com \
-                       bigquery.googleapis.com \
                        gmail.googleapis.com \
                        iam.googleapis.com \
                        secretmanager.googleapis.com \
                        --project=<SOURCE_PROJECT_ID>
 
 gcloud services enable discoveryengine.googleapis.com \
-                       bigquery.googleapis.com \
                        gmail.googleapis.com \
                        iam.googleapis.com \
                        secretmanager.googleapis.com \
@@ -68,10 +64,9 @@ The administrator or deployment service account executing the migration needs th
 
 | Project | Required IAM Role | Purpose |
 | :--- | :--- | :--- |
-| **Source Project** | `roles/discoveryengine.admin` *(or `.viewer`)* | Read source agents, notebooks, grounding sources, and chat sessions. |
-| **Source Project** | `roles/bigquery.dataViewer` *(Optional)* | Best-effort discovery of historical active creators from audit logs. |
-| **Target Project** | `roles/discoveryengine.admin` | Create target engines, datastores, agents, notebooks, and sessions. |
-| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Create user-impersonated OAuth2 tokens via DWD. |
+| **Source Project** | `roles/discoveryengine.viewer` | Read-only discovery of source agents, notebooks, grounding sources, and chat sessions (Least Privilege). |
+| **Target Project** | `roles/discoveryengine.admin` | Create and restore target engines, datastores, agents, notebooks, and chat sessions. |
+| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Create user-impersonated OAuth2 tokens via Domain-Wide Delegation (DWD). |
 
 ---
 
@@ -175,54 +170,18 @@ npx tsx src/cli.ts --config config.example.json --concurrency 15
 
 ---
 
-## ☁️ Deploying to Customer Environment
+## 🔒 Local Workstation Security & Isolation
 
-### Target Option A: Google Cloud Run (Recommended)
+This migration tool is designed to run **strictly on the administrator's local machine** or secure bastion terminal, rather than being hosted on public web services or cloud run containers.
 
-Google Cloud Run provides a serverless, secure HTTPS container deployment ideal for enterprise migration tooling.
-
-#### 1. Store the Service Account Key in Secret Manager:
-```bash
-gcloud secrets create gemini-migration-dwd-key \
-    --data-file=sa-dwd-key.json \
-    --project=<TARGET_PROJECT_ID>
-```
-
-#### 2. Build and Deploy Container:
-```bash
-# Build container using Cloud Build
-gcloud builds submit --tag gcr.io/<TARGET_PROJECT_ID>/gemini-enterprise-migrator:v1
-
-# Deploy to Cloud Run
-gcloud run deploy gemini-enterprise-migrator \
-    --image gcr.io/<TARGET_PROJECT_ID>/gemini-enterprise-migrator:v1 \
-    --platform managed \
-    --region us-central1 \
-    --allow-unauthenticated=false \
-    --memory 2Gi \
-    --cpu 2 \
-    --timeout 3600 \
-    --set-secrets="/app/sa-dwd-key.json=gemini-migration-dwd-key:latest" \
-    --set-env-vars="NODE_ENV=production,DEFAULT_USER_EMAIL=admin@company.com" \
-    --project=<TARGET_PROJECT_ID>
-```
-
----
-
-### Target Option B: Google Kubernetes Engine (GKE) / Compute Engine
-
-Run the container on internal VPC clusters or VMs using Workload Identity:
-
-```bash
-docker build -t gemini-enterprise-migrator:latest .
-docker run -d \
-    -p 8080:8080 \
-    -v $(pwd)/sa-dwd-key.json:/app/sa-dwd-key.json:ro \
-    -v $(pwd)/reports:/app/reports \
-    -v $(pwd)/user_handover_reports:/app/user_handover_reports \
-    -e DEFAULT_USER_EMAIL="admin@company.com" \
-    gemini-enterprise-migrator:latest
-```
+* **🔒 Localhost Loopback Binding (`127.0.0.1`)**:
+  * The web console listens strictly on loopback (`http://127.0.0.1:8080`), ensuring no inbound access is permitted from other network devices or the public internet.
+* **🛡️ Direct Google Cloud REST Calling**:
+  * All API calls (Discovery Engine, IAM, Gmail) originate directly from the administrator's authenticated workstation over TLS/HTTPS.
+* **📁 Local Key & File Isolation**:
+  * DWD Service Account keys (`sa-dwd-key.json`), exported research files, and audit reports stay entirely within the local directory on the administrator's disk.
+* **🛡️ SSRF & Header-Only Token Protection**:
+  * Strict URL allowlisting for Discovery Engine endpoints and header-only Bearer token injection to prevent credentials from appearing in URLs or browser history.
 
 ---
 

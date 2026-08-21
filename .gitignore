@@ -1,24 +1,49 @@
 node_modules/
 dist/
+coverage/
+
+# Environment and secrets
 .env
 .env.*
 !.env.example
+
+# Service Account Keys & Certificates
+sa-dwd-key.json
+sa-*.json
+*-key.json
+credentials*.json
+client_secret*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*.crt
+
+# Workforce Identity & Token Configs
+workforce-identity-config.json
+*-identity-config.json
+wif-migration-jwks.json
+*-jwks.json
+*.jwt
+*.token
+
+# Local Migration Configurations
+migration-config.json
+config.json
+config.*.json
+!config.example.json
+
+# Local Migration Artifacts & Handover Reports
+reports/
+user_handover_reports/
+exports/
+.tmp*
+
+# Logs & System
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .DS_Store
-reports/
-coverage/
-credentials.json
-client_secret*.json
-sa-dwd-key.json
-*.key
-*.pem
-user_handover_reports/
-exports/
-config.json
-config.*.json
-!config.example.json
-migration-config.json
 *.tfstate*

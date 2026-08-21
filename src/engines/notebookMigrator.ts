@@ -233,14 +233,36 @@ export class NotebookMigrator {
     }
 
     if (candidateUsers.size === 0) {
-      const defaultAdmin = process.env.ADMIN_EMAIL || 'admin@wdufrin.altostrat.com';
-      candidateUsers.add(defaultAdmin);
+      const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
+      if (defaultAdmin) candidateUsers.add(defaultAdmin);
     }
 
-    // 2. Discover Notebooks per user via Domain-Wide Delegation
+    // 2. Discover Notebooks
     const allSourceNotebooks: Notebook[] = [];
     const seenNotebookIds = new Set<string>();
 
+    // 2a. Explicit Notebook IDs (if specified)
+    if (options.notebookIds && options.notebookIds.length > 0) {
+      for (let rawId of options.notebookIds) {
+        rawId = (rawId || '').trim();
+        if (!rawId) continue;
+        const nbId = rawId.includes('/') ? rawId.split('/').pop()! : rawId;
+        if (nbId && !seenNotebookIds.has(nbId)) {
+          try {
+            const nb = await this.client.getNotebook(nbId, sourceEnv);
+            seenNotebookIds.add(nbId);
+            const owner = nb.owner || (nb.metadata?.ownerEmail as string) || Array.from(candidateUsers)[0] || 'admin';
+            nb.owner = owner;
+            allSourceNotebooks.push(nb);
+            logger.info(`Explicitly added Notebook "${nb.title || nbId}" (ID: ${nbId}) for owner "${owner}".`);
+          } catch (getErr: any) {
+            logger.warn(`Could not fetch specified Notebook ID "${nbId}": ${getErr.message}`);
+          }
+        }
+      }
+    }
+
+    // 2b. Discover Notebooks per user via Domain-Wide Delegation
     for (const userEmail of candidateUsers) {
       try {
         const userNotebooks = await this.client.listNotebooks(sourceEnv, userEmail);
@@ -260,19 +282,26 @@ export class NotebookMigrator {
       }
     }
 
-    // Fallback: If per-user DWD discovery returned 0, query project root
+    // Fallback: If per-user discovery returned 0, query project root
     if (allSourceNotebooks.length === 0) {
-      const rootNotebooks = await this.client.listNotebooks(sourceEnv);
-      const fallbackOwner = Array.from(candidateUsers)[0] || 'admin@wdufrin.altostrat.com';
-      for (const nb of rootNotebooks) {
-        const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
-        if (nbId && !seenNotebookIds.has(nbId)) {
-          seenNotebookIds.add(nbId);
-          nb.owner = fallbackOwner;
-          if (!nb.metadata) nb.metadata = {};
-          nb.metadata.ownerEmail = fallbackOwner;
-          allSourceNotebooks.push(nb);
+      try {
+        const rootNotebooks = await this.client.listNotebooks(sourceEnv);
+        const selectedUser = (options.userFilter && options.userFilter.length === 1 && !options.userFilter[0].includes('*')) 
+          ? options.userFilter[0].replace(/^user:/i, '').trim()
+          : null;
+        const fallbackOwner = selectedUser || Array.from(candidateUsers)[0] || 'admin';
+        for (const nb of rootNotebooks) {
+          const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          if (nbId && !seenNotebookIds.has(nbId)) {
+            seenNotebookIds.add(nbId);
+            nb.owner = fallbackOwner;
+            if (!nb.metadata) nb.metadata = {};
+            nb.metadata.ownerEmail = fallbackOwner;
+            allSourceNotebooks.push(nb);
+          }
         }
+      } catch (rootErr: any) {
+        logger.debug(`Root project notebook query skipped: ${rootErr.message}`);
       }
     }
 
@@ -288,10 +317,13 @@ export class NotebookMigrator {
     return mapConcurrent(filteredNotebooks, concurrency, async (nb: Notebook) => {
       const startTime = Date.now();
       const notebookId = nb.name.split('/').pop() || '';
-      const fallbackUser = Array.from(candidateUsers)[0] || 'admin@wdufrin.altostrat.com';
+      const selectedUser = (options.userFilter && options.userFilter.length === 1 && !options.userFilter[0].includes('*')) 
+        ? options.userFilter[0].replace(/^user:/i, '').trim()
+        : null;
+      const fallbackUser = selectedUser || Array.from(candidateUsers)[0] || process.env.ADMIN_EMAIL || 'admin';
       const rawOwner = nb.metadata?.ownerEmail || nb.owner || fallbackUser;
       const originalOwner = (rawOwner === 'unknown' || !rawOwner.includes('@')) ? fallbackUser : rawOwner;
-      const targetOwner = identityMapping[originalOwner] || identityMapping[`user:${originalOwner}`] || originalOwner;
+      const targetOwner = identityMapping[originalOwner] || identityMapping[`user:${originalOwner}`] || (selectedUser || originalOwner);
 
       const result: MigrationItemResult = {
         id: notebookId,
@@ -302,35 +334,55 @@ export class NotebookMigrator {
         targetOwner
       };
 
-      try {
-        if (isDryRun) {
-          logger.info(`[DRY RUN] Would migrate Notebook "${result.displayName}" (ID: ${notebookId}) for owner ${targetOwner}`);
-          result.status = 'DRY_RUN';
-          result.durationMs = Date.now() - startTime;
-          return result;
-        }
+      const userImpersonation = (originalOwner && originalOwner !== 'unknown') ? originalOwner : (targetOwner && targetOwner !== 'unknown' ? targetOwner : undefined);
 
-        logger.info(`Fetching detailed sources for Notebook "${result.displayName}" (${notebookId})...`);
-        const fullNotebook = await this.client.getNotebook(notebookId, sourceEnv);
+      let fullNotebook: Notebook = nb;
+      let notes: NotebookNote[] = [];
+      let artifacts: any[] = [];
+
+      try {
+        logger.info(`Fetching detailed sources & Studio artifacts for Notebook "${result.displayName}" (${notebookId})...`);
+        fullNotebook = await this.client.getNotebook(notebookId, sourceEnv, userImpersonation);
 
         // Fetch notes if available
-        let notes: NotebookNote[] = [];
         try {
-          notes = await this.client.listNotes(notebookId, sourceEnv);
+          notes = await this.client.listNotes(notebookId, sourceEnv, userImpersonation);
         } catch (noteErr: any) {
           logger.debug(`No notes or failed to list notes for notebook ${notebookId}: ${noteErr.message}`);
         }
 
         // Fetch artifacts (Studio outputs: Slide Decks, Infographics, Audio Overview, Reports)
-        let artifacts: any[] = [];
         try {
-          artifacts = await this.client.listArtifacts(notebookId, sourceEnv);
+          artifacts = await this.client.listArtifacts(notebookId, sourceEnv, userImpersonation);
           if (artifacts.length > 0) {
             logger.info(`Found ${artifacts.length} Studio artifacts for Notebook "${result.displayName}"`);
           }
         } catch (artErr: any) {
           logger.debug(`Could not list artifacts for notebook ${notebookId}: ${artErr.message}`);
         }
+      } catch (fetchErr: any) {
+        logger.debug(`Could not fetch detailed notebook object for ${notebookId}: ${fetchErr.message}`);
+      }
+
+      result.details = {
+        sourcesCount: (fullNotebook.sources || []).length,
+        notesCount: notes.length,
+        artifactsCount: artifacts.length,
+        artifacts: artifacts.map(a => ({
+          id: a.artifactId || a.name?.split('/').pop(),
+          title: a.title || this.formatArtifactTypeName(a.type),
+          type: a.type
+        }))
+      };
+
+      if (isDryRun) {
+        logger.info(`[DRY RUN] Would migrate Notebook "${result.displayName}" (ID: ${notebookId}) with ${result.details.sourcesCount} sources, ${result.details.notesCount} notes, and ${result.details.artifactsCount} Studio artifacts for owner ${targetOwner}`);
+        result.status = 'DRY_RUN';
+        result.durationMs = Date.now() - startTime;
+        return result;
+      }
+
+      try {
 
         const userOwner = (targetOwner && targetOwner !== 'unknown') ? targetOwner : undefined;
 
@@ -458,11 +510,16 @@ export class NotebookMigrator {
           }))
         };
 
-        result.status = 'SUCCESS';
       } catch (err: any) {
-        logger.error(`Failed to migrate Notebook "${result.displayName}" (${notebookId}): ${err.message}`);
-        result.status = 'FAILED';
-        result.error = err.message;
+        if (err.message.includes('DWD Impersonation Failed') || err.message.includes('User does not exist') || err.message.includes('client_is_not_authorized') || err.message.includes('unauthorized_client')) {
+          logger.warn(`[DROPPED / SKIPPED] Notebook "${result.displayName}" for offboarded/unmapped user "${originalOwner}" was dropped (target: "${targetOwner}"). Admin account will not be polluted.`);
+          result.status = 'SKIPPED';
+          result.error = `Skipped: User "${targetOwner || originalOwner}" not found in target Google Identity. Data safely dropped to prevent admin account pollution.`;
+        } else {
+          logger.error(`Failed to migrate Notebook "${result.displayName}" (${notebookId}): ${err.message}`);
+          result.status = 'FAILED';
+          result.error = err.message;
+        }
       }
 
       result.durationMs = Date.now() - startTime;

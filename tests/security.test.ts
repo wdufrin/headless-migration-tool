@@ -17,7 +17,15 @@ describe('Security Layer & SSRF Protection (Mitigation #1)', () => {
     expect(() => {
       validateEnvironmentConfig({
         projectId: 'prod-analytics-456',
-        appLocation: 'us-central1',
+        appLocation: 'us',
+        appId: 'chat_engine'
+      });
+    }).not.toThrow();
+
+    expect(() => {
+      validateEnvironmentConfig({
+        projectId: 'prod-eu-789',
+        appLocation: 'eu',
         appId: 'chat_engine'
       });
     }).not.toThrow();
@@ -31,6 +39,14 @@ describe('Security Layer & SSRF Protection (Mitigation #1)', () => {
         appId: 'engine1'
       });
     }).toThrow(SecurityValidationError);
+
+    expect(() => {
+      validateEnvironmentConfig({
+        projectId: 'valid-project',
+        appLocation: 'us-central1',
+        appId: 'engine1'
+      });
+    }).toThrow(/Invalid or unapproved/);
 
     expect(() => {
       validateEnvironmentConfig({
@@ -53,7 +69,7 @@ describe('Security Layer & SSRF Protection (Mitigation #1)', () => {
 
   it('should construct correct and safe Discovery Engine base URLs', () => {
     expect(getSafeDiscoveryEngineUrl('global')).toBe('https://discoveryengine.googleapis.com');
-    expect(getSafeDiscoveryEngineUrl('us-central1')).toBe('https://us-central1-discoveryengine.googleapis.com');
+    expect(getSafeDiscoveryEngineUrl('us')).toBe('https://us-discoveryengine.googleapis.com');
     expect(getSafeDiscoveryEngineUrl('EU')).toBe('https://eu-discoveryengine.googleapis.com');
   });
 });

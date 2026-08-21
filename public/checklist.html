@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Enterprise Migration - Interactive Execution Checklist</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .step-circle {
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .step-circle:hover {
+      transform: scale(1.15);
+    }
+    .step-checked {
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      border-color: #34d399;
+      color: #ffffff;
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+    }
+    .card-completed {
+      border-color: rgba(16, 185, 129, 0.3) !important;
+      background: rgba(6, 78, 59, 0.1) !important;
+    }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans min-h-screen p-4 md:p-8">
+  <div class="max-w-5xl mx-auto space-y-8">
+    
+    <!-- Hero Header & Progress Tracker -->
+    <div class="bg-gray-900 border border-gray-800 rounded-3xl p-6 md:p-8 shadow-2xl space-y-6">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-6">
+        <div>
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 text-xs font-semibold uppercase tracking-wider mb-2">
+            <span>🚀 Live Migration Checklist</span>
+          </div>
+          <h1 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+            <span>📋 Cross-IdP Migration Action Checklist</span>
+          </h1>
+          <p class="text-sm text-gray-400 mt-1">Click any circle to check off steps as you complete them. Progress is automatically saved in your browser.</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="resetChecklist()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-xl text-xs font-semibold border border-gray-700 transition">
+            🔄 Reset All
+          </button>
+          <a href="http://localhost:8080" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 transition flex items-center gap-1.5">
+            <span>⚡ Open Console</span> &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Live Progress Bar -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs font-semibold">
+          <span class="text-gray-300 flex items-center gap-2">
+            <span>Overall Execution Progress:</span>
+            <span id="progressText" class="text-emerald-400 font-bold">0 / 17 Steps Completed</span>
+          </span>
+          <span id="progressPercent" class="text-emerald-400 font-mono text-sm">0%</span>
+        </div>
+        <div class="w-full bg-gray-950 h-3.5 rounded-full overflow-hidden border border-gray-800 p-0.5">
+          <div id="progressBar" class="bg-gradient-to-r from-indigo-500 via-emerald-500 to-teal-400 h-full rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Configuration Summary Strip -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 space-y-1">
+        <span class="text-gray-500 font-medium">Source Project & Region</span>
+        <div class="text-gray-200 font-mono font-semibold">Source Project (Configured)</div>
+        <span class="text-[10px] text-purple-400">External IdP / WiF / DWD</span>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 space-y-1">
+        <span class="text-gray-500 font-medium">Target Project & Region</span>
+        <div class="text-emerald-400 font-mono font-semibold">Target Project (Configured)</div>
+        <span class="text-[10px] text-emerald-400">Google Cloud Identity</span>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 space-y-1">
+        <span class="text-gray-500 font-medium">Source Engine</span>
+        <div class="text-gray-300 font-mono truncate">Source Engine / App</div>
+        <span class="text-[10px] text-gray-400">Discovery Engine Source</span>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3.5 space-y-1">
+        <span class="text-gray-500 font-medium">Target Engine</span>
+        <div class="text-gray-300 font-mono truncate">Target Engine / App</div>
+        <span class="text-[10px] text-emerald-400">Restore Destination Verified</span>
+      </div>
+    </div>
+
+    <!-- PHASE 1 -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h2 class="text-base font-bold text-white flex items-center gap-2.5">
+          <span class="p-1.5 bg-indigo-500/10 text-indigo-400 rounded-lg text-sm">🔐</span>
+          <span>Phase 1: Authentication & Least-Privilege Verification</span>
+        </h2>
+        <span class="text-xs text-gray-400 font-mono">4 Steps</span>
+      </div>
+
+      <div class="space-y-3" id="phase1-items">
+        <!-- 1.1 -->
+        <div id="card-step_1_1" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_1_1')">
+          <button id="circle-step_1_1" class="step-circle w-8 h-8 rounded-full border-2 border-indigo-500/80 bg-indigo-950/60 text-indigo-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            1.1
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Verify Google Workspace DWD OAuth Scope</h3>
+              <span id="badge-step_1_1" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Open <a href="https://admin.google.com/ac/owl/domainwidedelegation" target="_blank" class="text-indigo-400 underline" onclick="event.stopPropagation()">Google Workspace Admin Console</a> and confirm the Service Account Client ID has scopes:
+              <code class="text-amber-300 block bg-gray-900 px-2 py-1 rounded mt-1 font-mono text-[11px]">https://www.googleapis.com/auth/cloud-platform, https://www.googleapis.com/auth/gmail.send</code>
+            </p>
+          </div>
+        </div>
+
+        <!-- 1.2 -->
+        <div id="card-step_1_2" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_1_2')">
+          <button id="circle-step_1_2" class="step-circle w-8 h-8 rounded-full border-2 border-indigo-500/80 bg-indigo-950/60 text-indigo-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            1.2
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Confirm Source GCP Project is Read-Only</h3>
+              <span id="badge-step_1_2" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              In the source project, verify the migration service account has <code>roles/discoveryengine.viewer</code> and <code>roles/bigquery.dataViewer</code>. (Prevents accidental data deletion on source).
+            </p>
+          </div>
+        </div>
+
+        <!-- 1.3 -->
+        <div id="card-step_1_3" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_1_3')">
+          <button id="circle-step_1_3" class="step-circle w-8 h-8 rounded-full border-2 border-indigo-500/80 bg-indigo-950/60 text-indigo-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            1.3
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Confirm Target GCP Project has Restore Rights</h3>
+              <span id="badge-step_1_3" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              In the target project, ensure the migration service account has <code>roles/discoveryengine.admin</code> to create restored custom agents, chat history sessions, and notebooks.
+            </p>
+          </div>
+        </div>
+
+        <!-- 1.4 -->
+        <div id="card-step_1_4" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_1_4')">
+          <button id="circle-step_1_4" class="step-circle w-8 h-8 rounded-full border-2 border-indigo-500/80 bg-indigo-950/60 text-indigo-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            1.4
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Run Live Permissions & Least-Privilege Audit</h3>
+              <span id="badge-step_1_4" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              In the migration console &rarr; <strong>Auth & WiF Wizard</strong> &rarr; <strong>Permissions & Least-Privilege Auditor</strong>, enter your Source and Target accounts, then click <strong>Run Live Security & IAM Audit</strong> to confirm <strong>Grade A+</strong>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 2 -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h2 class="text-base font-bold text-white flex items-center gap-2.5">
+          <span class="p-1.5 bg-purple-500/10 text-purple-400 rounded-lg text-sm">👤</span>
+          <span>Phase 2: Single-User Pilot Sandbox Test (1-to-1 Validation)</span>
+        </h2>
+        <span class="text-xs text-gray-400 font-mono">5 Steps</span>
+      </div>
+
+      <div class="space-y-3" id="phase2-items">
+        <!-- 2.1 -->
+        <div id="card-step_2_1" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_2_1')">
+          <button id="circle-step_2_1" class="step-circle w-8 h-8 rounded-full border-2 border-purple-500/80 bg-purple-950/60 text-purple-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            2.1
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Open Single User Sandbox Tab</h3>
+              <span id="badge-step_2_1" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Navigate to the <strong>👤 Single User Sandbox</strong> tab in the navigation menu.
+            </p>
+          </div>
+        </div>
+
+        <!-- 2.2 -->
+        <div id="card-step_2_2" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_2_2')">
+          <button id="circle-step_2_2" class="step-circle w-8 h-8 rounded-full border-2 border-purple-500/80 bg-purple-950/60 text-purple-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            2.2
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Configure Pilot Test Identities</h3>
+              <span id="badge-step_2_2" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Set Source User, Target User, Source Engine, and Target Engine in the sandbox form.
+            </p>
+          </div>
+        </div>
+
+        <!-- 2.3 -->
+        <div id="card-step_2_3" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_2_3')">
+          <button id="circle-step_2_3" class="step-circle w-8 h-8 rounded-full border-2 border-purple-500/80 bg-purple-950/60 text-purple-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            2.3
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Execute Asset Discovery & Inspection</h3>
+              <span id="badge-step_2_3" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Click <strong>🔍 Step 1: Discover & Inspect User Assets</strong>. Verify 9 custom agents and user chat sessions are discovered.
+            </p>
+          </div>
+        </div>
+
+        <!-- 2.4 -->
+        <div id="card-step_2_4" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_2_4')">
+          <button id="circle-step_2_4" class="step-circle w-8 h-8 rounded-full border-2 border-purple-500/80 bg-purple-950/60 text-purple-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            2.4
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Run Dry Run Simulation</h3>
+              <span id="badge-step_2_4" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Click <strong>🧪 Step 2: Test Dry Run</strong>. Inspect the Side-by-Side User Reconciliation Breakdown table to verify all mappings.
+            </p>
+          </div>
+        </div>
+
+        <!-- 2.5 -->
+        <div id="card-step_2_5" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_2_5')">
+          <button id="circle-step_2_5" class="step-circle w-8 h-8 rounded-full border-2 border-purple-500/80 bg-purple-950/60 text-purple-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            2.5
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Execute Live 1-User Migration</h3>
+              <span id="badge-step_2_5" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Click <strong>⚡ Step 3: Execute Live 1-User Migration</strong>. Verify all chat sessions and agents restore into <code>testgebackupandrestorev2</code>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 3 -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h2 class="text-base font-bold text-white flex items-center gap-2.5">
+          <span class="p-1.5 bg-cyan-500/10 text-cyan-400 rounded-lg text-sm">🚀</span>
+          <span>Phase 3: Tenant Cutover Migration (Multi-User Batch)</span>
+        </h2>
+        <span class="text-xs text-gray-400 font-mono">3 Steps</span>
+      </div>
+
+      <div class="space-y-3" id="phase3-items">
+        <!-- 3.1 -->
+        <div id="card-step_3_1" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_3_1')">
+          <button id="circle-step_3_1" class="step-circle w-8 h-8 rounded-full border-2 border-cyan-500/80 bg-cyan-950/60 text-cyan-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            3.1
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Configure Migration Studio Preset</h3>
+              <span id="badge-step_3_1" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              In <strong>Migration Studio</strong>, select Identity Mapping Preset: <code>🌐 Microsoft Entra ID ➔ Google Cloud Identity</code>.
+            </p>
+          </div>
+        </div>
+
+        <!-- 3.2 -->
+        <div id="card-step_3_2" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_3_2')">
+          <button id="circle-step_3_2" class="step-circle w-8 h-8 rounded-full border-2 border-cyan-500/80 bg-cyan-950/60 text-cyan-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            3.2
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Run Pre-Flight Batch Dry Run</h3>
+              <span id="badge-step_3_2" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Ensure Dry Run is ON, click <strong>Start Migration Job</strong>, and verify all discovered users map without collisions.
+            </p>
+          </div>
+        </div>
+
+        <!-- 3.3 -->
+        <div id="card-step_3_3" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_3_3')">
+          <button id="circle-step_3_3" class="step-circle w-8 h-8 rounded-full border-2 border-cyan-500/80 bg-cyan-950/60 text-cyan-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            3.3
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Execute Live Production Migration</h3>
+              <span id="badge-step_3_3" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Toggle Dry Run to OFF, click <strong>Start Migration Job</strong>, and monitor live streaming terminal until <strong>STATUS: COMPLETE</strong>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 4 -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h2 class="text-base font-bold text-white flex items-center gap-2.5">
+          <span class="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg text-sm">📬</span>
+          <span>Phase 4: User Handover & Notification Dispatch</span>
+        </h2>
+        <span class="text-xs text-gray-400 font-mono">2 Steps</span>
+      </div>
+
+      <div class="space-y-3" id="phase4-items">
+        <!-- 4.1 -->
+        <div id="card-step_4_1" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_4_1')">
+          <button id="circle-step_4_1" class="step-circle w-8 h-8 rounded-full border-2 border-amber-500/80 bg-amber-950/60 text-amber-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            4.1
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Generate User Handover Bundles</h3>
+              <span id="badge-step_4_1" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Navigate to <strong>User Handover & Email</strong> and click <strong>📦 Generate All User Folders</strong> to produce interactive HTML checklists and Office document artifacts.
+            </p>
+          </div>
+        </div>
+
+        <!-- 4.2 -->
+        <div id="card-step_4_2" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_4_2')">
+          <button id="circle-step_4_2" class="step-circle w-8 h-8 rounded-full border-2 border-amber-500/80 bg-amber-950/60 text-amber-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            4.2
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Dispatch Welcome Notification Emails</h3>
+              <span id="badge-step_4_2" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Click <strong>Send Email via Gmail API</strong> (or Corporate SMTP) to notify users of their restored Gemini Enterprise assets.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 5 -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h2 class="text-base font-bold text-white flex items-center gap-2.5">
+          <span class="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg text-sm">🛡️</span>
+          <span>Phase 5: Clean Hands Security Teardown (Post-Migration)</span>
+        </h2>
+        <span class="text-xs text-gray-400 font-mono">3 Steps</span>
+      </div>
+
+      <div class="space-y-3" id="phase5-items">
+        <!-- 5.1 -->
+        <div id="card-step_5_1" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_5_1')">
+          <button id="circle-step_5_1" class="step-circle w-8 h-8 rounded-full border-2 border-emerald-500/80 bg-emerald-950/60 text-emerald-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            5.1
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Remove Temporary Migration Key File</h3>
+              <span id="badge-step_5_1" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Delete <code>./sa-dwd-key.json</code> from the machine or rotate the service account key in Google Cloud Console.
+            </p>
+          </div>
+        </div>
+
+        <!-- 5.2 -->
+        <div id="card-step_5_2" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_5_2')">
+          <button id="circle-step_5_2" class="step-circle w-8 h-8 rounded-full border-2 border-emerald-500/80 bg-emerald-950/60 text-emerald-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            5.2
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Revoke Domain-Wide Delegation Scope</h3>
+              <span id="badge-step_5_1" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              In Google Workspace Admin Console, delete Client ID <code>101117984576834662544</code> to leave zero persistent impersonation credentials.
+            </p>
+          </div>
+        </div>
+
+        <!-- 5.3 -->
+        <div id="card-step_5_3" class="step-card bg-gray-950 border border-gray-800/80 rounded-xl p-4 transition-all flex items-start gap-4 cursor-pointer" onclick="toggleStep('step_5_3')">
+          <button id="circle-step_5_3" class="step-circle w-8 h-8 rounded-full border-2 border-emerald-500/80 bg-emerald-950/60 text-emerald-300 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+            5.3
+          </button>
+          <div class="flex-1 space-y-1">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-200">Archive Migration Audit Reports</h3>
+              <span id="badge-step_5_3" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">Pending</span>
+            </div>
+            <p class="text-xs text-gray-400 leading-relaxed">
+              Securely archive generated JSON & Markdown reports in <code>./reports/</code> for your enterprise compliance audit log.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'gemini_migration_checklist_v1';
+    const allSteps = [
+      'step_1_1', 'step_1_2', 'step_1_3', 'step_1_4',
+      'step_2_1', 'step_2_2', 'step_2_3', 'step_2_4', 'step_2_5',
+      'step_3_1', 'step_3_2', 'step_3_3',
+      'step_4_1', 'step_4_2',
+      'step_5_1', 'step_5_2', 'step_5_3'
+    ];
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveState(state) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch {}
+    }
+
+    function toggleStep(stepId) {
+      const state = loadState();
+      state[stepId] = !state[stepId];
+      saveState(state);
+      render();
+    }
+
+    function resetChecklist() {
+      if (confirm('Reset all checklist progress?')) {
+        saveState({});
+        render();
+      }
+    }
+
+    function render() {
+      const state = loadState();
+      let completedCount = 0;
+
+      allSteps.forEach(stepId => {
+        const isDone = !!state[stepId];
+        if (isDone) completedCount++;
+
+        const card = document.getElementById(`card-${stepId}`);
+        const circle = document.getElementById(`circle-${stepId}`);
+        const badge = document.getElementById(`badge-${stepId}`);
+
+        if (card && circle && badge) {
+          if (isDone) {
+            card.classList.add('card-completed');
+            circle.classList.add('step-checked');
+            circle.innerHTML = '✓';
+            badge.className = 'text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800';
+            badge.textContent = 'Completed';
+          } else {
+            card.classList.remove('card-completed');
+            circle.classList.remove('step-checked');
+            circle.textContent = stepId.replace('step_', '').replace('_', '.');
+            badge.className = 'text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700';
+            badge.textContent = 'Pending';
+          }
+        }
+      });
+
+      const total = allSteps.length;
+      const pct = Math.round((completedCount / total) * 100);
+
+      const progressText = document.getElementById('progressText');
+      const progressPercent = document.getElementById('progressPercent');
+      const progressBar = document.getElementById('progressBar');
+
+      if (progressText) progressText.textContent = `${completedCount} / ${total} Steps Completed`;
+      if (progressPercent) progressPercent.textContent = `${pct}%`;
+      if (progressBar) progressBar.style.width = `${pct}%`;
+    }
+
+    document.addEventListener('DOMContentLoaded', render);
+  </script>
+</body>
+</html>

@@ -27,6 +27,9 @@ export interface UserHandoverData {
   agents: MigrationItemResult[];
   sessions: MigrationItemResult[];
   targetCid: string;
+  targetLocation: string;
+  idpProvider?: string;
+  mainAppUrl: string;
   agentsWebUrl: string;
   notebooksWebUrl: string;
   chatWebUrl: string;
@@ -61,6 +64,25 @@ export class UserReportGenerator {
   }
 
   /**
+   * Helper to build either standard Cloud Identity URLs or Workforce Identity Federation (WiF) SSO URLs.
+   */
+  buildAppUrl(cid: string, location: string = 'global', idpProvider?: string, route: string = ''): string {
+    const loc = (location || 'global').toLowerCase();
+    const locPrefix = loc !== 'global' ? `${loc}/` : '';
+    const subPath = route ? `/r/${route}` : '';
+
+    if (idpProvider) {
+      const cleanIdp = idpProvider
+        .replace(/^https?:\/\/auth\.cloud\.google\/signin\//, '')
+        .replace(/^\/+/, '');
+      const rawTargetUrl = `https://vertexaisearch.cloud.google/${locPrefix}home/cid/${cid}${subPath}&hl=en_US`;
+      return `https://auth.cloud.google/signin/${cleanIdp}?continueUrl=${encodeURIComponent(rawTargetUrl)}`;
+    }
+
+    return `https://vertexaisearch.cloud.google.com/${locPrefix}home/cid/${cid}${subPath}?hl=en_US`;
+  }
+
+  /**
    * Resolves the target Customer/Widget ID (CID) dynamically from report or default target engine.
    */
   resolveTargetCidSync(report: MigrationReport): string {
@@ -83,10 +105,24 @@ export class UserReportGenerator {
   groupReportByUser(report: MigrationReport): Map<string, UserHandoverData> {
     const userMap = new Map<string, UserHandoverData>();
     const targetCid = this.resolveTargetCidSync(report);
+    const targetLocation = (report.targetEnvironment?.appLocation || (report as any).config?.target?.appLocation || 'global').toLowerCase();
+    const targetAppId = report.targetEnvironment?.appId || (report as any).config?.target?.appId || '';
 
-    const agentsWebUrl = `https://vertexaisearch.cloud.google.com/home/cid/${targetCid}/r/agents?hl=en_US`;
-    const notebooksWebUrl = `https://vertexaisearch.cloud.google.com/home/cid/${targetCid}/r/notebook?hl=en_US`;
-    const chatWebUrl = `https://vertexaisearch.cloud.google.com/home/cid/${targetCid}/r/chat?hl=en_US`;
+    // Detect if target environment uses Workforce Identity Federation (WiF / Entra ID)
+    let idpProvider: string | undefined = (report.targetEnvironment as any)?.idpProvider || (report as any).config?.target?.idpProvider;
+    if (!idpProvider && (
+      (report.targetEnvironment as any)?.idpType === 'WORKFORCE_IDENTITY_FEDERATION' ||
+      (report as any).config?.idpMapping?.targetIdp === 'WORKFORCE_IDENTITY_FEDERATION' ||
+      targetAppId.toLowerCase().includes('entra') ||
+      targetLocation === 'eu'
+    )) {
+      idpProvider = process.env.WIF_PROVIDER_ID || undefined;
+    }
+
+    const mainAppUrl = this.buildAppUrl(targetCid, targetLocation, idpProvider, '');
+    const agentsWebUrl = this.buildAppUrl(targetCid, targetLocation, idpProvider, 'agents');
+    const notebooksWebUrl = this.buildAppUrl(targetCid, targetLocation, idpProvider, 'notebook');
+    const chatWebUrl = this.buildAppUrl(targetCid, targetLocation, idpProvider, 'chat');
 
     const now = new Date().toISOString();
 
@@ -105,7 +141,7 @@ export class UserReportGenerator {
       userFrequency.set(u, (userFrequency.get(u) || 0) + 1);
     }
     const sortedUsers = Array.from(userFrequency.entries()).sort((a, b) => b[1] - a[1]);
-    const primaryReportUser = sortedUsers.length > 0 ? sortedUsers[0][0] : (process.env.ADMIN_EMAIL || 'admin@wdufrin.altostrat.com');
+    const primaryReportUser = sortedUsers.length > 0 ? sortedUsers[0][0] : (process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || 'user@example.com');
 
     const getOrCreateUser = (rawEmail?: string): UserHandoverData => {
       let email = (rawEmail || '').replace(/^user:/, '').trim();
@@ -120,6 +156,9 @@ export class UserReportGenerator {
           agents: [],
           sessions: [],
           targetCid,
+          targetLocation,
+          idpProvider,
+          mainAppUrl,
           agentsWebUrl,
           notebooksWebUrl,
           chatWebUrl,
@@ -145,9 +184,6 @@ export class UserReportGenerator {
   }
 
   /**
-   * Generates clean, end-user friendly Markdown checklist
-   */
-  /**
    * Generates clean, end-user friendly Markdown checklist with interactive checkboxes
    */
   generateMarkdownReport(data: UserHandoverData): string {
@@ -162,7 +198,7 @@ export class UserReportGenerator {
 
           const isPrivate = filteredCollaborators.length === 0;
           const sharedWithText = isPrivate ? 'Private (Only You)' : filteredCollaborators.join(', ');
-          const directAgentUrl = `https://vertexaisearch.cloud.google.com/home/cid/${data.targetCid}/r/agents/${ag.targetId || ag.id}?hl=en_US`;
+          const directAgentUrl = this.buildAppUrl(data.targetCid, data.targetLocation, data.idpProvider, `agents/${ag.targetId || ag.id}`);
 
           if (isPrivate) {
             return `### 🤖 [${ag.displayName}](${directAgentUrl})
@@ -180,7 +216,7 @@ export class UserReportGenerator {
 
     const nbList = data.notebooks.length > 0
       ? data.notebooks.map(nb => {
-          const directNbUrl = `https://vertexaisearch.cloud.google.com/home/cid/${data.targetCid}/r/notebook/${nb.targetId || nb.id}?hl=en_US`;
+          const directNbUrl = this.buildAppUrl(data.targetCid, data.targetLocation, data.idpProvider, `notebook/${nb.targetId || nb.id}`);
           return `### 📓 [${nb.displayName}](${directNbUrl})
 - [ ] **Step 1:** Open notebook to verify restored sources and study materials.
 - [ ] **Step 2:** (Optional) Click **"Share"** inside the notebook if you'd like to invite colleagues.
@@ -196,8 +232,24 @@ Your Gemini Enterprise custom agents, research notebooks, and past conversations
 
 ---
 
-## 🤖 1. Your Custom Agents
-Your agents have been transferred with their prompts, tools, and configurations intact.
+## 🔑 Step 1: First-Time Login & Connectors Setup (Action Required)
+
+Before accessing your transferred agents and notebooks, please complete this quick one-time setup:
+
+1. **Log in to your new Gemini Enterprise App:**  
+   👉 **[Launch Gemini Enterprise Workspace](${data.mainAppUrl})** using your **${data.userEmail}** credentials.
+
+2. **Authenticate your Connected Data Sources:**  
+   - Click on **Settings ⚙️** (top right) or the **Data Sources & Tools** tab in Gemini.  
+   - When prompted, click **"Authenticate" / "Authorize Access"** for your connected workplace tools (e.g., Google Workspace, Microsoft 365, Drive, Jira, GitHub, or Enterprise Search).  
+   - This grants your personal permissions so Gemini and your custom agents can safely retrieve information on your behalf.
+
+3. **You're all set!** Once authenticated, all your search tools, custom agents, and research notebooks will have full live access.
+
+---
+
+## 🤖 2. Your Custom Agents
+Your agents have been transferred into your drafts with their instructions and tools intact.
 
 ${agList}
 
@@ -207,7 +259,7 @@ ${agList}
 
 ---
 
-## 📓 2. Your Research Notebooks
+## 📓 3. Your Research Notebooks
 All of your notebooks, sources, and generated study guides have been restored. Your generated presentations and briefing documents are also attached to this email.
 
 ${nbList}
@@ -216,7 +268,7 @@ ${nbList}
 
 ---
 
-## 💬 3. Previous Conversations Automatically Restored
+## 💬 4. Previous Conversations Automatically Restored
 All of your past search and chat conversations (**${data.sessions.length} conversation threads**) have been transferred to your new account:
 - **What was restored:** Your complete question history, AI responses, and source citations.
 - **Where to find them:** They will automatically appear chronologically in your left-hand **History** sidebar whenever you chat in Gemini.
@@ -242,7 +294,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
           });
 
           const isPrivate = filteredCollaborators.length === 0;
-          const directAgentUrl = `https://vertexaisearch.cloud.google.com/home/cid/${data.targetCid}/r/agents/${ag.targetId || ag.id}?hl=en_US`;
+          const directAgentUrl = this.buildAppUrl(data.targetCid, data.targetLocation, data.idpProvider, `agents/${ag.targetId || ag.id}`);
 
           const badge = isPrivate
             ? `<span style="background-color: #064e3b; color: #a7f3d0; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;">🔒 Private</span>`
@@ -279,7 +331,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
 
     const nbCards = data.notebooks.length > 0
       ? data.notebooks.map(nb => {
-          const directNbUrl = `https://vertexaisearch.cloud.google.com/home/cid/${data.targetCid}/r/notebook/${nb.targetId || nb.id}?hl=en_US`;
+          const directNbUrl = this.buildAppUrl(data.targetCid, data.targetLocation, data.idpProvider, `notebook/${nb.targetId || nb.id}`);
 
           return `
             <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;">
@@ -322,18 +374,57 @@ All of your past search and chat conversations (**${data.sessions.length} conver
         🚀 Welcome to Your New Gemini Enterprise Workspace
       </h1>
       <p style="margin: 8px 0 0 0; font-size: 14px; opacity: 0.95; line-height: 1.4;">
-        Hi <strong>${data.userEmail}</strong>, your agents, research notebooks, and conversations have been transferred and are ready for you.
+        Hi <strong>${data.userEmail}</strong>, your agents, research notebooks, and past conversations have been transferred and are ready for you.
       </p>
     </div>
 
     <!-- Body Content -->
     <div style="padding: 28px 24px; background-color: #0f172a;">
       
-      <!-- Section 1: Agents -->
+      <!-- Section 1: First-Time Setup & Connector Authentication -->
+      <div style="background-color: #1e1b4b; border: 2px solid #6366f1; border-radius: 12px; padding: 20px; margin-bottom: 28px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
+            <span>🔑</span> Step 1: First-Time Login & Connectors Setup
+          </h2>
+          <a href="${data.mainAppUrl}" target="_blank" style="background-color: #4f46e5; color: #ffffff; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-size: 12px; font-weight: 700; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);">
+            Launch Gemini &rarr;
+          </a>
+        </div>
+        
+        <p style="margin: 0 0 14px 0; font-size: 13px; color: #c7d2fe; line-height: 1.5;">
+          Please complete these quick steps first so your search tools and transferred assets can access your data:
+        </p>
+
+        <div style="background-color: #0f172a; border-radius: 8px; padding: 14px;">
+          <div style="display: flex; align-items: flex-start; margin-bottom: 10px;">
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 10px; flex-shrink: 0;">1</span>
+            <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
+              <strong>Log in:</strong> Open <a href="${data.mainAppUrl}" target="_blank" style="color: #93c5fd; text-decoration: underline;">Gemini Enterprise</a> using your corporate email (<strong>${data.userEmail}</strong>).
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: flex-start; margin-bottom: 10px;">
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 10px; flex-shrink: 0;">2</span>
+            <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
+              <strong>Authorize your Connectors:</strong> Go to <strong>Settings ⚙️ &rarr; Data Sources & Tools</strong> to link and authenticate your connected services (Google Drive, Gmail, Jira, Confluence, Microsoft 365, etc.).
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: flex-start;">
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 10px; flex-shrink: 0;">3</span>
+            <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
+              <strong>Activate your Assets:</strong> Use the checklists below to publish your transferred agents and verify your notebooks.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Agents -->
       <div style="margin-bottom: 28px;">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <h2 style="margin: 0; font-size: 16px; font-weight: 700; color: #f8fafc;">
-            🤖 Your Custom Agents
+            🤖 2. Your Custom Agents
           </h2>
           <a href="${data.agentsWebUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 6px 14px; border-radius: 8px; text-decoration: none; font-size: 12px; font-weight: 600;">
             Open My Agents &rarr;
@@ -345,11 +436,11 @@ All of your past search and chat conversations (**${data.sessions.length} conver
         ${agCards}
       </div>
 
-      <!-- Section 2: Notebooks -->
+      <!-- Section 3: Notebooks -->
       <div style="margin-bottom: 28px;">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <h2 style="margin: 0; font-size: 16px; font-weight: 700; color: #f8fafc;">
-            📓 Your Research Notebooks
+            📓 3. Your Research Notebooks
           </h2>
           <a href="${data.notebooksWebUrl}" target="_blank" style="background-color: #059669; color: #ffffff; padding: 6px 14px; border-radius: 8px; text-decoration: none; font-size: 12px; font-weight: 600;">
             Open My Notebooks &rarr;
@@ -361,10 +452,10 @@ All of your past search and chat conversations (**${data.sessions.length} conver
         ${nbCards}
       </div>
 
-      <!-- Section 3: Chats Info Callout -->
+      <!-- Section 4: Chats Info Callout -->
       <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px 20px;">
         <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #f8fafc;">
-          💬 Previous Conversations Automatically Restored (${data.sessions.length} Threads)
+          💬 4. Previous Conversations Automatically Restored (${data.sessions.length} Threads)
         </h3>
         <p style="margin: 0 0 6px 0; font-size: 13px; color: #cbd5e1; line-height: 1.5;">
           All your past questions, detailed AI answers, and source citations have been migrated to your new account.

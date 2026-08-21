@@ -14,6 +14,7 @@
     "dev": "tsx watch src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:matrix": "tsx scripts/run-e2e-matrix.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
