@@ -346,7 +346,7 @@ Following a migration, end-users receive an individual handover bundle:
 1. **Checklist Email with Interactive Checkboxes & SSO Links**:
    * Generates location-aware Google Cloud Workforce Sign-In gateway URLs:
      `https://auth.cloud.google/signin/locations/global/workforcePools/<poolId>/providers/<providerId>?continueUrl=<encodedAppUrl>`
-   * Step 1: Login & Authorize Connected Workplace Tools (Google Workspace, M365, OneDrive, Jira).
+   * Step 1: Login & Authorize Connected Workplace Tools via the prompt bar Connectors menu (⊶ / Sliders icon for Outlook, OneDrive, Google Workspace, Jira, etc.).
    * Step 2: Access Transferred Custom Agents in the left sidebar and Agent Gallery.
    * Step 3: Access Research Notebooks & Sources.
 2. **Native Office Document Attachments**:

@@ -232,19 +232,22 @@ Your Gemini Enterprise custom agents, research notebooks, and past conversations
 
 ---
 
-## 🔑 Step 1: First-Time Login & Connectors Setup (Action Required)
+## 🔑 Step 1: First-Time Login & Connector Authorization (Action Required)
 
-Before accessing your transferred agents and notebooks, please complete this quick one-time setup:
+Before accessing your transferred agents and notebooks, please authorize your connected enterprise tools:
 
 1. **Log in to your new Gemini Enterprise App:**  
    👉 **[Launch Gemini Enterprise Workspace](${data.mainAppUrl})** using your **${data.userEmail}** credentials.
 
-2. **Authenticate your Connected Data Sources:**  
-   - Click on **Settings ⚙️** (top right) or the **Data Sources & Tools** tab in Gemini.  
-   - When prompted, click **"Authenticate" / "Authorize Access"** for your connected workplace tools (e.g., Google Workspace, Microsoft 365, Drive, Jira, GitHub, or Enterprise Search).  
-   - This grants your personal permissions so Gemini and your custom agents can safely retrieve information on your behalf.
+2. **Open the Connectors Menu (⊶ / Sliders Icon):**  
+   - In the prompt input bar (*"Ask Gemini Enterprise"*), click the **Connectors icon (⊶ / sliders icon)** at the bottom-left corner next to the `+` button.  
+   - Ensure **"Enable all connectors"** is toggled **ON**.
 
-3. **You're all set!** Once authenticated, all your search tools, custom agents, and research notebooks will have full live access.
+3. **Authorize Your Workplace Tools:**  
+   - In the popover menu, find any tools showing a blue **"Authorize"** button (e.g. **Microsoft Outlook**, **OneDrive**, **Microsoft Entra ID**, **Google Workspace / Drive**, **Jira**, **ServiceNow**, **Enterprise Web Search**).  
+   - Click **"Authorize"** to grant Gemini permission to search and retrieve your work documents on your behalf.
+
+4. **You're all set!** Once authorized, your custom agents, search tools, and research notebooks will have full live access to your workplace data.
 
 ---
 
@@ -385,7 +388,7 @@ All of your past search and chat conversations (**${data.sessions.length} conver
       <div style="background-color: #1e1b4b; border: 2px solid #6366f1; border-radius: 12px; padding: 20px; margin-bottom: 28px;">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <h2 style="margin: 0; font-size: 16px; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
-            <span>🔑</span> Step 1: First-Time Login & Connectors Setup
+            <span>🔑</span> Step 1: First-Time Login & Connector Authorization
           </h2>
           <a href="${data.mainAppUrl}" target="_blank" style="background-color: #4f46e5; color: #ffffff; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-size: 12px; font-weight: 700; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);">
             Launch Gemini &rarr;
@@ -393,28 +396,35 @@ All of your past search and chat conversations (**${data.sessions.length} conver
         </div>
         
         <p style="margin: 0 0 14px 0; font-size: 13px; color: #c7d2fe; line-height: 1.5;">
-          Please complete these quick steps first so your search tools and transferred assets can access your data:
+          Please complete these quick steps so Gemini and your transferred custom agents can safely retrieve information from your connected workplace tools:
         </p>
 
-        <div style="background-color: #0f172a; border-radius: 8px; padding: 14px;">
-          <div style="display: flex; align-items: flex-start; margin-bottom: 10px;">
-            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 10px; flex-shrink: 0;">1</span>
+        <div style="background-color: #0f172a; border-radius: 8px; padding: 16px;">
+          <div style="display: flex; align-items: flex-start; margin-bottom: 12px;">
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 12px; flex-shrink: 0;">1</span>
             <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
-              <strong>Log in:</strong> Open <a href="${data.mainAppUrl}" target="_blank" style="color: #93c5fd; text-decoration: underline;">Gemini Enterprise</a> using your corporate email (<strong>${data.userEmail}</strong>).
+              <strong>Log in:</strong> Open <a href="${data.mainAppUrl}" target="_blank" style="color: #93c5fd; text-decoration: underline; font-weight: 600;">Gemini Enterprise Workspace</a> using your corporate email (<strong>${data.userEmail}</strong>).
             </div>
           </div>
 
-          <div style="display: flex; align-items: flex-start; margin-bottom: 10px;">
-            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 10px; flex-shrink: 0;">2</span>
+          <div style="display: flex; align-items: flex-start; margin-bottom: 12px;">
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 12px; flex-shrink: 0;">2</span>
             <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
-              <strong>Authorize your Connectors:</strong> Go to <strong>Settings ⚙️ &rarr; Data Sources & Tools</strong> to link and authenticate your connected services (Google Drive, Gmail, Jira, Confluence, Microsoft 365, etc.).
+              <strong>Open Connectors:</strong> In the prompt input bar (<em>"Ask Gemini Enterprise"</em>), click the <strong>Connectors icon (⊶ / sliders icon)</strong> at the bottom-left corner next to <code>+</code>. Make sure <strong>"Enable all connectors"</strong> is toggled <strong>ON</strong>.
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: flex-start; margin-bottom: 12px;">
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 12px; flex-shrink: 0;">3</span>
+            <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
+              <strong>Click "Authorize":</strong> In the popover menu, find any tools showing a blue <span style="background-color: #1e293b; color: #60a5fa; border: 1px solid #3b82f6; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">Authorize</span> button (e.g. <strong>Microsoft Outlook</strong>, <strong>OneDrive</strong>, <strong>Google Workspace</strong>, <strong>Jira</strong>, <strong>Enterprise Web Search</strong>) and click it to grant access.
             </div>
           </div>
 
           <div style="display: flex; align-items: flex-start;">
-            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 10px; flex-shrink: 0;">3</span>
+            <span style="background-color: #4f46e5; color: #ffffff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-right: 12px; flex-shrink: 0;">4</span>
             <div style="font-size: 13px; color: #e2e8f0; line-height: 1.4;">
-              <strong>Activate your Assets:</strong> Use the checklists below to publish your transferred agents and verify your notebooks.
+              <strong>Activate Transferred Assets:</strong> Use the checklists below to activate your transferred custom agents and verify research notebooks.
             </div>
           </div>
         </div>
