@@ -151,14 +151,23 @@ export class SessionMigrator {
   public async listSourceSessions(candidateUsers: string[] = []): Promise<ChatSession[]> {
     const env = this.config.source;
     const usersToScan = new Set<string>();
-    for (const u of candidateUsers) {
-      if (u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
-    }
-    if (this.config.options?.userFilter) {
-      for (const u of this.config.options.userFilter) {
-        if (u.includes('@') && !u.includes('*')) usersToScan.add(u.replace(/^user:/i, '').trim());
+    const hasExplicitFilter = this.config.options?.userFilter && this.config.options.userFilter.length > 0 && !this.config.options.userFilter.includes('*') && !this.config.options.userFilter.includes('*@*');
+
+    if (hasExplicitFilter) {
+      for (const u of this.config.options!.userFilter!) {
+        if (u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
+      }
+    } else {
+      for (const u of candidateUsers) {
+        if (u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
+      }
+      if (this.config.identityMapping) {
+        for (const k of Object.keys(this.config.identityMapping)) {
+          if (k.includes('@')) usersToScan.add(k.replace(/^user:/i, '').trim());
+        }
       }
     }
+
     if (usersToScan.size === 0) {
       const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
       if (defaultAdmin) usersToScan.add(defaultAdmin);

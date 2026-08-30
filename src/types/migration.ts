@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { Agent, Notebook } from './index.js';
+import { Agent, Notebook, Memory } from './index.js';
 
 export interface EnvironmentConfig {
   projectId: string;
@@ -28,6 +28,8 @@ export interface MigrationOptions {
   migrateNotebooks?: boolean;
   migrateAgents?: boolean;
   migrateSessions?: boolean;
+  migrateMemories?: boolean;
+  exportMemories?: boolean;
   exportArtifacts?: boolean;
   agentTypes?: ('LOW_CODE' | 'WORKFLOW' | 'ADK' | 'A2A' | 'OTHER' | 'ALL')[];
   agentStatusFilter?: 'ALL' | 'PUBLISHED_ONLY' | 'DRAFTS_ONLY';
@@ -57,7 +59,7 @@ export interface MigrationConfig {
 export interface MigrationItemResult {
   id: string;
   displayName: string;
-  type: 'AGENT' | 'NOTEBOOK' | 'SESSION';
+  type: 'AGENT' | 'NOTEBOOK' | 'SESSION' | 'MEMORY' | 'ARTIFACT';
   status: 'SUCCESS' | 'SKIPPED' | 'FAILED' | 'DRY_RUN';
   originalOwner?: string;
   targetOwner?: string;
@@ -79,10 +81,12 @@ export interface MigrationReport {
     totalDiscoveredAgents: number;
     totalDiscoveredNotebooks: number;
     totalDiscoveredSessions?: number;
+    totalDiscoveredMemories?: number;
     totalDiscoveredArtifacts?: number;
     totalMigratedAgents: number;
     totalMigratedNotebooks: number;
     totalMigratedSessions?: number;
+    totalMigratedMemories?: number;
     totalMigratedArtifacts?: number;
     totalSkipped: number;
     totalFailed: number;

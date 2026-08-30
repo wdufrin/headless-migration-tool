@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini Enterprise Migration Companion",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Admin companion tool to 1-click bulk publish draft agents and sync NotebookLM Studio artifacts directly inside Gemini Enterprise.",
   "permissions": [
     "activeTab",

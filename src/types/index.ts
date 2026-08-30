@@ -168,3 +168,31 @@ export interface AppEngine {
   searchEngineConfig?: any;
   [key: string]: any;
 }
+
+export interface Memory {
+  name: string;
+  fact: string;
+  createTime?: string;
+  updateTime?: string;
+  originalResourcePath?: string;
+  owner?: string;
+  userEmail?: string;
+  userPseudoId?: string;
+  [key: string]: any;
+}
+
+export interface MemoryBackupSnapshot {
+  timestamp: string;
+  sourceEnvironment: {
+    projectId: string;
+    appLocation: string;
+    collectionId: string;
+    appId: string;
+  };
+  total?: number;
+  totalMemories: number;
+  totalUsers: number;
+  users: string[];
+  memories: Memory[];
+}
+

@@ -31,7 +31,7 @@ export class NotebookMigrator {
    * Evaluates if a notebook is associated with a specific user or user filter.
    */
   isNotebookOwnedByUser(notebook: Notebook, userFilter: string[] = []): boolean {
-    if (userFilter.length === 0 || userFilter.includes('*')) {
+    if (userFilter.length === 0 || userFilter.includes('*') || userFilter.includes('*@*')) {
       return true;
     }
 
@@ -44,9 +44,9 @@ export class NotebookMigrator {
       notebook.metadata?.creatorEmail
     ].filter(Boolean) as string[];
 
-    const lowerFilters = userFilter.map(u => u.toLowerCase().trim());
+    const lowerFilters = userFilter.map(u => u.toLowerCase().trim().replace(/^user:/i, ''));
     return candidateOwners.some(owner => {
-      const lowerOwner = owner.toLowerCase().trim();
+      const lowerOwner = owner.toLowerCase().trim().replace(/^user:/i, '');
       return lowerFilters.some(filter => {
         if (filter.startsWith('*@')) {
           const domain = filter.substring(2);
@@ -220,16 +220,19 @@ export class NotebookMigrator {
 
     // 1. Resolve Candidate Users for Multi-User DWD Notebook Discovery
     const candidateUsers = new Set<string>();
-    if (options.userFilter && options.userFilter.length > 0) {
-      for (const u of options.userFilter) {
-        if (!u.includes('*') && u.includes('@')) candidateUsers.add(u.replace(/^user:/, '').trim());
+    const hasExplicitFilter = options.userFilter && options.userFilter.length > 0 && !options.userFilter.includes('*') && !options.userFilter.includes('*@*');
+
+    if (hasExplicitFilter) {
+      for (const u of options.userFilter!) {
+        if (u.includes('@')) candidateUsers.add(u.replace(/^user:/i, '').trim());
       }
-    }
-    for (const u of discoveredUsers) {
-      if (u.includes('@')) candidateUsers.add(u.replace(/^user:/, '').trim());
-    }
-    for (const u of Object.keys(identityMapping)) {
-      if (u.includes('@')) candidateUsers.add(u.replace(/^user:/, '').trim());
+    } else {
+      for (const u of discoveredUsers) {
+        if (u.includes('@')) candidateUsers.add(u.replace(/^user:/i, '').trim());
+      }
+      for (const u of Object.keys(identityMapping)) {
+        if (u.includes('@')) candidateUsers.add(u.replace(/^user:/i, '').trim());
+      }
     }
 
     if (candidateUsers.size === 0) {

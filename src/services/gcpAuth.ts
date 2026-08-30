@@ -113,8 +113,36 @@ export class GcpAuthService {
     }
   }
 
+  private callerEmailCache?: string;
+
   hasDwdConfigured(): boolean {
     return !!this.serviceAccountKey;
+  }
+
+  /**
+   * Resolves the primary email identity of the active caller credentials.
+   */
+  async getCallerIdentity(): Promise<string | undefined> {
+    if (this.callerEmailCache) return this.callerEmailCache;
+    const envEmail = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL;
+    if (envEmail && envEmail.includes('@')) {
+      this.callerEmailCache = envEmail.replace(/^user:/i, '').trim();
+      return this.callerEmailCache;
+    }
+    try {
+      const token = await this.getAccessToken().catch(() => null);
+      if (token) {
+        const resp = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`);
+        if (resp.ok) {
+          const data: any = await resp.json();
+          if (data.email && !data.email.endsWith('.gserviceaccount.com')) {
+            this.callerEmailCache = data.email;
+            return this.callerEmailCache;
+          }
+        }
+      }
+    } catch {}
+    return undefined;
   }
 
   /**

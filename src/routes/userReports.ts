@@ -21,17 +21,37 @@ import { GcpAuthService } from '../services/gcpAuth.js';
 
 export const userReportsRouter = express.Router();
 
-export function getLatestMigrationReport(): any {
+export function getLatestMigrationReport(reportId?: string): any {
   try {
     const reportsDir = path.resolve(process.cwd(), 'reports');
     if (!fs.existsSync(reportsDir)) return null;
-    const files = fs.readdirSync(reportsDir);
-    const jsonFiles = files
-      .filter(f => f.startsWith('migration-report-') && f.endsWith('.json'))
-      .sort()
-      .reverse();
-    if (jsonFiles.length === 0) return null;
-    const raw = fs.readFileSync(path.join(reportsDir, jsonFiles[0]), 'utf8');
+    const files = fs.readdirSync(reportsDir).filter(f => f.startsWith('migration-report-') && f.endsWith('.json'));
+    if (files.length === 0) return null;
+
+    if (reportId) {
+      const matched = files.find(f => f.includes(reportId));
+      if (matched) {
+        const raw = fs.readFileSync(path.join(reportsDir, matched), 'utf8');
+        return JSON.parse(raw);
+      }
+    }
+
+    const reportObjects: { file: string; startTimeMs: number }[] = [];
+    for (const f of files) {
+      try {
+        const fullPath = path.join(reportsDir, f);
+        const stats = fs.statSync(fullPath);
+        const raw = fs.readFileSync(fullPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        const startTimeMs = parsed.startTime ? new Date(parsed.startTime).getTime() : stats.mtimeMs;
+        reportObjects.push({ file: f, startTimeMs });
+      } catch {}
+    }
+
+    reportObjects.sort((a, b) => b.startTimeMs - a.startTimeMs);
+    if (reportObjects.length === 0) return null;
+
+    const raw = fs.readFileSync(path.join(reportsDir, reportObjects[0].file), 'utf8');
     return JSON.parse(raw);
   } catch {
     return null;
@@ -39,11 +59,12 @@ export function getLatestMigrationReport(): any {
 }
 
 // User Handover Reports & Email Dispatcher Endpoints
-userReportsRouter.get('/user-reports', async (_req, res) => {
+userReportsRouter.get('/user-reports', async (req, res) => {
   try {
     const { UserReportGenerator } = await import('../engines/userReportGenerator.js');
     const generator = new UserReportGenerator();
-    const latestReport = getLatestMigrationReport();
+    const reportId = req.query.reportId as string | undefined;
+    const latestReport = getLatestMigrationReport(reportId);
     if (!latestReport) {
       return res.status(200).json({ users: [], message: 'No migration runs found yet. Run a migration first.' });
     }
@@ -66,6 +87,7 @@ userReportsRouter.get('/user-reports', async (_req, res) => {
         notebooksCount: data.notebooks.length,
         agentsCount: data.agents.length,
         sessionsCount: data.sessions.length,
+        memoriesCount: data.memories ? data.memories.length : 0,
         notebookArtifactsCount: totalNbArtifacts,
         hasGeneratedBundle: hasBundle,
         folderPath,
@@ -89,11 +111,12 @@ userReportsRouter.get('/user-reports', async (_req, res) => {
   }
 });
 
-userReportsRouter.post('/user-reports/generate', async (_req, res) => {
+userReportsRouter.post('/user-reports/generate', async (req, res) => {
   try {
     const { UserReportGenerator } = await import('../engines/userReportGenerator.js');
     const generator = new UserReportGenerator();
-    const latestReport = getLatestMigrationReport();
+    const reportId = (req.body?.reportId || req.query?.reportId) as string | undefined;
+    const latestReport = getLatestMigrationReport(reportId);
     if (!latestReport) {
       return res.status(400).json({ error: 'NoMigrationReport', message: 'No migration reports found to generate user bundles from.' });
     }
@@ -112,14 +135,14 @@ userReportsRouter.post('/user-reports/generate', async (_req, res) => {
 userReportsRouter.post('/user-reports/send-email', async (req, res) => {
   try {
     const callerToken = req.accessToken;
-    const { userEmail, overrideRecipientEmail, senderEmail, smtpConfig } = req.body;
+    const { userEmail, overrideRecipientEmail, senderEmail, smtpConfig, reportId } = req.body;
     if (!userEmail) {
       return res.status(400).json({ error: 'MissingUserEmail', message: 'userEmail is required' });
     }
 
     const { UserReportGenerator } = await import('../engines/userReportGenerator.js');
     const generator = new UserReportGenerator();
-    const latestReport = getLatestMigrationReport();
+    const latestReport = getLatestMigrationReport(reportId);
     if (!latestReport) {
       return res.status(400).json({ error: 'NoMigrationReport', message: 'No migration reports found.' });
     }
@@ -148,11 +171,12 @@ userReportsRouter.get('/user-reports/render/:email', async (req, res) => {
     const email = decodeURIComponent(req.params.email);
     const sanitized = email.replace(/[^a-zA-Z0-9@._-]/g, '_');
     const htmlPath = path.join('./user_handover_reports', sanitized, 'MIGRATION_CHECKLIST.html');
+    const reportId = req.query.reportId as string | undefined;
     
     if (!fs.existsSync(htmlPath)) {
       const { UserReportGenerator } = await import('../engines/userReportGenerator.js');
       const generator = new UserReportGenerator();
-      const latestReport = getLatestMigrationReport();
+      const latestReport = getLatestMigrationReport(reportId);
       if (latestReport) await generator.generateAllUserBundles(latestReport);
     }
 

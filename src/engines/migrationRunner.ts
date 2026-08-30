@@ -238,6 +238,60 @@ export class MigrationRunner {
       }
     }
 
+    // Step 5b: Migrate User Memories
+    if (config.options?.migrateMemories !== false) {
+      try {
+        const { MemoryMigrator } = await import('./memoryMigrator.js');
+        const memoryMigrator = new MemoryMigrator(config, this.auth, this.client);
+        const sourceMemories = await memoryMigrator.listSourceMemories(discoveredUsers);
+        logger.info(`Starting User Memories Migration for ${sourceMemories.length} discovered memories...`);
+
+        const callerIdentity = (await this.auth.getCallerIdentity?.()) || (discoveredUsers && discoveredUsers[0]) || '';
+        const defaultOwner = (config.options?.userFilter && config.options.userFilter.length === 1 && !config.options.userFilter[0].includes('*'))
+          ? config.options.userFilter[0].replace(/^user:/i, '').trim()
+          : (callerIdentity || (discoveredUsers && discoveredUsers[0]) || 'user@example.com');
+
+        for (const m of sourceMemories) {
+          const rawOwner = m.owner || m.userEmail || m.userPseudoId || defaultOwner;
+          const origOwner = (rawOwner && rawOwner.includes('@')) ? rawOwner : defaultOwner;
+          const tgtOwner = config.identityMapping?.[origOwner] || config.identityMapping?.[`user:${origOwner}`] || (defaultOwner || origOwner);
+
+          try {
+            if (!config.options?.dryRun) {
+              await memoryMigrator.migrateMemory(m, tgtOwner);
+            }
+            allResults.push({
+              id: m.name?.split('/').pop() || 'unknown',
+              displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
+              type: 'MEMORY',
+              status: config.options?.dryRun ? 'DRY_RUN' : 'SUCCESS',
+              originalOwner: origOwner,
+              targetOwner: tgtOwner,
+              details: {
+                fact: m.fact,
+                originalResourcePath: m.originalResourcePath
+              }
+            });
+          } catch (mErr: any) {
+            allResults.push({
+              id: m.name?.split('/').pop() || 'unknown',
+              displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
+              type: 'MEMORY',
+              status: 'FAILED',
+              originalOwner: origOwner,
+              targetOwner: tgtOwner,
+              error: mErr.message,
+              details: {
+                fact: m.fact
+              }
+            });
+          }
+        }
+      } catch (memErr: any) {
+        logger.warn(`User memories migration skipped or failed: ${memErr.message}`);
+      }
+    }
+
     // Step 6: Export & Archive Multi-User Canvas & Presentation Artifacts
     if (config.options?.exportArtifacts !== false) {
       try {
@@ -247,6 +301,18 @@ export class MigrationRunner {
         logger.info(`Archived ${artResult.count} user presentations, dashboards, and media manifests to ${artResult.exportDir}`);
       } catch (artErr: any) {
         logger.warn(`Artifact export skipped: ${artErr.message}`);
+      }
+    }
+
+    // Step 6b: Export & Backup User Memories to JSON (Optional Archive)
+    if (config.options?.exportMemories === true) {
+      try {
+        const { MemoryMigrator } = await import('./memoryMigrator.js');
+        const memoryMigrator = new MemoryMigrator(config, this.auth, this.client);
+        const memResult = await memoryMigrator.exportAllMemoriesToDirectory('./exports/memories', discoveredUsers);
+        logger.info(`Archived ${memResult.count} user memories to ${memResult.exportPath}`);
+      } catch (memExportErr: any) {
+        logger.warn(`User memories export skipped: ${memExportErr.message}`);
       }
     }
 
@@ -264,10 +330,12 @@ export class MigrationRunner {
       totalDiscoveredAgents: allResults.filter(r => r.type === 'AGENT').length,
       totalDiscoveredNotebooks: allResults.filter(r => r.type === 'NOTEBOOK').length,
       totalDiscoveredSessions: allResults.filter(r => (r.type as string) === 'SESSION').length,
+      totalDiscoveredMemories: allResults.filter(r => (r.type as string) === 'MEMORY').length,
       totalDiscoveredArtifacts: totalArtifactsCount,
       totalMigratedAgents: allResults.filter(r => r.type === 'AGENT' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedNotebooks: allResults.filter(r => r.type === 'NOTEBOOK' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedSessions: allResults.filter(r => (r.type as string) === 'SESSION' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
+      totalMigratedMemories: allResults.filter(r => (r.type as string) === 'MEMORY' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedArtifacts: totalArtifactsCount,
       totalSkipped: allResults.filter(r => r.status === 'SKIPPED').length,
       totalFailed: allResults.filter(r => r.status === 'FAILED').length

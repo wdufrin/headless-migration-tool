@@ -31,7 +31,7 @@ export class AgentMigrator {
    * Evaluates if an agent matches the specified user filter by inspecting IAM policy bindings or creator metadata.
    */
   isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boolean {
-    if (userFilter.length === 0 || userFilter.includes('*')) {
+    if (userFilter.length === 0 || userFilter.includes('*') || userFilter.includes('*@*')) {
       return true;
     }
 
@@ -64,7 +64,7 @@ export class AgentMigrator {
       });
     }
 
-    // 2. If no explicit owner role is attached, check all members
+    // 2. Only if no explicit owner role is attached, check other IAM members
     const members: string[] = [];
     if (agent.iamPolicy?.bindings) {
       for (const b of agent.iamPolicy.bindings) {

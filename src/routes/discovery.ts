@@ -52,6 +52,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       sessionsCount: number;
       notebooksCount: number;
       agentsCount: number;
+      memoriesCount?: number;
       sources: string[];
     }>();
 
@@ -171,6 +172,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
                 sessionsCount: 0,
                 notebooksCount: 0,
                 agentsCount: 0,
+                memoriesCount: 0,
                 sources: [] as string[]
               };
               existing.notebooksCount++;
@@ -183,6 +185,44 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
         }
       } catch (nbErr: any) {
         logger.debug(`Notebooks user discovery skipped: ${nbErr.message}`);
+      }
+
+      // 4. Discover users from Memories
+      if (appId && appId !== 'custom') {
+        try {
+          const memUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${appId}/memories?pageSize=100`;
+          const memResp = await fetch(memUrl, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'X-Goog-User-Project': projectId
+            }
+          });
+          if (memResp.ok) {
+            const memData: any = await memResp.json();
+            const memories = memData.memories || [];
+            if (memories.length > 0) {
+              const callerId = (await authService.getCallerIdentity?.()) || process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
+              if (callerId && isValidUserIdentity(callerId)) {
+                const cleanEmail = callerId.replace(/^user:/i, '').trim();
+                const existing = userMap.get(cleanEmail) || {
+                  email: cleanEmail,
+                  sessionsCount: 0,
+                  notebooksCount: 0,
+                  agentsCount: 0,
+                  memoriesCount: 0,
+                  sources: [] as string[]
+                };
+                existing.memoriesCount = (existing.memoriesCount || 0) + memories.length;
+                if (!existing.sources.includes('Personal Memories')) {
+                  existing.sources.push('Personal Memories');
+                }
+                userMap.set(cleanEmail, existing);
+              }
+            }
+          }
+        } catch (memErr: any) {
+          logger.debug(`Memories user discovery skipped: ${memErr.message}`);
+        }
       }
     }
 

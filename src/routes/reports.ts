@@ -38,6 +38,7 @@ reportsRouter.get('/reports', async (_req, res) => {
 
         let totalArtifacts = parsed.summary?.totalMigratedArtifacts || parsed.summary?.totalDiscoveredArtifacts || 0;
         let totalSessions = parsed.summary?.totalMigratedSessions || parsed.summary?.totalDiscoveredSessions || 0;
+        let totalMemories = parsed.summary?.totalMigratedMemories || parsed.summary?.totalDiscoveredMemories || 0;
         if (!totalArtifacts && parsed.results) {
           for (const item of parsed.results) {
             if (item.details?.artifactsCount || item.details?.notesCount) {
@@ -48,6 +49,9 @@ reportsRouter.get('/reports', async (_req, res) => {
         if (!totalSessions && parsed.results) {
           totalSessions = parsed.results.filter((r: any) => r.type === 'SESSION').length;
         }
+        if (!totalMemories && parsed.results) {
+          totalMemories = parsed.results.filter((r: any) => r.type === 'MEMORY').length;
+        }
 
         reports.push({
           id: parsed.id || parsed.migrationId,
@@ -57,6 +61,7 @@ reportsRouter.get('/reports', async (_req, res) => {
           migratedNotebooks: parsed.summary?.totalMigratedNotebooks || 0,
           migratedArtifacts: totalArtifacts,
           migratedSessions: totalSessions,
+          migratedMemories: totalMemories,
           totalFailed: parsed.summary?.totalFailed || 0,
           durationMs: parsed.durationMs || 0,
           fileName: f

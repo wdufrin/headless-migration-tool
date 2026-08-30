@@ -31,6 +31,8 @@ export const MigrationOptionsSchema = z.object({
   migrateNotebooks: z.boolean().default(true),
   migrateAgents: z.boolean().default(true),
   migrateSessions: z.boolean().default(true),
+  migrateMemories: z.boolean().default(true),
+  exportMemories: z.boolean().default(true),
   exportArtifacts: z.boolean().default(true),
   agentTypes: z.array(z.enum(['LOW_CODE', 'WORKFLOW', 'ADK', 'A2A', 'OTHER', 'ALL'])).default(['ALL']),
   agentStatusFilter: z.enum(['ALL', 'PUBLISHED_ONLY', 'DRAFTS_ONLY']).default('ALL'),

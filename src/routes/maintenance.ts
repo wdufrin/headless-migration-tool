@@ -53,10 +53,11 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
     const cleanNotebooks = req.body?.cleanNotebooks !== false && req.body?.cleanNotebooks !== 'false';
     const cleanAgents = req.body?.cleanAgents !== false && req.body?.cleanAgents !== 'false';
     const cleanSessions = req.body?.cleanSessions !== false && req.body?.cleanSessions !== 'false';
+    const cleanMemories = req.body?.cleanMemories !== false && req.body?.cleanMemories !== 'false';
     const cleanArtifacts = req.body?.cleanArtifacts !== false && req.body?.cleanArtifacts !== 'false';
     const cleanReports = req.body?.cleanReports !== false && req.body?.cleanReports !== 'false';
 
-    logger.info(`Starting maintenance cleanup for project ${targetProject} (Engine: ${targetEngine}, Region: ${targetLocation}) [Notebooks: ${cleanNotebooks}, Agents: ${cleanAgents}, Sessions: ${cleanSessions}, Artifacts: ${cleanArtifacts}, Reports: ${cleanReports}]...`);
+    logger.info(`Starting maintenance cleanup for project ${targetProject} (Engine: ${targetEngine}, Region: ${targetLocation}) [Notebooks: ${cleanNotebooks}, Agents: ${cleanAgents}, Sessions: ${cleanSessions}, Memories: ${cleanMemories}, Artifacts: ${cleanArtifacts}, Reports: ${cleanReports}]...`);
 
     // Determine candidate user identities to clean in target
     const targetUsersToClean = Array.from(new Set<string>([
@@ -161,6 +162,39 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
       }
     }
 
+    // 3b. Delete all memories in target engine across all user identities
+    let deletedMemories = 0;
+    if (cleanMemories) {
+      try {
+        const { MemoryMigrator } = await import('../engines/memoryMigrator.js');
+        const dynamicConfig = getDynamicConfig(req);
+        const memMigrator = new MemoryMigrator(dynamicConfig, authService, client);
+
+        for (const userEmail of [undefined, ...targetUsersToClean]) {
+          try {
+            const targetMems = await memMigrator.listTargetMemories(userEmail);
+            for (const m of targetMems) {
+              try {
+                await client.deleteMemory(m.name, {
+                  projectId: targetProject,
+                  appLocation: targetLocation,
+                  appId: targetEngine,
+                  collectionId: targetCollection
+                }, userEmail);
+                deletedMemories++;
+              } catch (mErr: any) {
+                logger.warn(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
+              }
+            }
+          } catch {
+            // user might not have memories in target
+          }
+        }
+      } catch (e: any) {
+        logger.warn(`Memories cleanup notice: ${e.message}`);
+      }
+    }
+
     // 4. Clear exported local artifacts folder
     let clearedArtifacts = false;
     if (cleanArtifacts) {
@@ -213,17 +247,18 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
       }
     }
 
-    logger.info(`Target cleanup completed: ${deletedNotebooks} notebooks, ${deletedAgents} agents, ${deletedSessions} chat sessions, ${clearedReports} reports, artifacts reset.`);
+    logger.info(`Target cleanup completed: ${deletedNotebooks} notebooks, ${deletedAgents} agents, ${deletedSessions} chat sessions, ${deletedMemories} memories, ${clearedReports} reports, artifacts reset.`);
 
     return res.status(200).json({
       success: true,
       deletedNotebooks,
       deletedAgents,
       deletedSessions,
+      deletedMemories,
       clearedArtifacts,
       clearedReports,
       clearedUserHandover,
-      message: `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents, ${deletedSessions} chat sessions, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
+      message: `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents, ${deletedSessions} chat sessions, ${deletedMemories} user memories, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'CleanupFailed', message: err.message });

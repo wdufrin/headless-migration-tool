@@ -26,6 +26,7 @@ export interface UserHandoverData {
   notebooks: MigrationItemResult[];
   agents: MigrationItemResult[];
   sessions: MigrationItemResult[];
+  memories: MigrationItemResult[];
   targetCid: string;
   targetLocation: string;
   idpProvider?: string;
@@ -155,6 +156,7 @@ export class UserReportGenerator {
           notebooks: [],
           agents: [],
           sessions: [],
+          memories: [],
           targetCid,
           targetLocation,
           idpProvider,
@@ -177,6 +179,8 @@ export class UserReportGenerator {
         u.agents.push(item);
       } else if (item.type === 'SESSION') {
         u.sessions.push(item);
+      } else if (item.type === 'MEMORY') {
+        u.memories.push(item);
       }
     }
 
@@ -276,7 +280,15 @@ All of your past search and chat conversations (**${data.sessions.length} conver
 - **What was restored:** Your complete question history, AI responses, and source citations.
 - **Where to find them:** They will automatically appear chronologically in your left-hand **History** sidebar whenever you chat in Gemini.
 - **Action required:** None — your conversation history is ready and waiting for you.
+${data.memories.length > 0 ? `
+---
 
+## 🧠 5. Personalized AI Memories Restored
+All of your learned preferences and personalized facts (**${data.memories.length} memories**) have been safely transferred:
+${data.memories.map(m => `- *"${m.details?.fact || m.displayName}"*`).join('\n')}
+- **What was restored:** Personal profile context, saved preferences, and work role context.
+- **Where to find them:** Managed directly within your Gemini Enterprise Settings under **Personalization & Memories**.
+` : ''}
 ---
 
 *Gemini Enterprise Support*
@@ -474,6 +486,19 @@ All of your past search and chat conversations (**${data.sessions.length} conver
           ✨ <strong>No action required:</strong> Your previous conversations will automatically appear in your left-hand <em>History</em> sidebar when you chat in Gemini.
         </p>
       </div>
+${data.memories.length > 0 ? `
+      <!-- Section 5: Memories Info Callout -->
+      <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px 20px; margin-top: 16px;">
+        <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #f8fafc;">
+          🧠 5. Personalized AI Memories Restored (${data.memories.length} Memories)
+        </h3>
+        <p style="margin: 0 0 6px 0; font-size: 13px; color: #cbd5e1; line-height: 1.5;">
+          Your personalized facts and AI preferences have been migrated to your new workspace.
+        </p>
+        <p style="margin: 0; font-size: 12px; color: #94a3b8; line-height: 1.4;">
+          ✨ <strong>No action required:</strong> Manage or update your memories at any time under <em>Personalization & Memories</em> in your app settings.
+        </p>
+      </div>` : ''}
 
     </div>
 

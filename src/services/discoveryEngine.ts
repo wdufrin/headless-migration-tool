@@ -15,7 +15,7 @@
  */
 
 import { EnvironmentConfig } from '../types/migration.js';
-import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, AppEngine, IamPolicy } from '../types/index.js';
+import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, AppEngine, IamPolicy, Memory } from '../types/index.js';
 import { getSafeDiscoveryEngineUrl, validateResourceId } from '../security/validator.js';
 import { GcpAuthService } from './gcpAuth.js';
 import { retryWithBackoff } from '../utils/concurrency.js';
@@ -376,4 +376,102 @@ export class DiscoveryEngineClient {
       };
     }
   }
+
+  // --- Memories ---
+
+  private projectNumberCache: Map<string, string> = new Map();
+
+  async resolveProjectNumber(env: EnvironmentConfig): Promise<string> {
+    if (this.projectNumberCache.has(env.projectId)) {
+      return this.projectNumberCache.get(env.projectId)!;
+    }
+    if (/^\d+$/.test(env.projectId)) {
+      this.projectNumberCache.set(env.projectId, env.projectId);
+      return env.projectId;
+    }
+    try {
+      const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+      const collection = env.collectionId || 'default_collection';
+      const eng = await this.request<any>(
+        `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}`,
+        'GET',
+        undefined,
+        env.projectId
+      );
+      if (eng?.name) {
+        const match = eng.name.match(/^projects\/(\d+)\//);
+        if (match && match[1]) {
+          this.projectNumberCache.set(env.projectId, match[1]);
+          return match[1];
+        }
+      }
+    } catch (err: any) {
+      logger.debug(`Could not resolve numeric project number for ${env.projectId}: ${err.message}`);
+    }
+    return env.projectId;
+  }
+
+  async listMemories(env: EnvironmentConfig, forUserEmail?: string): Promise<Memory[]> {
+    const projectNum = await this.resolveProjectNumber(env);
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const collection = env.collectionId || 'default_collection';
+    const url = `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/memories?pageSize=100`;
+
+    const memories: Memory[] = [];
+    let pageToken: string | undefined = undefined;
+
+    do {
+      const currentUrl: string = pageToken ? `${url}&pageToken=${encodeURIComponent(pageToken)}` : url;
+      const res: { memories?: Memory[]; nextPageToken?: string } = await this.request<{ memories?: Memory[]; nextPageToken?: string }>(
+        currentUrl,
+        'GET',
+        undefined,
+        env.projectId,
+        undefined,
+        forUserEmail
+      );
+      if (res.memories && Array.isArray(res.memories)) {
+        for (const m of res.memories) {
+          if (forUserEmail) {
+            m.owner = forUserEmail;
+            m.userEmail = forUserEmail;
+            m.userPseudoId = forUserEmail;
+          }
+          memories.push(m);
+        }
+      }
+      pageToken = res.nextPageToken;
+    } while (pageToken);
+
+    return memories;
+  }
+
+  async generateMemories(env: EnvironmentConfig, text: string, forUserEmail?: string): Promise<any> {
+    const projectNum = await this.resolveProjectNumber(env);
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const collection = env.collectionId || 'default_collection';
+    const url = `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}:generateMemories`;
+    return this.request<any>(
+      url,
+      'POST',
+      { text },
+      env.projectId,
+      undefined,
+      forUserEmail
+    );
+  }
+
+  async deleteMemory(memoryName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = memoryName.startsWith('http') ? memoryName : `${baseUrl}/v1alpha/${memoryName}`;
+    return this.request<any>(
+      url,
+      'DELETE',
+      undefined,
+      env.projectId,
+      undefined,
+      forUserEmail
+    );
+  }
 }
+

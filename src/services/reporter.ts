@@ -42,19 +42,53 @@ export class MigrationReporter {
     lines.push(`| :--- | :--- |`);
     lines.push(`| **Discovered Agents** | ${report.summary.totalDiscoveredAgents} |`);
     lines.push(`| **Discovered Notebooks** | ${report.summary.totalDiscoveredNotebooks} |`);
+    lines.push(`| **Discovered Chat Sessions** | ${report.summary.totalDiscoveredSessions ?? 0} |`);
+    lines.push(`| **Discovered User Memories** | ${report.summary.totalDiscoveredMemories ?? 0} |`);
     lines.push(`| **Successfully Migrated Agents** | ${report.summary.totalMigratedAgents} |`);
     lines.push(`| **Successfully Migrated Notebooks** | ${report.summary.totalMigratedNotebooks} |`);
+    lines.push(`| **Successfully Migrated Chat Sessions** | ${report.summary.totalMigratedSessions ?? 0} |`);
+    lines.push(`| **Successfully Migrated User Memories** | ${report.summary.totalMigratedMemories ?? 0} |`);
+    lines.push(`| **Exported Studio Artifacts** | ${report.summary.totalMigratedArtifacts ?? report.summary.totalDiscoveredArtifacts ?? 0} |`);
     lines.push(`| **Skipped Items** | ${report.summary.totalSkipped} |`);
     lines.push(`| **Failed Items** | ${report.summary.totalFailed} |\n`);
 
     // Group results by original user for reconciliation
-    const userGroups = new Map<string, { migrated: number; skipped: number; failed: number; targetOwner: string; reasons: string[] }>();
+    const userGroups = new Map<string, {
+      agents: number;
+      notebooks: number;
+      memories: number;
+      sessions: number;
+      artifacts: number;
+      migrated: number;
+      skipped: number;
+      failed: number;
+      targetOwner: string;
+      reasons: string[];
+    }>();
+
     for (const r of report.results) {
       const u = r.originalOwner || 'Unknown User';
       if (!userGroups.has(u)) {
-        userGroups.set(u, { migrated: 0, skipped: 0, failed: 0, targetOwner: r.targetOwner || 'N/A', reasons: [] });
+        userGroups.set(u, {
+          agents: 0,
+          notebooks: 0,
+          memories: 0,
+          sessions: 0,
+          artifacts: 0,
+          migrated: 0,
+          skipped: 0,
+          failed: 0,
+          targetOwner: r.targetOwner || 'N/A',
+          reasons: []
+        });
       }
       const grp = userGroups.get(u)!;
+      if (r.type === 'AGENT') grp.agents++;
+      else if (r.type === 'NOTEBOOK') grp.notebooks++;
+      else if (r.type === 'MEMORY') grp.memories++;
+      else if (r.type === 'SESSION') grp.sessions++;
+      else if (r.type === 'ARTIFACT') grp.artifacts++;
+
       if (r.status === 'SUCCESS' || r.status === 'DRY_RUN') {
         grp.migrated++;
       } else if (r.status === 'SKIPPED') {
@@ -69,8 +103,8 @@ export class MigrationReporter {
     if (userGroups.size > 0) {
       lines.push(`---`);
       lines.push(`## 3. User Reconciliation & Migration Status`);
-      lines.push(`| Source User Identity | Target Google Identity | Status | Migrated Items | Dropped/Skipped | Notes / Reason |`);
-      lines.push(`| :--- | :--- | :---: | :---: | :---: | :--- |`);
+      lines.push(`| Source User Identity | Target Google Identity | Status | Agents | Notebooks | Memories | Sessions | Artifacts | Dropped/Skipped | Notes / Reason |`);
+      lines.push(`| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |`);
 
       for (const [userEmail, stats] of userGroups.entries()) {
         let userStatus = '✅ FULLY MIGRATED';
@@ -88,7 +122,7 @@ export class MigrationReporter {
           : stats.migrated > 0 ? 'All assets restored to personal library' : 'No assets found';
 
         lines.push(
-          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | **${stats.migrated}** | **${stats.skipped}** | ${notes} |`
+          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | ${stats.agents} | ${stats.notebooks} | ${stats.memories} | ${stats.sessions} | ${stats.artifacts} | **${stats.skipped}** | ${notes} |`
         );
       }
       lines.push('');
@@ -101,8 +135,9 @@ export class MigrationReporter {
 
     for (const r of report.results) {
       const statusIcon = r.status === 'SUCCESS' ? '✅' : r.status === 'DRY_RUN' ? '🔍' : r.status === 'SKIPPED' ? '⏭️' : '❌';
+      const typeIcon = r.type === 'MEMORY' ? '🧠' : r.type === 'AGENT' ? '🤖' : r.type === 'NOTEBOOK' ? '📓' : r.type === 'SESSION' ? '💬' : '🎨';
       lines.push(
-        `| **${r.type}** | ${r.displayName} | ${statusIcon} ${r.status} | \`${r.originalOwner || 'N/A'}\` | \`${r.targetOwner || r.targetId || 'N/A'}\` | ${r.error || 'Migrated successfully'} |`
+        `| ${typeIcon} **${r.type}** | ${r.displayName} | ${statusIcon} ${r.status} | \`${r.originalOwner || 'N/A'}\` | \`${r.targetOwner || r.targetId || 'N/A'}\` | ${r.error || 'Migrated successfully'} |`
       );
     }
 

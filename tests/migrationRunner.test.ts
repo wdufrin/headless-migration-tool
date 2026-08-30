@@ -57,6 +57,7 @@ describe('MigrationRunner Orchestrator', () => {
     (runner as any).client.listAgents = vi.fn().mockResolvedValue([
       { name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/ag-1', displayName: 'Agent A' }
     ]);
+    (runner as any).client.listMemories = vi.fn().mockResolvedValue([]);
     (runner as any).client.getAgentIamPolicy = vi.fn().mockResolvedValue({ bindings: [] });
 
     const report = await runner.run(sampleConfig);

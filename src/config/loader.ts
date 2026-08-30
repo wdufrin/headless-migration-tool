@@ -74,6 +74,8 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       migrateNotebooks: process.env.MIGRATE_NOTEBOOKS !== 'false',
       migrateAgents: process.env.MIGRATE_AGENTS !== 'false',
       migrateSessions: process.env.MIGRATE_SESSIONS !== 'false',
+      migrateMemories: process.env.MIGRATE_MEMORIES !== 'false',
+      exportMemories: process.env.EXPORT_MEMORIES === 'true',
       exportArtifacts: process.env.EXPORT_ARTIFACTS !== 'false',
       agentTypes: (process.env.AGENT_TYPES?.split(',') as any) || ['ALL'],
       agentStatusFilter: (process.env.AGENT_STATUS_FILTER as any) || 'ALL',
