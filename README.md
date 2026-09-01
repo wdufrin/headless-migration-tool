@@ -1,6 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
 [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](package.json)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.2.0-orange.svg)](RELEASE_NOTES.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, research notebooks, studio artifacts, grounding sources, chat conversation history, and associated IAM permissions across Google Cloud environments and Identity Providers.
