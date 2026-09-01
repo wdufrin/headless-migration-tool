@@ -1,11 +1,34 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](package.json)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+
 An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, research notebooks, studio artifacts, grounding sources, chat conversation history, and associated IAM permissions across Google Cloud environments and Identity Providers.
+
+---
+
+## 🚀 What's New in v1.2.0
+
+* **📑 Granular Notebook Source Migration & Integrity Auditing**:
+  * **Document-Level Tracking**: Tracks every individual grounding source (PDFs, Web URLs, Google Drive docs, text snippets, and Studio artifacts) with explicit status (`SUCCESS`, `FAILED`, `SKIPPED`, `DRY_RUN`).
+  * **Batch Creation with Automatic Individual Fallback**: Uses a resilient ingestion strategy—attempts high-speed batch creation; if a batch call encounters an issue, it automatically falls back to item-by-item creation so valid sources succeed and only faulty ones fail.
+  * **Studio Artifact Preservation**: Automatically converts NotebookLM Studio briefing docs, study guides, and outlines into structured text sources within the restored target notebook.
+  * **Section 5 Sources Audit Trail**: Migration reports (Markdown and JSON) now include **Section 5: Notebook Sources Breakdown & Integrity Audit**, listing parent notebook, source title, content type, migration status (`✅ SUCCESS` / `❌ FAILED`), and exact error diagnostics.
+* **📬 Enhanced User Handover Packages**:
+  * HTML verification checklists display visual pill badges (`📄 X Sources Ready`, `⚠️ Y Failed`) with expandable `<details>` accordions listing all source documents.
+  * User Markdown handover bundles provide itemized source breakdowns and status under each notebook.
+  * Email engine supports custom recipient overrides for staging verification prior to user dispatch.
+* **🧹 Multi-User Target Environment Maintenance**:
+  * Destination cleanup utility identifies and cleans notebooks and agents across all target users, preventing orphaned assets across testing iterations.
+* **⚡ Quota & Rate Limit Resilience**:
+  * Full jitter exponential backoff handling for HTTP 429 (`RESOURCE_EXHAUSTED`).
+  * Quota error diagnostics reporting specific metric and limit metadata (e.g. `AgentCreateRequestsPerDayPerUser`).
 
 ---
 
 ## 📋 Table of Contents
 
+- [What's New in v1.2.0](#-whats-new-in-v120)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
 - [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
@@ -24,6 +47,7 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 - [Configuration Reference (`migration-config.json`)](#-configuration-reference-migration-configjson)
 - [User Handover, SSO Gateway & Email Notification Engine](#-user-handover-sso-gateway--email-notification-engine)
 - [Architecture & InfoSec Compliance](#-architecture--infosec-compliance)
+- [Google Cloud Quotas & Rate Limiting](#-google-cloud-quotas--rate-limiting)
 - [Automated Testing](#-automated-testing)
 
 ---
@@ -31,7 +55,8 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 ## 🌟 Key Features
 
 * **🤖 Custom Agent Migration & Auto-Publishing**: Deep-copies Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags. Automatically assigns `scope: ALL_USERS` and publishes them so they immediately appear in the user's left sidebar and Agent Gallery.
-* **📔 Research Notebooks & Studio Notes**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs directly into the target environment.
+* **📔 Research Notebooks & Granular Source Auditing**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs directly into the target environment. Tracks every source individually with fault-isolated batching and dedicated integrity reporting.
+* **🧠 User Memories & Personalization Facts**: Discovers, migrates, and restores learned user preferences, personal context facts, and Reasoning Engine memories across Discovery Engine instances.
 * **📊 Office Document & Artifact Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (Microsoft PowerPoint)** and briefing docs/study guides as native **`.docx` (Microsoft Word)** files into `./exports/artifacts`.
 * **💬 Multi-turn Chat Conversation History**: Rehydrates full turn-by-turn question/answer dialogues, thoughts, and citations in chronological order (oldest $\rightarrow$ newest) directly into users' left-hand History sidebar.
 * **👤 Multi-Tenant Identity Resolution & Auto-Auth Detection**:
@@ -40,8 +65,8 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
   * **Auto-Resolution**: Authentication mode is automatically determined from selected Identity Providers and user email domains.
 * **🔄 Context-Aware Cross-IdP Transformation Matrix**: Supports domain transformation rules (e.g. `user@onmicrosoft.com` $\rightarrow$ `user@company.com`). The mapping interface is hidden when IdPs match and automatically reveals preset suggestions when switching between different IdPs.
 * **🛡️ Built-in Permissions & Least-Privilege Auditor**: Evaluates live IAM permissions, flags over-provisioned OAuth scopes, assigns security letter grades (A/B/C/F), verifies Google SAIF compliance, and provides 1-click `gcloud` IAM policy auto-fixes.
-* **🧹 Selective Target Destination Maintenance**: Granular controls to selectively clean Chats, Agents, Notebooks, Exported Artifacts, or Migration Reports prior to fresh migration runs.
-* **📬 End-User Handover Bundle & Authenticated SSO Links**: Generates personalized Markdown and HTML handover checklists with direct Google Cloud Workforce Sign-In gateway URLs (`auth.cloud.google/signin/...`) and Step 1 connector authorization walkthroughs.
+* **🧹 Selective Multi-User Target Maintenance**: Granular controls to clean Chats, Agents, Notebooks, Exported Artifacts, or Reports across all target users prior to fresh migration runs.
+* **📬 End-User Handover Bundle & Authenticated SSO Links**: Generates personalized Markdown and HTML handover checklists with direct Google Cloud Workforce Sign-In gateway URLs (`auth.cloud.google/signin/...`), source readiness status, and Step 1 connector authorization walkthroughs.
 
 ---
 
@@ -223,6 +248,8 @@ npx tsx src/cli.ts --dry-run --users "*@company.com"
 | `--no-notebooks` | Skip Gemini / NotebookLM notebooks migration | Migrates notebooks |
 | `--no-agents` | Skip Custom Agents migration | Migrates agents |
 | `--no-sessions` | Skip Chat conversation histories and turns migration | Migrates chat history |
+| `--no-memories` | Skip user personalized memories and facts migration | Migrates memories |
+| `--export-memories` | Export backup snapshot of user memories to disk (`./exports/memories`) | `true` |
 | `--agent-types <types...>` | Filter agent types (`LOW_CODE`, `WORKFLOW`, `ADK`, `A2A`, `ALL`) | `ALL` |
 | `--publish-agents` | Automatically publish migrated agents for immediate organization visibility | `true` |
 | `--export-artifacts` | Extract presentations, Canva-style docs, and HTML artifacts to `./exports` | `true` |
@@ -251,25 +278,29 @@ npm run test:e2e-matrix
 
 ## 🖥️ Web Console Feature Tour
 
-The local Web Console provides 6 dedicated modules:
+The local Web Console provides 5 dedicated modules:
 
 1. **🚀 Migration Studio**:
    - Interactive engine picker for Source and Target GCP environments.
    - Dynamic asset discovery with user selection table.
    - Context-aware Cross-IdP transformation matrix with preset domain rules.
-   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and reconciliation summary.
+   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and live progress across Notebooks, Sources, Agents, Chat Sessions, and Memories.
 2. **📊 Latest Report & Historical Runs**:
    - View and search comprehensive migration certificates and audit tables.
-   - Export reports in both Markdown (`.md`) and structured JSON (`.json`).
+   - Executive KPIs tracking discovered, migrated, and failed counts for both notebooks and individual sources.
+   - Dedicated **Section 5: Notebook Sources Breakdown & Integrity Audit** detailing every source document, parent notebook, type, status, and error logs.
+   - Export reports in both human-readable Markdown (`.md`) and structured JSON (`.json`).
 3. **📬 User Handover & Email Dispatch**:
    - Individual user checklists with deep links to target Gemini Enterprise apps.
+   - Visual status badges (`📄 X Sources Ready`, `⚠️ Y Failed`) with expandable `<details>` accordions listing all source documents.
    - Step 1 First-Time Login and Connector Authorization (Google Workspace, M365, Jira, etc.) walkthroughs.
-   - One-click handover dispatch via Gmail API or SMTP.
+   - One-click handover dispatch via Gmail API or SMTP with optional staging recipient overrides.
 4. **🔐 Auth & Identity Provider Wizard**:
    - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, and live impersonation test.
    - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, and live token test.
    - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
-5. **🗑️ Target Destination Cleanup Utility**:
+5. **🗑️ Target Destination Maintenance & Multi-User Cleanup**:
+   - Automatically identifies all users in the target environment to clean user-scoped notebooks and agents.
    - Selective checkboxes to clean Chats, Custom Agents, Notebooks, Exported Artifacts, or Migration Reports prior to test runs.
 
 ---
@@ -312,6 +343,8 @@ Designed to run **strictly on the administrator's local machine**:
     "migrateNotebooks": true,
     "migrateAgents": true,
     "migrateSessions": true,
+    "migrateMemories": true,
+    "exportMemories": true,
     "exportArtifacts": true,
     "dryRun": false,
     "concurrency": 10,
@@ -355,6 +388,20 @@ Following a migration, end-users receive an individual handover bundle:
 3. **Dispatch Options**:
    * **Google Gmail REST API**: Native OAuth2 dispatch using Domain-Wide Delegation.
    * **Corporate SMTP**: Integration with corporate relays (Office 365, Postfix, SendGrid).
+
+---
+
+## 📈 Google Cloud Quotas & Rate Limiting
+
+The migration tool is engineered for enterprise-scale execution and incorporates resilient handling for Discovery Engine API quotas and rate limits:
+
+* **Exponential Backoff with Full Jitter**:
+  When encountering HTTP 429 (`RESOURCE_EXHAUSTED`) or transient 5xx errors, the engine automatically retries operations up to 5 times with randomized exponential backoff (capping at 15s delays) to safely handle burst throttling.
+* **Per-User Daily Agent Creation Quotas (`AgentCreateRequestsPerDayPerUser`)**:
+  Google Cloud Discovery Engine enforces a daily per-user ceiling on custom agent creations. In new test projects or standard sandbox environments, this limit can be reached after extensive creation cycles within a single day.
+  * **Automatic Reset Window**: Resets automatically at **00:00 PST (08:00 UTC)**.
+  * **Quota Adjustments**: In the GCP Console, navigate to **IAM & Admin &rarr; Quotas & System Limits** for the target project and filter for `discoveryengine.googleapis.com/agent_create_requests` to view limits or request an increase.
+  * **Phased Migration Fault-Tolerance**: If agent creation limits are encountered, other asset migrations (Notebooks, Grounding Sources, Chat Sessions, and User Memories) continue executing unaffected without aborting the pipeline.
 
 ---
 

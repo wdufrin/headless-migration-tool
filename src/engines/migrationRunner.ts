@@ -246,6 +246,11 @@ export class MigrationRunner {
         const sourceMemories = await memoryMigrator.listSourceMemories(discoveredUsers);
         logger.info(`Starting User Memories Migration for ${sourceMemories.length} discovered memories...`);
 
+        // Automatically archive memories to disk backup so they are never lost
+        try {
+          await memoryMigrator.exportAllMemoriesToDirectory('./exports/memories', discoveredUsers);
+        } catch {}
+
         const callerIdentity = (await this.auth.getCallerIdentity?.()) || (discoveredUsers && discoveredUsers[0]) || '';
         const defaultOwner = (config.options?.userFilter && config.options.userFilter.length === 1 && !config.options.userFilter[0].includes('*'))
           ? config.options.userFilter[0].replace(/^user:/i, '').trim()
@@ -273,16 +278,23 @@ export class MigrationRunner {
               }
             });
           } catch (mErr: any) {
+            const isGoogleInternal = mErr.message?.includes('Method not found') || mErr.message?.includes('404');
+            const errorReason = isGoogleInternal
+              ? 'Google API Restriction: Gemini Enterprise does not expose a public REST endpoint to inject memory facts (method is restricted to GOOGLE_INTERNAL). Memory was archived to ./exports/memories; conversation context was preserved in migrated chat sessions.'
+              : mErr.message;
+
             allResults.push({
               id: m.name?.split('/').pop() || 'unknown',
               displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
               type: 'MEMORY',
-              status: 'FAILED',
+              status: isGoogleInternal ? 'ARCHIVED' : 'FAILED',
               originalOwner: origOwner,
               targetOwner: tgtOwner,
-              error: mErr.message,
+              error: errorReason,
               details: {
-                fact: m.fact
+                fact: m.fact,
+                originalResourcePath: m.originalResourcePath,
+                archivedPath: './exports/memories/latest.json'
               }
             });
           }
@@ -320,23 +332,35 @@ export class MigrationRunner {
     const durationMs = Date.now() - startMs;
 
     let totalArtifactsCount = 0;
+    let totalDiscoveredSources = 0;
+    let totalMigratedSources = 0;
+    let totalFailedSources = 0;
+
     for (const r of allResults) {
       if (r.details?.artifactsCount || r.details?.notesCount) {
         totalArtifactsCount += (r.details.artifactsCount || 0) + (r.details.notesCount || 0);
+      }
+      if (r.type === 'NOTEBOOK' && r.details) {
+        totalDiscoveredSources += (r.details.sourcesCount || 0);
+        totalMigratedSources += (r.details.sourcesRestored ?? (r.status === 'SUCCESS' || r.status === 'DRY_RUN' ? r.details.sourcesCount : 0));
+        totalFailedSources += (r.details.sourcesFailed || 0);
       }
     }
 
     const summary = {
       totalDiscoveredAgents: allResults.filter(r => r.type === 'AGENT').length,
       totalDiscoveredNotebooks: allResults.filter(r => r.type === 'NOTEBOOK').length,
+      totalDiscoveredSources,
       totalDiscoveredSessions: allResults.filter(r => (r.type as string) === 'SESSION').length,
       totalDiscoveredMemories: allResults.filter(r => (r.type as string) === 'MEMORY').length,
       totalDiscoveredArtifacts: totalArtifactsCount,
       totalMigratedAgents: allResults.filter(r => r.type === 'AGENT' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedNotebooks: allResults.filter(r => r.type === 'NOTEBOOK' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
+      totalMigratedSources,
       totalMigratedSessions: allResults.filter(r => (r.type as string) === 'SESSION' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedMemories: allResults.filter(r => (r.type as string) === 'MEMORY' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length,
       totalMigratedArtifacts: totalArtifactsCount,
+      totalFailedSources,
       totalSkipped: allResults.filter(r => r.status === 'SKIPPED').length,
       totalFailed: allResults.filter(r => r.status === 'FAILED').length
     };

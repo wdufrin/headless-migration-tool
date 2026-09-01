@@ -60,18 +60,91 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
     logger.info(`Starting maintenance cleanup for project ${targetProject} (Engine: ${targetEngine}, Region: ${targetLocation}) [Notebooks: ${cleanNotebooks}, Agents: ${cleanAgents}, Sessions: ${cleanSessions}, Memories: ${cleanMemories}, Artifacts: ${cleanArtifacts}, Reports: ${cleanReports}]...`);
 
     // Determine candidate user identities to clean in target
-    const targetUsersToClean = Array.from(new Set<string>([
-      process.env.ADMIN_EMAIL,
-      process.env.DEFAULT_USER_EMAIL,
-      ...(req.body?.userFilter || []),
-      ...(Object.values(req.body?.identityMapping || {}))
-    ].filter(Boolean).map(u => String(u || '').replace(/^user:/i, '').trim()).filter(Boolean)));
+    const rawUsers: string[] = [];
+    if (Array.isArray(req.body?.userFilter)) rawUsers.push(...req.body.userFilter);
+    else if (typeof req.body?.userFilter === 'string') rawUsers.push(...req.body.userFilter.split(','));
+
+    if (Array.isArray(req.body?.users)) rawUsers.push(...req.body.users);
+    else if (typeof req.body?.users === 'string') rawUsers.push(...req.body.users.split(','));
+
+    if (Array.isArray(req.body?.targetUsers)) rawUsers.push(...req.body.targetUsers);
+    else if (typeof req.body?.targetUsers === 'string') rawUsers.push(...req.body.targetUsers.split(','));
+
+    if (req.body?.identityMapping && typeof req.body.identityMapping === 'object') {
+      rawUsers.push(...Object.values(req.body.identityMapping) as string[]);
+      rawUsers.push(...Object.keys(req.body.identityMapping) as string[]);
+    }
+
+    if (process.env.ADMIN_EMAIL) rawUsers.push(process.env.ADMIN_EMAIL);
+    if (process.env.DEFAULT_USER_EMAIL) rawUsers.push(process.env.DEFAULT_USER_EMAIL);
+
+    // Auto-discover user identities from existing reports, handover bundles, and config before wiping
+    try {
+      const handoverDir = path.resolve(process.cwd(), 'user_handover_reports');
+      if (fs.existsSync(handoverDir)) {
+        const dirs = fs.readdirSync(handoverDir);
+        for (const d of dirs) {
+          if (d.includes('@') && !d.includes('..')) rawUsers.push(d);
+        }
+      }
+      const reportsDir = path.resolve(process.cwd(), 'reports');
+      if (fs.existsSync(reportsDir)) {
+        const rFiles = fs.readdirSync(reportsDir).filter(f => f.endsWith('.json'));
+        for (const rf of rFiles) {
+          try {
+            const reportData = JSON.parse(fs.readFileSync(path.join(reportsDir, rf), 'utf-8'));
+            if (Array.isArray(reportData.users)) {
+              for (const u of reportData.users) {
+                if (typeof u === 'string') rawUsers.push(u);
+                else if (u?.email) rawUsers.push(u.email);
+              }
+            }
+            if (Array.isArray(reportData.notebooks)) {
+              for (const n of reportData.notebooks) {
+                if (n?.owner) rawUsers.push(n.owner);
+                if (n?.targetOwner) rawUsers.push(n.targetOwner);
+              }
+            }
+          } catch {}
+        }
+      }
+      const configPath = path.resolve(process.cwd(), 'migration-config.json');
+      if (fs.existsSync(configPath)) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+          if (cfg.options?.userFilter && Array.isArray(cfg.options.userFilter)) {
+            rawUsers.push(...cfg.options.userFilter);
+          }
+          if (cfg.identityMapping && typeof cfg.identityMapping === 'object') {
+            rawUsers.push(...Object.values(cfg.identityMapping) as string[]);
+            rawUsers.push(...Object.keys(cfg.identityMapping) as string[]);
+          }
+        } catch {}
+      }
+    } catch {}
+
+    const callerEmail = await authService.getCallerIdentity().catch(() => undefined);
+    if (callerEmail) rawUsers.push(callerEmail);
+
+    const targetUsersToClean = Array.from(new Set<string>(
+      rawUsers
+        .filter(Boolean)
+        .map(u => String(u || '').replace(/^user:/i, '').trim())
+        .filter(u => u.includes('@') && !u.endsWith('.gserviceaccount.com') && !u.startsWith('service-'))
+    ));
+
+    logger.info(`Resolved ${targetUsersToClean.length} target user(s) for user-scoped maintenance: [${targetUsersToClean.join(', ')}]`);
+
+    if (cleanNotebooks && targetUsersToClean.length === 0) {
+      logger.warn('Notebook cleanup was requested, but no target users were found or supplied. Gemini Enterprise notebooks are user-scoped and require user impersonation (DWD) to discover and delete.');
+    }
 
     // 1. Delete all notebooks in target (draining all paginated recently viewed items per user)
     let deletedNotebooks = 0;
     if (cleanNotebooks) {
       try {
-        for (const user of [undefined, ...targetUsersToClean]) {
+        const usersToIterate = Array.from(new Set([undefined, ...targetUsersToClean]));
+        for (const user of usersToIterate) {
           try {
             let userPasses = 0;
             while (userPasses < 15) {
@@ -89,6 +162,7 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
 
               await client.batchDeleteNotebooks(targetProject, targetLocation, names, user);
               deletedNotebooks += names.length;
+              logger.info(`Deleted batch of ${names.length} notebook(s) for user "${user || 'default'}" in project "${targetProject}"`);
             }
           } catch (uErr: any) {
             logger.debug(`User notebook cleanup notice for ${user || 'default'}: ${uErr.message}`);
@@ -249,6 +323,10 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
 
     logger.info(`Target cleanup completed: ${deletedNotebooks} notebooks, ${deletedAgents} agents, ${deletedSessions} chat sessions, ${deletedMemories} memories, ${clearedReports} reports, artifacts reset.`);
 
+    const warning = (cleanNotebooks && deletedNotebooks === 0 && targetUsersToClean.length === 0)
+      ? 'No user identities were specified or found. Notebooks in Gemini Enterprise are user-scoped and require user email impersonation to list and delete.'
+      : undefined;
+
     return res.status(200).json({
       success: true,
       deletedNotebooks,
@@ -258,6 +336,8 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
       clearedArtifacts,
       clearedReports,
       clearedUserHandover,
+      targetUsersCleaned: targetUsersToClean,
+      warning,
       message: `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents, ${deletedSessions} chat sessions, ${deletedMemories} user memories, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
     });
   } catch (err: any) {

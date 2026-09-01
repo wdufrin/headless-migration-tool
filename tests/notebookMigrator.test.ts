@@ -81,5 +81,30 @@ describe('NotebookMigrator Engine', () => {
       expect(mapped.webContent).toBeDefined();
       expect(mapped.webContent.url).toBe('https://developer.fedex.com');
     });
+
+    it('should extract text from tailwindDoc for uploaded PDF/document sources', () => {
+      const pdfSource: NotebookSource = {
+        title: 'Yumi_and_the_Nightmare_Painter.pdf',
+        tailwindDoc: {
+          body: {
+            content: [
+              {
+                paragraph: {
+                  elements: [
+                    { textRun: { content: 'Chapter 1: The Nightmare Painter.\n' } },
+                    { textRun: { content: 'Nikaro walked down the neon-lit street.' } }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      };
+
+      const mapped = migrator.mapSourceToPayload(pdfSource);
+      expect(mapped.textContent).toBeDefined();
+      expect(mapped.textContent.sourceName).toBe('Yumi_and_the_Nightmare_Painter.pdf');
+      expect(mapped.textContent.content).toBe('Chapter 1: The Nightmare Painter.\nNikaro walked down the neon-lit street.');
+    });
   });
 });

@@ -1,0 +1,18 @@
+#
+# Example Terraform variables mirroring testgebackupandrestorev2
+# Copy this file to terraform.tfvars and customize project_id
+#
+
+project_id          = "my-ge-test-target-01"
+org_id              = "942977750288"
+billing_account_id  = "0124EE-048763-814962"
+location            = "global"
+collection_id       = "default_collection"
+engine_id           = "testnotebooks"
+engine_display_name = "testnotebooks"
+
+dwd_sa_email        = "gemini-dwd-migrator@ancient-sandbox-322523.iam.gserviceaccount.com"
+admin_user_email    = "admin@wdufrin.altostrat.com"
+editor_user_email   = "bryankelly@wdufrin.altostrat.com"
+workforce_pool_id   = "wdufrin-entra"
+entra_user_email    = "wdufrin@wdufrin.onmicrosoft.com"

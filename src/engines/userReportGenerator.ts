@@ -221,9 +221,23 @@ export class UserReportGenerator {
     const nbList = data.notebooks.length > 0
       ? data.notebooks.map(nb => {
           const directNbUrl = this.buildAppUrl(data.targetCid, data.targetLocation, data.idpProvider, `notebook/${nb.targetId || nb.id}`);
+          const restoredCount = nb.details?.sourcesRestored ?? nb.details?.sourcesCount ?? 0;
+          const failedCount = nb.details?.sourcesFailed ?? 0;
+          const sources = Array.isArray(nb.details?.sources) ? nb.details.sources : [];
+
+          let sourceBulletList = '';
+          if (sources.length > 0) {
+            sourceBulletList = '\n- **Restored Sources:**\n' + sources.map((s: any) => {
+              const icon = s.status === 'SUCCESS' || s.status === 'DRY_RUN' ? '  - ✅' : '  - ❌';
+              const errStr = s.error ? ` *(Failed: ${s.error})*` : '';
+              return `${icon} ${s.title} \`${s.type}\`${errStr}`;
+            }).join('\n');
+          }
+
           return `### 📓 [${nb.displayName}](${directNbUrl})
+- **Sources Status:** ${restoredCount} restored${failedCount > 0 ? `, ⚠️ **${failedCount} failed**` : ''}
 - [ ] **Step 1:** Open notebook to verify restored sources and study materials.
-- [ ] **Step 2:** (Optional) Click **"Share"** inside the notebook if you'd like to invite colleagues.
+- [ ] **Step 2:** (Optional) Click **"Share"** inside the notebook if you'd like to invite colleagues.${sourceBulletList}
 `;
         }).join('\n')
       : '_No research notebooks found for your account._';
@@ -347,11 +361,43 @@ ${data.memories.map(m => `- *"${m.details?.fact || m.displayName}"*`).join('\n')
     const nbCards = data.notebooks.length > 0
       ? data.notebooks.map(nb => {
           const directNbUrl = this.buildAppUrl(data.targetCid, data.targetLocation, data.idpProvider, `notebook/${nb.targetId || nb.id}`);
+          const restoredCount = nb.details?.sourcesRestored ?? nb.details?.sourcesCount ?? 0;
+          const failedCount = nb.details?.sourcesFailed ?? 0;
+          const sources = Array.isArray(nb.details?.sources) ? nb.details.sources : [];
+
+          const successBadge = `<span style="background-color: #064e3b; color: #a7f3d0; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;">📄 ${restoredCount} Sources Ready</span>`;
+          const failedBadge = failedCount > 0 
+            ? `<span style="background-color: #7f1d1d; color: #fca5a5; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; margin-left: 6px;">⚠️ ${failedCount} Failed</span>` 
+            : '';
+
+          let sourcesDetailsHtml = '';
+          if (sources.length > 0) {
+            const items = sources.map((s: any) => {
+              const isOk = s.status === 'SUCCESS' || s.status === 'DRY_RUN';
+              const icon = isOk ? '✅' : '❌';
+              const err = s.error ? `<span style="color: #fca5a5;"> - ${s.error}</span>` : '';
+              return `<li style="margin-bottom: 4px; color: ${isOk ? '#cbd5e1' : '#fca5a5'};">${icon} <strong>${s.title}</strong> <span style="font-size: 11px; color: #94a3b8;">(${s.type})</span>${err}</li>`;
+            }).join('');
+            sourcesDetailsHtml = `
+              <details style="margin-top: 10px; background-color: #0f172a; padding: 8px 12px; border-radius: 8px; border: 1px solid #1e293b; font-size: 12px;">
+                <summary style="cursor: pointer; color: #93c5fd; font-weight: 600; user-select: none;">
+                  View Restored Source Documents (${sources.length})
+                </summary>
+                <ul style="margin: 8px 0 0 0; padding-left: 18px; list-style-type: none;">
+                  ${items}
+                </ul>
+              </details>
+            `;
+          }
 
           return `
             <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;">
-              <div style="margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <a href="${directNbUrl}" target="_blank" style="color: #34d399; font-weight: 700; font-size: 14px; text-decoration: none;">📓 ${nb.displayName} &rarr;</a>
+                <div>
+                  ${successBadge}
+                  ${failedBadge}
+                </div>
               </div>
 
               <div style="margin-top: 4px;">
@@ -369,6 +415,7 @@ ${data.memories.map(m => `- *"${m.details?.fact || m.displayName}"*`).join('\n')
                   </span>
                 </label>
               </div>
+              ${sourcesDetailsHtml}
             </div>
           `;
         }).join('')

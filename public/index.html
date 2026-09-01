@@ -2056,6 +2056,18 @@
               </label>
             </div>
 
+            <!-- Target User Scope -->
+            <div class="p-3 bg-gray-900/60 border border-gray-800 rounded-xl space-y-1.5">
+              <label class="block text-xs font-semibold text-gray-200 flex items-center justify-between">
+                <span class="flex items-center gap-1.5">
+                  <span>👤</span> Target User Scope (for Notebooks, Chats & Memories)
+                </span>
+                <span class="text-[10px] text-gray-400 font-mono">Optional / Auto-detected</span>
+              </label>
+              <input type="text" id="maintTargetUsers" placeholder="e.g. admin@wdufrin.altostrat.com (comma-separated, or leave blank to auto-use wizard users)" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-gray-500 focus:outline-none focus:border-red-500">
+              <p class="text-[11px] text-gray-400">NotebookLM notebooks, chat sessions, and memories are strictly user-scoped in Discovery Engine and require user impersonation (DWD) to discover and delete. If left blank, users from the migration wizard and active project will be targeted automatically.</p>
+            </div>
+
             <div class="flex items-center gap-3 pt-2">
               <button onclick="clearTargetDestination()" id="btnClearTarget" class="px-5 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-red-600/30 transition flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2148,6 +2160,19 @@
         updateDwdScript();
         updateWifScript();
         generateAndSaveWifConfig(false);
+      } else if (tabId === 'maintenance') {
+        const env = getActiveEnvParams();
+        const projectEl = document.getElementById('maintTargetProject');
+        if (projectEl) projectEl.textContent = env.tgtProjectId || 'None (Configure Target Project)';
+        const inputUsers = document.getElementById('maintTargetUsers');
+        if (inputUsers && !inputUsers.value.trim()) {
+          const selected = typeof getSelectedUsersForMigration === 'function' ? getSelectedUsersForMigration() : [];
+          const all = (targetedUsersList || []).map(u => u.email).filter(Boolean);
+          const candidateUsers = selected.length > 0 ? selected : all;
+          if (candidateUsers.length > 0) {
+            inputUsers.value = candidateUsers.join(', ');
+          }
+        }
       }
     }
 
@@ -4305,6 +4330,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         let statusBadge = '';
         if (isSuccess) {
           statusBadge = '<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">SUCCESS</span>';
+        } else if (item.status === 'ARCHIVED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium" title="Archived to disk backup; context preserved in chat history">📦 ARCHIVED</span>';
         } else if (isSkipped) {
           statusBadge = '<span class="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">⏭️ DROPPED (SKIPPED)</span>';
         } else {
@@ -4338,9 +4365,17 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           }
         }
 
+        let notebookSourceSubtitle = '';
+        if (item.type === 'NOTEBOOK' && item.details?.sourcesRestored !== undefined) {
+          const restored = item.details.sourcesRestored;
+          const total = item.details.sourcesCount || restored;
+          const failed = item.details.sourcesFailed || 0;
+          notebookSourceSubtitle = `<div class="text-[11px] text-gray-400 mt-0.5">${restored}/${total} sources restored${failed > 0 ? ` <span class="text-rose-400 font-semibold">(${failed} failed)</span>` : ''}</div>`;
+        }
+
         tr.innerHTML = `
           <td class="py-3 px-4">${typeBadge}</td>
-          <td class="py-3 px-4 text-white font-medium">${escapeHtml(item.displayName || 'Untitled')}</td>
+          <td class="py-3 px-4 text-white font-medium">${escapeHtml(item.displayName || 'Untitled')}${notebookSourceSubtitle}</td>
           <td class="py-3 px-4">${statusBadge}</td>
           <td class="py-3 px-4 font-mono text-[11px] text-gray-300">${escapeHtml(item.originalOwner || 'unknown')}</td>
           <td class="py-3 px-4 font-mono text-[11px]">${targetIdHtml}</td>
@@ -4379,6 +4414,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       lines.push(`| :--- | :--- | :--- |`);
       lines.push(`| **🤖 Custom Agents** | ${report.summary?.totalDiscoveredAgents || 0} | ${report.summary?.totalMigratedAgents || 0} |`);
       lines.push(`| **📓 Gemini Notebooks** | ${report.summary?.totalDiscoveredNotebooks || 0} | ${report.summary?.totalMigratedNotebooks || 0} |`);
+      lines.push(`| **📄 Notebook Sources** | ${report.summary?.totalDiscoveredSources || 0} | ${report.summary?.totalMigratedSources || 0}${report.summary?.totalFailedSources > 0 ? ` (${report.summary.totalFailedSources} failed)` : ''} |`);
       lines.push(`| **💬 Chat History Sessions** | ${report.summary?.totalDiscoveredSessions || 0} | ${report.summary?.totalMigratedSessions || 0} |`);
       lines.push(`| **🧠 User Memories & Facts** | ${report.summary?.totalDiscoveredMemories || 0} | ${report.summary?.totalMigratedMemories || 0} |`);
       lines.push(`| **🎨 Studio Artifacts** | ${report.summary?.totalDiscoveredArtifacts || 0} | ${report.summary?.totalMigratedArtifacts || 0} |`);
@@ -4572,9 +4608,43 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       `;
 
       try {
+        const manualMaintUsers = (document.getElementById('maintTargetUsers')?.value || '')
+          .split(',')
+          .map(u => u.trim())
+          .filter(Boolean);
+
+        const selectedUsers = typeof getSelectedUsersForMigration === 'function' ? getSelectedUsersForMigration() : [];
+        const allWizardUsers = (targetedUsersList || []).map(u => u.email).filter(Boolean);
+        const userList = manualMaintUsers.length > 0 
+          ? manualMaintUsers 
+          : (selectedUsers.length > 0 ? selectedUsers : allWizardUsers);
+
+        const effectiveIdentityMapping = { ...(typeof explicitIdpOverrides !== 'undefined' ? explicitIdpOverrides : {}) };
+        const domainRules = typeof getActiveDomainRules === 'function' ? getActiveDomainRules() : [];
+        const usersToMap = (targetedUsersList || []);
+
+        usersToMap.forEach(u => {
+          if (u.email && !effectiveIdentityMapping[u.email]) {
+            let mappedTarget = u.email;
+            if (domainRules && domainRules.length > 0) {
+              for (const rule of domainRules) {
+                if (u.email.endsWith(rule.fromDomain)) {
+                  mappedTarget = u.email.replace(new RegExp(rule.fromDomain + '$'), rule.toDomain);
+                  break;
+                }
+              }
+            }
+            effectiveIdentityMapping[u.email] = mappedTarget;
+          }
+        });
+
         const payload = {
           ...env.payload,
           confirmProjectId: typedConfirmation.trim(),
+          userFilter: userList,
+          users: userList,
+          targetUsers: userList,
+          identityMapping: effectiveIdentityMapping,
           cleanSessions,
           cleanAgents,
           cleanNotebooks,
@@ -4592,12 +4662,27 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         if (data.error) throw new Error(data.message);
 
         const summaryParts = [];
-        if (cleanNotebooks) summaryParts.push(`• Deleted ${data.deletedNotebooks || 0} Notebooks`);
+        if (cleanNotebooks) {
+          if (data.deletedNotebooks > 0) {
+            summaryParts.push(`• Deleted ${data.deletedNotebooks} Notebooks`);
+          } else if (data.warning) {
+            summaryParts.push(`• Notebooks: 0 deleted (${data.warning})`);
+          } else {
+            summaryParts.push(`• Deleted 0 Notebooks`);
+          }
+        }
         if (cleanAgents) summaryParts.push(`• Deleted ${data.deletedAgents || 0} Custom Agents`);
         if (cleanSessions) summaryParts.push(`• Deleted ${data.deletedSessions || 0} Chat Sessions`);
         if (cleanMemories) summaryParts.push(`• Deleted ${data.deletedMemories || 0} User Memories`);
         if (cleanReports) summaryParts.push(`• Deleted ${data.clearedReports || 0} Migration Reports`);
         if (cleanArtifacts) summaryParts.push(`• Cleared Local Artifact Archive`);
+
+        if (data.targetUsersCleaned && data.targetUsersCleaned.length > 0) {
+          summaryParts.push(`\nUser scope cleaned: ${data.targetUsersCleaned.join(', ')}`);
+        }
+        if (data.warning) {
+          summaryParts.push(`\n⚠️ Notice: ${data.warning}`);
+        }
 
         alert(`🎉 Target Cleanup Completed Successfully!\n\n${summaryParts.join('\n')}`);
 

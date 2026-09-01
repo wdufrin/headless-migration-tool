@@ -15,7 +15,7 @@
  */
 
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
-import { EnvironmentConfig, MigrationOptions, MigrationItemResult } from '../types/migration.js';
+import { EnvironmentConfig, MigrationOptions, MigrationItemResult, MigratedSourceItem } from '../types/migration.js';
 import { Notebook, NotebookSource, NotebookNote } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
@@ -347,6 +347,23 @@ export class NotebookMigrator {
         logger.info(`Fetching detailed sources & Studio artifacts for Notebook "${result.displayName}" (${notebookId})...`);
         fullNotebook = await this.client.getNotebook(notebookId, sourceEnv, userImpersonation);
 
+        // Fetch detailed source data (tailwindDoc, document text) for each source
+        if (fullNotebook.sources && fullNotebook.sources.length > 0) {
+          fullNotebook.sources = await Promise.all(
+            fullNotebook.sources.map(async (s) => {
+              const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
+              if (!sourceId) return s;
+              try {
+                const fullSource = await this.client.getNotebookSource(notebookId, sourceId, sourceEnv, userImpersonation);
+                return { ...s, ...fullSource };
+              } catch (err: any) {
+                logger.debug(`Could not fetch detailed source ${sourceId}: ${err.message}`);
+                return s;
+              }
+            })
+          );
+        }
+
         // Fetch notes if available
         try {
           notes = await this.client.listNotes(notebookId, sourceEnv, userImpersonation);
@@ -367,8 +384,23 @@ export class NotebookMigrator {
         logger.debug(`Could not fetch detailed notebook object for ${notebookId}: ${fetchErr.message}`);
       }
 
+      const rawSources = fullNotebook.sources || [];
+      const dryRunSources: MigratedSourceItem[] = rawSources.map(s => {
+        const sTitle = s.displayName || s.title || 'Source';
+        const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
+        return {
+          title: sTitle,
+          sourceId: s.name?.split('/').pop() || s.sourceId?.id,
+          type: sType,
+          status: 'DRY_RUN'
+        };
+      });
+
       result.details = {
-        sourcesCount: (fullNotebook.sources || []).length,
+        sourcesCount: rawSources.length,
+        sourcesRestored: rawSources.length,
+        sourcesFailed: 0,
+        sources: dryRunSources,
         notesCount: notes.length,
         artifactsCount: artifacts.length,
         artifacts: artifacts.map(a => ({
@@ -404,13 +436,68 @@ export class NotebookMigrator {
 
         const sourceIdMap: Record<string, string> = {};
         const fallbackSources: any[] = [];
+        const sourceDetails: MigratedSourceItem[] = [];
+        let sourcesRestored = 0;
+        let sourcesFailed = 0;
 
         // 2. Batch inject sources
-        const rawSources = fullNotebook.sources || [];
         if (rawSources.length > 0) {
           const mappedSources = rawSources.map(s => this.mapSourceToPayload(s));
-          const createdBatch = await this.client.batchCreateNotebookSources(newNotebookId, mappedSources, targetEnv, userOwner);
-          const createdSources = createdBatch?.sources || [];
+          const createdSources: any[] = [];
+          const BATCH_SIZE = 5;
+          for (let i = 0; i < mappedSources.length; i += BATCH_SIZE) {
+            const chunk = mappedSources.slice(i, i + BATCH_SIZE);
+            const rawChunk = rawSources.slice(i, i + BATCH_SIZE);
+
+            try {
+              const createdBatch = await this.client.batchCreateNotebookSources(newNotebookId, chunk, targetEnv, userOwner);
+              if (createdBatch?.sources) {
+                createdSources.push(...createdBatch.sources);
+              }
+              for (const s of rawChunk) {
+                const sTitle = s.displayName || s.title || 'Source';
+                const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
+                sourceDetails.push({
+                  title: sTitle,
+                  sourceId: s.name?.split('/').pop() || s.sourceId?.id,
+                  type: sType,
+                  status: 'SUCCESS'
+                });
+                sourcesRestored++;
+              }
+            } catch (chunkErr: any) {
+              logger.warn(`Batch source creation failed for Notebook ${newNotebookId} (${chunkErr.message}). Retrying individual sources in chunk...`);
+              for (let j = 0; j < chunk.length; j++) {
+                const singleSource = chunk[j];
+                const rawSingle = rawChunk[j];
+                const sTitle = rawSingle.displayName || rawSingle.title || 'Source';
+                const sType = rawSingle.metadata?.originalSourceContentType || (rawSingle.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : rawSingle.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
+                try {
+                  const singleBatch = await this.client.batchCreateNotebookSources(newNotebookId, [singleSource], targetEnv, userOwner);
+                  if (singleBatch?.sources) {
+                    createdSources.push(...singleBatch.sources);
+                  }
+                  sourceDetails.push({
+                    title: sTitle,
+                    sourceId: rawSingle.name?.split('/').pop() || rawSingle.sourceId?.id,
+                    type: sType,
+                    status: 'SUCCESS'
+                  });
+                  sourcesRestored++;
+                } catch (singleErr: any) {
+                  logger.error(`Failed to migrate Source "${sTitle}" in Notebook ${newNotebookId}: ${singleErr.message}`);
+                  sourceDetails.push({
+                    title: sTitle,
+                    sourceId: rawSingle.name?.split('/').pop() || rawSingle.sourceId?.id,
+                    type: sType,
+                    status: 'FAILED',
+                    error: singleErr.message
+                  });
+                  sourcesFailed++;
+                }
+              }
+            }
+          }
 
           for (let i = 0; i < rawSources.length; i++) {
             const oldSourceId = rawSources[i].name?.split('/').pop() || rawSources[i].sourceId?.id;
@@ -419,7 +506,7 @@ export class NotebookMigrator {
               sourceIdMap[oldSourceId] = newSourceId;
             }
           }
-          logger.info(`Restored ${mappedSources.length} sources to Notebook ${newNotebookId}`);
+          logger.info(`Restored ${sourcesRestored} sources (${sourcesFailed} failed) to Notebook ${newNotebookId}`);
         }
 
         // 3. Recreate notes if available
@@ -493,13 +580,33 @@ export class NotebookMigrator {
           try {
             await this.client.batchCreateNotebookSources(newNotebookId, fallbackSources, targetEnv, userOwner);
             logger.info(`Successfully preserved ${fallbackSources.length} Studio artifact/note documents as sources in Notebook ${newNotebookId}`);
+            for (const fb of fallbackSources) {
+              sourceDetails.push({
+                title: fb.textContent?.sourceName || 'Preserved Studio Artifact',
+                type: 'STUDIO_ARTIFACT',
+                status: 'SUCCESS'
+              });
+              sourcesRestored++;
+            }
           } catch (fbErr: any) {
             logger.warn(`Failed to inject fallback artifact sources: ${fbErr.message}`);
+            for (const fb of fallbackSources) {
+              sourceDetails.push({
+                title: fb.textContent?.sourceName || 'Preserved Studio Artifact',
+                type: 'STUDIO_ARTIFACT',
+                status: 'FAILED',
+                error: fbErr.message
+              });
+              sourcesFailed++;
+            }
           }
         }
 
         result.details = {
           sourcesCount: rawSources.length,
+          sourcesRestored,
+          sourcesFailed,
+          sources: sourceDetails,
           notesCount: notes ? notes.length : 0,
           artifactsCount: artifacts ? artifacts.length : 0,
           artifacts: (artifacts || []).map((a: any) => ({
@@ -512,6 +619,10 @@ export class NotebookMigrator {
             content: n.content || this.extractTextFromTailwindDoc(n)
           }))
         };
+
+        if (sourcesFailed > 0) {
+          result.error = `${sourcesFailed} source(s) failed to restore in target`;
+        }
 
       } catch (err: any) {
         if (err.message.includes('DWD Impersonation Failed') || err.message.includes('User does not exist') || err.message.includes('client_is_not_authorized') || err.message.includes('unauthorized_client')) {

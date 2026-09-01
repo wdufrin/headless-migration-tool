@@ -78,7 +78,7 @@ wizardRouter.post('/wizard/test-dwd', async (req, res) => {
     }
 
     try {
-      const token = await authService.getAccessToken(testUserEmail, [
+      const token = await authService.mintDwdToken(testUserEmail, [
         'https://www.googleapis.com/auth/discoveryengine.readwrite',
         'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
       ]);

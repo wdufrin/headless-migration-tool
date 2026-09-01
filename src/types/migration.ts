@@ -60,13 +60,21 @@ export interface MigrationItemResult {
   id: string;
   displayName: string;
   type: 'AGENT' | 'NOTEBOOK' | 'SESSION' | 'MEMORY' | 'ARTIFACT';
-  status: 'SUCCESS' | 'SKIPPED' | 'FAILED' | 'DRY_RUN';
+  status: 'SUCCESS' | 'SKIPPED' | 'FAILED' | 'DRY_RUN' | 'ARCHIVED';
   originalOwner?: string;
   targetOwner?: string;
   targetId?: string;
   error?: string;
   details?: Record<string, any>;
   durationMs?: number;
+}
+
+export interface MigratedSourceItem {
+  title: string;
+  sourceId?: string;
+  type: string;
+  status: 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'DRY_RUN';
+  error?: string;
 }
 
 export interface MigrationReport {
@@ -80,14 +88,17 @@ export interface MigrationReport {
   summary: {
     totalDiscoveredAgents: number;
     totalDiscoveredNotebooks: number;
+    totalDiscoveredSources?: number;
     totalDiscoveredSessions?: number;
     totalDiscoveredMemories?: number;
     totalDiscoveredArtifacts?: number;
     totalMigratedAgents: number;
     totalMigratedNotebooks: number;
+    totalMigratedSources?: number;
     totalMigratedSessions?: number;
     totalMigratedMemories?: number;
     totalMigratedArtifacts?: number;
+    totalFailedSources?: number;
     totalSkipped: number;
     totalFailed: number;
   };

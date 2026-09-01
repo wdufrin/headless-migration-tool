@@ -42,10 +42,13 @@ export class MigrationReporter {
     lines.push(`| :--- | :--- |`);
     lines.push(`| **Discovered Agents** | ${report.summary.totalDiscoveredAgents} |`);
     lines.push(`| **Discovered Notebooks** | ${report.summary.totalDiscoveredNotebooks} |`);
+    lines.push(`| **Discovered Notebook Sources** | ${report.summary.totalDiscoveredSources ?? 0} |`);
     lines.push(`| **Discovered Chat Sessions** | ${report.summary.totalDiscoveredSessions ?? 0} |`);
     lines.push(`| **Discovered User Memories** | ${report.summary.totalDiscoveredMemories ?? 0} |`);
     lines.push(`| **Successfully Migrated Agents** | ${report.summary.totalMigratedAgents} |`);
     lines.push(`| **Successfully Migrated Notebooks** | ${report.summary.totalMigratedNotebooks} |`);
+    lines.push(`| **Successfully Migrated Sources** | ${report.summary.totalMigratedSources ?? 0} |`);
+    lines.push(`| **Failed Notebook Sources** | ${report.summary.totalFailedSources ?? 0} |`);
     lines.push(`| **Successfully Migrated Chat Sessions** | ${report.summary.totalMigratedSessions ?? 0} |`);
     lines.push(`| **Successfully Migrated User Memories** | ${report.summary.totalMigratedMemories ?? 0} |`);
     lines.push(`| **Exported Studio Artifacts** | ${report.summary.totalMigratedArtifacts ?? report.summary.totalDiscoveredArtifacts ?? 0} |`);
@@ -56,6 +59,8 @@ export class MigrationReporter {
     const userGroups = new Map<string, {
       agents: number;
       notebooks: number;
+      sourcesRestored: number;
+      sourcesFailed: number;
       memories: number;
       sessions: number;
       artifacts: number;
@@ -72,6 +77,8 @@ export class MigrationReporter {
         userGroups.set(u, {
           agents: 0,
           notebooks: 0,
+          sourcesRestored: 0,
+          sourcesFailed: 0,
           memories: 0,
           sessions: 0,
           artifacts: 0,
@@ -84,7 +91,11 @@ export class MigrationReporter {
       }
       const grp = userGroups.get(u)!;
       if (r.type === 'AGENT') grp.agents++;
-      else if (r.type === 'NOTEBOOK') grp.notebooks++;
+      else if (r.type === 'NOTEBOOK') {
+        grp.notebooks++;
+        grp.sourcesRestored += (r.details?.sourcesRestored ?? r.details?.sourcesCount ?? 0);
+        grp.sourcesFailed += (r.details?.sourcesFailed ?? 0);
+      }
       else if (r.type === 'MEMORY') grp.memories++;
       else if (r.type === 'SESSION') grp.sessions++;
       else if (r.type === 'ARTIFACT') grp.artifacts++;
@@ -103,8 +114,8 @@ export class MigrationReporter {
     if (userGroups.size > 0) {
       lines.push(`---`);
       lines.push(`## 3. User Reconciliation & Migration Status`);
-      lines.push(`| Source User Identity | Target Google Identity | Status | Agents | Notebooks | Memories | Sessions | Artifacts | Dropped/Skipped | Notes / Reason |`);
-      lines.push(`| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |`);
+      lines.push(`| Source User Identity | Target Google Identity | Status | Agents | Notebooks | Sources Restored | Sources Failed | Memories | Sessions | Artifacts | Dropped/Skipped | Notes / Reason |`);
+      lines.push(`| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |`);
 
       for (const [userEmail, stats] of userGroups.entries()) {
         let userStatus = '✅ FULLY MIGRATED';
@@ -121,8 +132,10 @@ export class MigrationReporter {
           ? stats.reasons.join('; ') 
           : stats.migrated > 0 ? 'All assets restored to personal library' : 'No assets found';
 
+        const failedSourcesBadge = stats.sourcesFailed > 0 ? `⚠️ **${stats.sourcesFailed}**` : '0';
+
         lines.push(
-          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | ${stats.agents} | ${stats.notebooks} | ${stats.memories} | ${stats.sessions} | ${stats.artifacts} | **${stats.skipped}** | ${notes} |`
+          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | ${stats.agents} | ${stats.notebooks} | ${stats.sourcesRestored} | ${failedSourcesBadge} | ${stats.memories} | ${stats.sessions} | ${stats.artifacts} | **${stats.skipped}** | ${notes} |`
         );
       }
       lines.push('');
@@ -136,14 +149,60 @@ export class MigrationReporter {
     for (const r of report.results) {
       const statusIcon = r.status === 'SUCCESS' ? '✅' : r.status === 'DRY_RUN' ? '🔍' : r.status === 'SKIPPED' ? '⏭️' : '❌';
       const typeIcon = r.type === 'MEMORY' ? '🧠' : r.type === 'AGENT' ? '🤖' : r.type === 'NOTEBOOK' ? '📓' : r.type === 'SESSION' ? '💬' : '🎨';
+      
+      let noteText = r.error || 'Migrated successfully';
+      if (r.type === 'NOTEBOOK' && r.details) {
+        const restored = r.details.sourcesRestored ?? r.details.sourcesCount ?? 0;
+        const failed = r.details.sourcesFailed ?? 0;
+        noteText = failed > 0 
+          ? `⚠️ ${restored} sources restored (${failed} failed)` 
+          : `✅ ${restored} sources restored${r.error ? `; ${r.error}` : ''}`;
+      }
+
       lines.push(
-        `| ${typeIcon} **${r.type}** | ${r.displayName} | ${statusIcon} ${r.status} | \`${r.originalOwner || 'N/A'}\` | \`${r.targetOwner || r.targetId || 'N/A'}\` | ${r.error || 'Migrated successfully'} |`
+        `| ${typeIcon} **${r.type}** | ${r.displayName} | ${statusIcon} ${r.status} | \`${r.originalOwner || 'N/A'}\` | \`${r.targetOwner || r.targetId || 'N/A'}\` | ${noteText} |`
       );
+    }
+
+    // Section 5: Detailed Notebook Sources Breakdown & Audit
+    const allNotebookSources: Array<{
+      notebookName: string;
+      sourceTitle: string;
+      type: string;
+      status: string;
+      error?: string;
+    }> = [];
+
+    for (const r of report.results) {
+      if (r.type === 'NOTEBOOK' && r.details?.sources && Array.isArray(r.details.sources)) {
+        for (const s of r.details.sources) {
+          allNotebookSources.push({
+            notebookName: r.displayName,
+            sourceTitle: s.title || 'Untitled Source',
+            type: s.type || 'DOCUMENT',
+            status: s.status || 'SUCCESS',
+            error: s.error
+          });
+        }
+      }
+    }
+
+    if (allNotebookSources.length > 0) {
+      lines.push(`\n---`);
+      lines.push(`## 5. Notebook Sources Breakdown & Integrity Audit (${allNotebookSources.length} sources)`);
+      lines.push(`| Notebook | Source Document / Title | Content Type | Status | Audit Details / Error |`);
+      lines.push(`| :--- | :--- | :---: | :---: | :--- |`);
+
+      for (const s of allNotebookSources) {
+        const statusBadge = s.status === 'SUCCESS' ? '✅ SUCCESS' : s.status === 'DRY_RUN' ? '🔍 DRY_RUN' : '❌ FAILED';
+        const detailMsg = s.error ? `**Error:** ${s.error}` : 'Indexed and ready in target notebook';
+        lines.push(`| 📓 ${s.notebookName} | ${s.sourceTitle} | \`${s.type}\` | ${statusBadge} | ${detailMsg} |`);
+      }
     }
 
     if (report.discoveredUsers.length > 0) {
       lines.push(`\n---`);
-      lines.push(`## 5. Discovered User Principals (${report.discoveredUsers.length})`);
+      lines.push(`## 6. Discovered User Principals (${report.discoveredUsers.length})`);
       for (const u of report.discoveredUsers) {
         lines.push(`- \`${u}\``);
       }

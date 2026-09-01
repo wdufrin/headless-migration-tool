@@ -320,6 +320,34 @@ export class GcpAuthService {
   }
 
   /**
+   * Mints a strict Domain-Wide Delegation (DWD) impersonated token for a specific user.
+   * Unlike getAccessToken(), this throws directly if impersonation fails instead of falling back to the service account.
+   */
+  async mintDwdToken(userEmail: string, scopes?: string[]): Promise<string> {
+    if (!this.serviceAccountKey) {
+      throw new Error('No Service Account Key configured for Domain-Wide Delegation.');
+    }
+    const cleanEmail = userEmail.replace(/^user:/i, '').trim();
+    const requestedScopes = scopes && scopes.length > 0 ? scopes : [
+      'https://www.googleapis.com/auth/discoveryengine.readwrite',
+      'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+    ];
+
+    const jwtClient = new JWT({
+      email: this.serviceAccountKey.client_email,
+      key: this.serviceAccountKey.private_key,
+      subject: cleanEmail,
+      scopes: requestedScopes
+    });
+
+    const tokenResponse = await jwtClient.getAccessToken();
+    if (!tokenResponse.token) {
+      throw new Error(`Failed to mint token for ${cleanEmail}: No token returned.`);
+    }
+    return tokenResponse.token;
+  }
+
+  /**
    * Mints a GCP Workforce Identity access token by signing an OIDC JWT and exchanging it with GCP STS.
    */
   public async mintWorkforceToken(userEmail: string, poolName?: string): Promise<string | undefined> {

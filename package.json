@@ -1,6 +1,6 @@
 {
   "name": "gemini-enterprise-admin-migration-tool",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Enterprise admin-driven headless application for migrating Gemini Enterprise notebooks, custom agents, and datastores across GCP environments on behalf of users.",
   "main": "dist/index.js",
   "bin": {
@@ -16,6 +16,8 @@
     "test:watch": "vitest",
     "test:matrix": "tsx scripts/run-e2e-matrix.ts",
     "test:e2e-matrix": "tsx scripts/run-e2e-matrix.ts",
+    "env:spinup": "bash scripts/spin-up-test-env.sh",
+    "env:teardown": "bash scripts/teardown-test-env.sh",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
