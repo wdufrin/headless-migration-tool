@@ -20,6 +20,73 @@ import { Agent, IamPolicy } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
+/**
+ * Evaluates if an agent matches the specified user filter by inspecting IAM policy bindings or creator metadata.
+ */
+export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boolean {
+  if (userFilter.length === 0 || userFilter.includes('*') || userFilter.includes('*@*')) {
+    return true;
+  }
+
+  const lowerFilters = userFilter.map(u => u.toLowerCase().trim().replace(/^user:/i, ''));
+
+  // 1. Resolve Primary Owner (prioritize agentOwner IAM binding, then agent.owner)
+  let primaryOwner = agent.owner;
+  if (agent.iamPolicy?.bindings) {
+    const ownerBinding = agent.iamPolicy.bindings.find(b => b.role === 'roles/discoveryengine.agentOwner');
+    if (ownerBinding && ownerBinding.members && ownerBinding.members.length > 0) {
+      primaryOwner = ownerBinding.members[0];
+    }
+  }
+
+  if (primaryOwner) {
+    const cleanOwner = primaryOwner
+      .replace(/^.*\/subject\//i, '')
+      .replace(/^.*_subject_/i, '')
+      .replace(/^principal(set)?:\/\/.*?\//i, '')
+      .replace(/^user:/i, '')
+      .replace(/^serviceAccount:/i, '')
+      .toLowerCase().trim();
+
+    return lowerFilters.some(filter => {
+      if (filter.startsWith('*@')) {
+        const domain = filter.substring(2);
+        return cleanOwner.endsWith(`@${domain}`);
+      }
+      return cleanOwner === filter;
+    });
+  }
+
+  // 2. Only if no explicit owner role is attached, check other IAM members
+  const members: string[] = [];
+  if (agent.iamPolicy?.bindings) {
+    for (const b of agent.iamPolicy.bindings) {
+      members.push(...b.members);
+    }
+  }
+  if (members.length === 0) {
+    return false;
+  }
+
+  return members.some(member => {
+    let cleanMember = member
+      .replace(/^.*\/subject\//i, '')
+      .replace(/^.*_subject_/i, '')
+      .replace(/^principal(set)?:\/\/.*?\//i, '')
+      .replace(/^user:/i, '')
+      .replace(/^serviceAccount:/i, '')
+      .toLowerCase().trim();
+    
+    return lowerFilters.some(filter => {
+      if (filter.startsWith('*@')) {
+        const domain = filter.substring(2);
+        return cleanMember.endsWith(`@${domain}`);
+      }
+      return cleanMember === filter;
+    });
+  });
+}
+
 export class AgentMigrator {
   private client: DiscoveryEngineClient;
 
@@ -31,67 +98,7 @@ export class AgentMigrator {
    * Evaluates if an agent matches the specified user filter by inspecting IAM policy bindings or creator metadata.
    */
   isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boolean {
-    if (userFilter.length === 0 || userFilter.includes('*') || userFilter.includes('*@*')) {
-      return true;
-    }
-
-    const lowerFilters = userFilter.map(u => u.toLowerCase().trim().replace(/^user:/i, ''));
-
-    // 1. Resolve Primary Owner (prioritize agentOwner IAM binding, then agent.owner)
-    let primaryOwner = agent.owner;
-    if (agent.iamPolicy?.bindings) {
-      const ownerBinding = agent.iamPolicy.bindings.find(b => b.role === 'roles/discoveryengine.agentOwner');
-      if (ownerBinding && ownerBinding.members && ownerBinding.members.length > 0) {
-        primaryOwner = ownerBinding.members[0];
-      }
-    }
-
-    if (primaryOwner) {
-      const cleanOwner = primaryOwner
-        .replace(/^.*\/subject\//i, '')
-        .replace(/^.*_subject_/i, '')
-        .replace(/^principal(set)?:\/\/.*?\//i, '')
-        .replace(/^user:/i, '')
-        .replace(/^serviceAccount:/i, '')
-        .toLowerCase().trim();
-
-      return lowerFilters.some(filter => {
-        if (filter.startsWith('*@')) {
-          const domain = filter.substring(2);
-          return cleanOwner.endsWith(`@${domain}`);
-        }
-        return cleanOwner === filter;
-      });
-    }
-
-    // 2. Only if no explicit owner role is attached, check other IAM members
-    const members: string[] = [];
-    if (agent.iamPolicy?.bindings) {
-      for (const b of agent.iamPolicy.bindings) {
-        members.push(...b.members);
-      }
-    }
-    if (members.length === 0) {
-      return false;
-    }
-
-    return members.some(member => {
-      let cleanMember = member
-        .replace(/^.*\/subject\//i, '')
-        .replace(/^.*_subject_/i, '')
-        .replace(/^principal(set)?:\/\/.*?\//i, '')
-        .replace(/^user:/i, '')
-        .replace(/^serviceAccount:/i, '')
-        .toLowerCase().trim();
-      
-      return lowerFilters.some(filter => {
-        if (filter.startsWith('*@')) {
-          const domain = filter.substring(2);
-          return cleanMember.endsWith(`@${domain}`);
-        }
-        return cleanMember === filter;
-      });
-    });
+    return isAgentOwnedByUser(agent, userFilter);
   }
 
   /**
@@ -102,7 +109,8 @@ export class AgentMigrator {
     sourceEnv: EnvironmentConfig,
     targetEnv: EnvironmentConfig,
     datastoreMapping: Record<string, string> = {},
-    collectionMapping: Record<string, string> = {}
+    collectionMapping: Record<string, string> = {},
+    toolMapping: Record<string, string> = {}
   ): any {
     const finalStarterPrompts = (sourceAgent.starterPrompts || [])
       .map(p => (p.text ? p.text.trim() : ''))
@@ -143,6 +151,13 @@ export class AgentMigrator {
       if (!blacklist.includes(key) && !(key in payload)) {
         payload[key] = value;
       }
+    }
+
+    if (sourceAgent.skillAgentDefinition) {
+      payload.skillAgentDefinition = {
+        instruction: sourceAgent.skillAgentDefinition.instruction || '',
+        subfiles: sourceAgent.skillAgentDefinition.subfiles || []
+      };
     }
 
     // 1. Remap DataStore connections
@@ -207,6 +222,34 @@ export class AgentMigrator {
       payload.authorizations = payload.authorizations.map(rewriteAuth);
     }
 
+    // 2b. Remap custom Tools in tools array
+    if (payload.tools && Array.isArray(payload.tools)) {
+      payload.tools = payload.tools.map((tool: any) => {
+        if (typeof tool === 'string') {
+          const cleanId = tool.split('/').pop() || tool;
+          const mapped = toolMapping[tool] || toolMapping[cleanId];
+          if (mapped) {
+            return mapped.startsWith('projects/')
+              ? mapped
+              : `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || 'global'}/tools/${mapped}`;
+          }
+          return `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || 'global'}/tools/${cleanId}`;
+        }
+        if (tool && tool.tool) {
+          const cleanId = tool.tool.split('/').pop() || tool.tool;
+          const mapped = toolMapping[tool.tool] || toolMapping[cleanId];
+          const targetTool = mapped || `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || 'global'}/tools/${cleanId}`;
+          return {
+            ...tool,
+            tool: targetTool.startsWith('projects/')
+              ? targetTool
+              : `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || 'global'}/tools/${targetTool}`
+          };
+        }
+        return tool;
+      });
+    }
+
     // 3. Deep string replacements in definition payloads (ADK, LowCode, A2A, Workflow)
     const definitionKeys = Object.keys(payload).filter(key => key.toLowerCase().includes('definition'));
     for (const key of definitionKeys) {
@@ -257,6 +300,14 @@ export class AgentMigrator {
         defStr = defStr.replace(/onedrive-federated_[0-9]+/g, 'onedrive-cmek_1787169277352');
         defStr = defStr.replace(/entraid-connector_[0-9]+/g, 'entraid-cmek_1787169408505');
 
+        // Tool remapping inside definition schemas
+        Object.entries(toolMapping).forEach(([oldTool, newTool]) => {
+          if (newTool) {
+            defStr = defStr.split(`/tools/${oldTool}`).join(`/tools/${newTool}`);
+            defStr = defStr.split(oldTool).join(newTool);
+          }
+        });
+
         payload[key] = JSON.parse(defStr);
       }
     }
@@ -285,7 +336,10 @@ export class AgentMigrator {
     (sourcePolicy.bindings || []).forEach(b => {
       if (b.role !== 'roles/discoveryengine.agentOwner') {
         b.members.forEach(m => {
-          const mapped = identityMapping[m] || m;
+          const hasUserPrefix = m.startsWith('user:');
+          const cleanMember = hasUserPrefix ? m.substring(5) : m;
+          const mappedClean = identityMapping[cleanMember] || cleanMember;
+          const mapped = identityMapping[m] || (hasUserPrefix ? `user:${mappedClean}` : mappedClean);
           if (!sharedUsers.includes(mapped)) {
             sharedUsers.push(mapped);
           }
@@ -313,11 +367,12 @@ export class AgentMigrator {
   /**
    * Helper to detect the agent category.
    */
-  getAgentType(agent: Agent): 'LOW_CODE' | 'WORKFLOW' | 'ADK' | 'A2A' | 'OTHER' {
+  getAgentType(agent: Agent): 'LOW_CODE' | 'WORKFLOW' | 'ADK' | 'A2A' | 'SKILL' | 'OTHER' {
     if (agent.lowCodeAgentDefinition) return 'LOW_CODE';
     if (agent.workflowAgentDefinition) return 'WORKFLOW';
     if (agent.adkAgentDefinition) return 'ADK';
     if (agent.a2aAgentDefinition) return 'A2A';
+    if (agent.skillAgentDefinition) return 'SKILL';
     return 'OTHER';
   }
 
@@ -341,7 +396,8 @@ export class AgentMigrator {
     options: MigrationOptions = {},
     datastoreMapping: Record<string, string> = {},
     collectionMapping: Record<string, string> = {},
-    identityMapping: Record<string, string> = {}
+    identityMapping: Record<string, string> = {},
+    toolMapping: Record<string, string> = {}
   ): Promise<MigrationItemResult[]> {
     logger.info(`Discovering agents in source project: ${sourceEnv.projectId} (${sourceEnv.appLocation})...`);
     const sourceAgents = await this.client.listAgents(sourceEnv);
@@ -357,7 +413,39 @@ export class AgentMigrator {
     }
 
     const userFilter = options.userFilter || [];
-    let filteredAgents = sourceAgents.filter(a => this.isAgentOwnedByUser(a, userFilter));
+    const PUBLIC_1P_SKILL_IDS = new Set([
+      'email-writing-style',
+      'report-writing',
+      'gemini-api',
+      'gke-backup-dr',
+      'cloud-sql-basics',
+      'cloud-run-basics',
+      'google-cloud-solution-n-tier-serverless-web-app',
+      'google-cloud-waf-operational-excellence',
+      'gke-platform-security',
+      'gke-tpu-dynamic-slices-monitoring',
+      'google-agents-cli-onboarding',
+      'google-cloud-waf-performance-optimization',
+      'gke-networking',
+      'gemini-interactions-api',
+      'gke-observability',
+      'bigquery-basics',
+      'google-cloud-storage-basics'
+    ]);
+
+    let filteredAgents = sourceAgents.filter(a => {
+      const agentId = a.name?.split('/').pop() || '';
+      if (options.skipIds && (options.skipIds.includes(agentId) || options.skipIds.includes(`AGENT:${agentId}`) || options.skipIds.includes(`SKILL:${agentId}`))) {
+        logger.info(`Skipping already-migrated Agent "${a.displayName}" (${agentId}) from previous checkpoint.`);
+        return false;
+      }
+      if (a.skillAgentDefinition) {
+        if (a.geminiEnterpriseSkillConfig || PUBLIC_1P_SKILL_IDS.has(agentId)) {
+          return false;
+        }
+      }
+      return this.isAgentOwnedByUser(a, userFilter);
+    });
 
     if (options.agentTypes && options.agentTypes.length > 0 && !options.agentTypes.includes('ALL')) {
       const allowedTypes = new Set(options.agentTypes);
@@ -391,10 +479,11 @@ export class AgentMigrator {
       const originalOwner = cleanOwner;
       const targetOwner = identityMapping[cleanOwner] || identityMapping[rawOriginalOwner] || cleanOwner;
 
+      const agentType = this.getAgentType(agent);
       const result: MigrationItemResult = {
         id: originalAgentId,
         displayName: agent.displayName,
-        type: 'AGENT',
+        type: agentType === 'SKILL' ? 'SKILL' : 'AGENT',
         status: 'SUCCESS',
         originalOwner,
         targetOwner
@@ -409,7 +498,7 @@ export class AgentMigrator {
         }
 
         const userOwner = (targetOwner && targetOwner !== 'unknown') ? targetOwner : undefined;
-        const createPayload = this.buildAgentPayload(agent, sourceEnv, targetEnv, datastoreMapping, collectionMapping);
+        const createPayload = this.buildAgentPayload(agent, sourceEnv, targetEnv, datastoreMapping, collectionMapping, toolMapping);
         
         let createdAgent;
         try {

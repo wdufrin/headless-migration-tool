@@ -1,35 +1,40 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](package.json)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.2.0-orange.svg)](RELEASE_NOTES.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](package.json)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.3.0-orange.svg)](RELEASE_NOTES.md)
+[![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
-An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, research notebooks, studio artifacts, grounding sources, chat conversation history, and associated IAM permissions across Google Cloud environments and Identity Providers.
+An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, user-created skills, research notebooks, studio artifacts, grounding sources, chat conversation history, user personalized memories, and associated IAM permissions across Google Cloud environments and Identity Providers.
 
 ---
 
-## 🚀 What's New in v1.2.0
+## 🚀 What's New in v1.3.0
 
-* **📑 Granular Notebook Source Migration & Integrity Auditing**:
-  * **Document-Level Tracking**: Tracks every individual grounding source (PDFs, Web URLs, Google Drive docs, text snippets, and Studio artifacts) with explicit status (`SUCCESS`, `FAILED`, `SKIPPED`, `DRY_RUN`).
-  * **Batch Creation with Automatic Individual Fallback**: Uses a resilient ingestion strategy—attempts high-speed batch creation; if a batch call encounters an issue, it automatically falls back to item-by-item creation so valid sources succeed and only faulty ones fail.
-  * **Studio Artifact Preservation**: Automatically converts NotebookLM Studio briefing docs, study guides, and outlines into structured text sources within the restored target notebook.
-  * **Section 5 Sources Audit Trail**: Migration reports (Markdown and JSON) now include **Section 5: Notebook Sources Breakdown & Integrity Audit**, listing parent notebook, source title, content type, migration status (`✅ SUCCESS` / `❌ FAILED`), and exact error diagnostics.
-* **📬 Enhanced User Handover Packages**:
-  * HTML verification checklists display visual pill badges (`📄 X Sources Ready`, `⚠️ Y Failed`) with expandable `<details>` accordions listing all source documents.
-  * User Markdown handover bundles provide itemized source breakdowns and status under each notebook.
-  * Email engine supports custom recipient overrides for staging verification prior to user dispatch.
-* **🧹 Multi-User Target Environment Maintenance**:
-  * Destination cleanup utility identifies and cleans notebooks and agents across all target users, preventing orphaned assets across testing iterations.
-* **⚡ Quota & Rate Limit Resilience**:
-  * Full jitter exponential backoff handling for HTTP 429 (`RESOURCE_EXHAUSTED`).
-  * Quota error diagnostics reporting specific metric and limit metadata (e.g. `AgentCreateRequestsPerDayPerUser`).
+* **🛠️ User-Created Skills Migration Engine (`SkillMigrator`)**:
+  * **Custom Skills Discovery & Restoration**: Discovers, exports, and restores user-created Skills across Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents.
+  * **Automatic 1P Catalog Filtering**: Intelligently identifies and excludes pre-packaged Google 1P public catalog skills (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`), ensuring only proprietary custom skills are migrated.
+  * **Seamless Pipeline Integration**: Deeply integrated into the migration runner, live SSE progress stream, executive summary KPI dashboards, and Markdown/JSON audit reports.
+* **🔍 Configuration Pre-Check & Gap Audit Engine (`ConfigAuditEngine`)**:
+  * **Pre-Flight Parity Readiness Scoring**: Calculates a weighted 0–100% readiness score evaluating feature flags, attached connectors, IAM roles, and storage requirements before migration execution.
+  * **Deep Engine Feature Comparison**: Audits parity across 10 critical engine capabilities: User Memory & Personalization, Agent Catalog & Gallery, No-Code Agent Builder, Create & Execute Skills, Skill Sharing, Session Sharing, Audio, Canvas, Observability, and Chat Session TTL.
+* **⚡ 1-Click Target Engine Settings Synchronization**:
+  * **Automated Flag Alignment**: Instantly updates target Discovery Engine feature flags to match source engine settings via the Discovery Engine PATCH API.
+  * **Deterministic CLI Remediation**: Generates copy-ready `curl` and `gcloud` commands with alphabetically sorted JSON keys to eliminate UI flicker across audit cycles.
+* **🔗 Attached DataStore Parity & Connector Scoping**:
+  * **Source Engine Scoping**: Restricts DataStore audits strictly to DataStores attached to the source Engine (`engine.dataStoreIds`), ignoring unattached or orphaned project DataStores.
+  * **State Auditing**: Validates target DataStore attachment states (`MATCH`, `WARNING` for unattached target stores, and `MISSING_IN_TARGET`).
+  * **Engine Attachment Remediation**: Provides one-click/CLI remediation to attach provisioned DataStores to target engines via `PATCH /engines/${appId}?updateMask=dataStoreIds`.
+  * **Console Guidance for Missing Connectors**: Replaced raw DataStore creation commands with clear, guided instructions directing administrators to the Google Cloud Console or Gemini Enterprise Console for connector provisioning.
+* **📋 Clipboard Resilience & UI Responsiveness**:
+  * **Bulletproof Copy CLI**: Resolved quote escaping syntax errors in the Web Console with `copyTextValue()`, automatic fallback to `document.execCommand('copy')`, and clear inline `✓ Copied!` visual confirmations.
+  * **Re-entrancy Protection & Stable Timing**: Added `isAuditRunning` guard preventing concurrent duplicate scans, accurate elapsed time tracking for "Last Pre-Check Run", and an animated loading spinner in remediation containers.
 
 ---
 
 ## 📋 Table of Contents
 
-- [What's New in v1.2.0](#-whats-new-in-v120)
+- [What's New in v1.3.0](#-whats-new-in-v130)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
 - [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
@@ -56,6 +61,8 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 ## 🌟 Key Features
 
 * **🤖 Custom Agent Migration & Auto-Publishing**: Deep-copies Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags. Automatically assigns `scope: ALL_USERS` and publishes them so they immediately appear in the user's left sidebar and Agent Gallery.
+* **🛠️ User-Created Skills Migration**: Discovers, exports, and restores custom user skills in Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents, while intelligently excluding public Google 1P catalog templates (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`).
+* **🔍 Configuration Pre-Check & Gap Audit**: Computes an end-to-end Parity Readiness Score (0–100%) and deep feature comparison (Memory, Agent Gallery, Low-Code Builder, Skills, Sharing, Audio, Canvas, Observability, TTL). Scopes DataStore audits strictly to attached DataStores, provides 1-click target settings synchronization, and renders copy-ready CLI remediation commands with zero UI flicker.
 * **📔 Research Notebooks & Granular Source Auditing**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs directly into the target environment. Tracks every source individually with fault-isolated batching and dedicated integrity reporting.
 * **🧠 User Memories & Personalization Facts**: Discovers, migrates, and restores learned user preferences, personal context facts, and Reasoning Engine memories across Discovery Engine instances.
 * **📊 Office Document & Artifact Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (Microsoft PowerPoint)** and briefing docs/study guides as native **`.docx` (Microsoft Word)** files into `./exports/artifacts`.
@@ -91,6 +98,7 @@ Enable the following APIs in both the **Source** and **Target** GCP projects:
 
 ```bash
 gcloud services enable discoveryengine.googleapis.com \
+                       agentregistry.googleapis.com \
                        gmail.googleapis.com \
                        iam.googleapis.com \
                        sts.googleapis.com \
@@ -98,6 +106,7 @@ gcloud services enable discoveryengine.googleapis.com \
                        --project=<SOURCE_PROJECT_ID>
 
 gcloud services enable discoveryengine.googleapis.com \
+                       agentregistry.googleapis.com \
                        gmail.googleapis.com \
                        iam.googleapis.com \
                        sts.googleapis.com \
@@ -250,11 +259,13 @@ npx tsx src/cli.ts --dry-run --users "*@company.com"
 | `--no-agents` | Skip Custom Agents migration | Migrates agents |
 | `--no-sessions` | Skip Chat conversation histories and turns migration | Migrates chat history |
 | `--no-memories` | Skip user personalized memories and facts migration | Migrates memories |
+| `--no-skills` | Skip Agent Registry custom skills migration | Migrates skills |
 | `--export-memories` | Export backup snapshot of user memories to disk (`./exports/memories`) | `true` |
 | `--agent-types <types...>` | Filter agent types (`LOW_CODE`, `WORKFLOW`, `ADK`, `A2A`, `ALL`) | `ALL` |
 | `--publish-agents` | Automatically publish migrated agents for immediate organization visibility | `true` |
 | `--export-artifacts` | Extract presentations, Canva-style docs, and HTML artifacts to `./exports` | `true` |
 | `--no-preserve-sharing` | Do not replicate sharing configurations (`ALL_USERS` / `RESTRICTED`) | Preserves sharing |
+| `--resume <reportPath>` | Resume migration by skipping already-successful assets from a previous JSON report | None |
 | `--service-account-key <path>` | Path to Google Cloud Service Account JSON key (for DWD) | Auto-detects `./sa-dwd-key.json` |
 | `--token <token>` | Explicit Google OAuth Access Token (overrides ADC/DWD) | Optional |
 | `--output-dir <dir>` | Directory where Markdown and JSON audit reports are saved | `./reports` |
@@ -279,28 +290,35 @@ npm run test:e2e-matrix
 
 ## 🖥️ Web Console Feature Tour
 
-The local Web Console provides 5 dedicated modules:
+The local Web Console provides 6 dedicated modules:
 
 1. **🚀 Migration Studio**:
    - Interactive engine picker for Source and Target GCP environments.
    - Dynamic asset discovery with user selection table.
    - Context-aware Cross-IdP transformation matrix with preset domain rules.
-   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and live progress across Notebooks, Sources, Agents, Chat Sessions, and Memories.
-2. **📊 Latest Report & Historical Runs**:
+   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and live progress across Notebooks, Sources, Agents, Skills, Chat Sessions, and Memories.
+2. **🔍 Configuration Pre-Check & Gap Audit**:
+   - Pre-flight gap audit dashboard with 0–100% Parity Readiness Score gauge and status badges (`Ready`, `Action Recommended`, `Critical Gaps`).
+   - Side-by-side engine feature flag comparison matrix (Memory, Agent Gallery, Skills, Audio, Canvas, Observability, TTL).
+   - 1-Click "Sync Target Engine Settings" button to automatically align target feature flags via Discovery Engine PATCH API.
+   - Attached DataStore Parity audit with status badges (`MATCH`, `WARNING` for unattached target stores, and `MISSING_IN_TARGET`).
+   - Automated remediation to attach provisioned DataStores to target engines (`PATCH /engines/${appId}?updateMask=dataStoreIds`).
+   - Deterministic copy-ready CLI remediation snippets with one-click clipboard copying and visual confirmation.
+3. **📊 Latest Report & Historical Runs**:
    - View and search comprehensive migration certificates and audit tables.
    - Executive KPIs tracking discovered, migrated, and failed counts for both notebooks and individual sources.
    - Dedicated **Section 5: Notebook Sources Breakdown & Integrity Audit** detailing every source document, parent notebook, type, status, and error logs.
    - Export reports in both human-readable Markdown (`.md`) and structured JSON (`.json`).
-3. **📬 User Handover & Email Dispatch**:
+4. **📬 User Handover & Email Dispatch**:
    - Individual user checklists with deep links to target Gemini Enterprise apps.
    - Visual status badges (`📄 X Sources Ready`, `⚠️ Y Failed`) with expandable `<details>` accordions listing all source documents.
    - Step 1 First-Time Login and Connector Authorization (Google Workspace, M365, Jira, etc.) walkthroughs.
    - One-click handover dispatch via Gmail API or SMTP with optional staging recipient overrides.
-4. **🔐 Auth & Identity Provider Wizard**:
+5. **🔐 Auth & Identity Provider Wizard**:
    - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, and live impersonation test.
    - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, and live token test.
    - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
-5. **🗑️ Target Destination Maintenance & Multi-User Cleanup**:
+6. **🧹 Target Destination Maintenance & Multi-User Cleanup**:
    - Automatically identifies all users in the target environment to clean user-scoped notebooks and agents.
    - Selective checkboxes to clean Chats, Custom Agents, Notebooks, Exported Artifacts, or Migration Reports prior to test runs.
 
@@ -345,6 +363,7 @@ Designed to run **strictly on the administrator's local machine**:
     "migrateAgents": true,
     "migrateSessions": true,
     "migrateMemories": true,
+    "migrateSkills": true,
     "exportMemories": true,
     "exportArtifacts": true,
     "dryRun": false,
@@ -408,9 +427,14 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
+The platform includes an extensive automated test suite with **47 tests across 9 test suites** covering authentication, Agent Registry skills discovery/filtering, configuration gap audits, memory migration, session rehydration, reporters, and E2E execution flows:
+
 ```bash
-# Run complete unit and integration test suite
+# Run complete unit and integration test suite (47 tests across 9 suites)
 npm test
+
+# Run End-to-End matrix permutations test (DWD/WiF permutations)
+npm run test:e2e-matrix
 
 # Type-check TypeScript codebase
 npm run typecheck

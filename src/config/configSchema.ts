@@ -32,9 +32,10 @@ export const MigrationOptionsSchema = z.object({
   migrateAgents: z.boolean().default(true),
   migrateSessions: z.boolean().default(true),
   migrateMemories: z.boolean().default(true),
+  migrateSkills: z.boolean().default(true),
   exportMemories: z.boolean().default(true),
   exportArtifacts: z.boolean().default(true),
-  agentTypes: z.array(z.enum(['LOW_CODE', 'WORKFLOW', 'ADK', 'A2A', 'OTHER', 'ALL'])).default(['ALL']),
+  agentTypes: z.array(z.enum(['LOW_CODE', 'WORKFLOW', 'ADK', 'A2A', 'SKILL', 'OTHER', 'ALL'])).default(['ALL']),
   agentStatusFilter: z.enum(['ALL', 'PUBLISHED_ONLY', 'DRAFTS_ONLY']).default('ALL'),
   excludeDraftAgents: z.boolean().default(false),
   notebookIds: z.array(z.string()).default([]),
@@ -46,6 +47,8 @@ export const MigrationOptionsSchema = z.object({
   publishAgents: z.boolean().default(false),
   prefixReplacements: z.record(z.string()).default({}),
   allowOverwrite: z.boolean().default(false),
+  resumeFrom: z.string().optional(),
+  skipIds: z.array(z.string()).default([]),
   logLevel: z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR']).default('INFO')
 }).default({});
 
@@ -77,6 +80,7 @@ export const MigrationConfigSchema = z.object({
   datastoreMapping: z.record(z.string()).default({}),
   collectionMapping: z.record(z.string()).default({}),
   identityMapping: z.record(z.string()).default({}),
+  toolMapping: z.record(z.string()).default({}),
   defaultOwnerFallback: z.string().optional()
 });
 

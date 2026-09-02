@@ -29,9 +29,10 @@ export interface MigrationOptions {
   migrateAgents?: boolean;
   migrateSessions?: boolean;
   migrateMemories?: boolean;
+  migrateSkills?: boolean;
   exportMemories?: boolean;
   exportArtifacts?: boolean;
-  agentTypes?: ('LOW_CODE' | 'WORKFLOW' | 'ADK' | 'A2A' | 'OTHER' | 'ALL')[];
+  agentTypes?: ('LOW_CODE' | 'WORKFLOW' | 'ADK' | 'A2A' | 'SKILL' | 'OTHER' | 'ALL')[];
   agentStatusFilter?: 'ALL' | 'PUBLISHED_ONLY' | 'DRAFTS_ONLY';
   excludeDraftAgents?: boolean;
   notebookIds?: string[];
@@ -43,6 +44,8 @@ export interface MigrationOptions {
   publishAgents?: boolean;
   prefixReplacements?: Record<string, string>;
   allowOverwrite?: boolean;
+  resumeFrom?: string;
+  skipIds?: string[];
   logLevel?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 }
 
@@ -59,7 +62,7 @@ export interface MigrationConfig {
 export interface MigrationItemResult {
   id: string;
   displayName: string;
-  type: 'AGENT' | 'NOTEBOOK' | 'SESSION' | 'MEMORY' | 'ARTIFACT';
+  type: 'AGENT' | 'NOTEBOOK' | 'SESSION' | 'MEMORY' | 'ARTIFACT' | 'SKILL';
   status: 'SUCCESS' | 'SKIPPED' | 'FAILED' | 'DRY_RUN' | 'ARCHIVED';
   originalOwner?: string;
   targetOwner?: string;
@@ -88,12 +91,14 @@ export interface MigrationReport {
   summary: {
     totalDiscoveredAgents: number;
     totalDiscoveredNotebooks: number;
+    totalDiscoveredSkills?: number;
     totalDiscoveredSources?: number;
     totalDiscoveredSessions?: number;
     totalDiscoveredMemories?: number;
     totalDiscoveredArtifacts?: number;
     totalMigratedAgents: number;
     totalMigratedNotebooks: number;
+    totalMigratedSkills?: number;
     totalMigratedSources?: number;
     totalMigratedSessions?: number;
     totalMigratedMemories?: number;

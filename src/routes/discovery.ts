@@ -39,6 +39,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
     const collectionId = (req.query.collectionId as string) || 'default_collection';
     const appId = (req.query.appId as string) || '';
 
+    const scope = (req.query.scope as string) || (appId && appId !== 'all' ? 'single' : 'all');
+
     const saKeyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || 
       (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
 
@@ -60,10 +62,29 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
     const baseUrl = getSafeDiscoveryEngineUrl(location);
 
     if (token) {
-      // 1. Discover user creators from Custom Agents & Agent IAM Policies
-      if (appId && appId !== 'custom') {
+      // Determine which engine(s) to scan
+      const enginesToScan: string[] = [];
+      if (appId && appId !== 'custom' && appId !== 'all' && scope !== 'all') {
+        enginesToScan.push(appId);
+      } else if (projectId) {
         try {
-          const agUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${appId}/assistants/default_assistant/agents?pageSize=100`;
+          const client = new DiscoveryEngineClient(authService);
+          const listed = await client.listEngines({ projectId, appLocation: location, collectionId });
+          for (const eng of listed) {
+            const eid = eng.name?.split('/').pop() || eng.id;
+            if (eid && !enginesToScan.includes(eid)) {
+              enginesToScan.push(eid);
+            }
+          }
+        } catch (eErr: any) {
+          logger.debug(`Could not list engines for project-wide user discovery: ${eErr.message}`);
+        }
+      }
+
+      // 1. Discover user creators from Custom Agents & Agent IAM Policies across target engines
+      for (const curAppId of enginesToScan) {
+        try {
+          const agUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/assistants/default_assistant/agents?pageSize=100`;
           const agResp = await fetch(agUrl, {
             headers: { 
               'Authorization': `Bearer ${token}`,
@@ -110,14 +131,12 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             }));
           }
         } catch (agErr: any) {
-          logger.debug(`Agents user discovery skipped: ${agErr.message}`);
+          logger.debug(`Agents user discovery skipped for ${curAppId}: ${agErr.message}`);
         }
-      }
 
-      // 2. Discover users from Discovery Engine Chat Sessions
-      if (appId && appId !== 'custom') {
+        // 2. Discover users from Discovery Engine Chat Sessions
         try {
-          const url = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${appId}/sessions?pageSize=100`;
+          const url = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/sessions?pageSize=100`;
           const resp = await fetch(url, {
             headers: { 
               'Authorization': `Bearer ${token}`,
@@ -147,11 +166,47 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             }
           }
         } catch (sessErr: any) {
-          logger.debug(`Sessions discovery skipped or failed: ${sessErr.message}`);
+          logger.debug(`Sessions discovery skipped or failed for ${curAppId}: ${sessErr.message}`);
+        }
+
+        // 3. Discover users from Memories
+        try {
+          const memUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/memories?pageSize=100`;
+          const memResp = await fetch(memUrl, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'X-Goog-User-Project': projectId
+            }
+          });
+          if (memResp.ok) {
+            const memData: any = await memResp.json();
+            const memories = memData.memories || [];
+            if (memories.length > 0) {
+              const callerId = (await authService.getCallerIdentity?.()) || process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
+              if (callerId && isValidUserIdentity(callerId)) {
+                const cleanEmail = callerId.replace(/^user:/i, '').trim();
+                const existing = userMap.get(cleanEmail) || {
+                  email: cleanEmail,
+                  sessionsCount: 0,
+                  notebooksCount: 0,
+                  agentsCount: 0,
+                  memoriesCount: 0,
+                  sources: [] as string[]
+                };
+                existing.memoriesCount = (existing.memoriesCount || 0) + memories.length;
+                if (!existing.sources.includes('Personal Memories')) {
+                  existing.sources.push('Personal Memories');
+                }
+                userMap.set(cleanEmail, existing);
+              }
+            }
+          }
+        } catch (memErr: any) {
+          logger.debug(`Memories user discovery skipped for ${curAppId}: ${memErr.message}`);
         }
       }
 
-      // 3. Discover user owners from Notebooks
+      // 4. Discover user owners from Notebooks
       try {
         const nbUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/notebooks:listRecentlyViewed`;
         const nbResp = await fetch(nbUrl, {
@@ -185,44 +240,6 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
         }
       } catch (nbErr: any) {
         logger.debug(`Notebooks user discovery skipped: ${nbErr.message}`);
-      }
-
-      // 4. Discover users from Memories
-      if (appId && appId !== 'custom') {
-        try {
-          const memUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${appId}/memories?pageSize=100`;
-          const memResp = await fetch(memUrl, {
-            headers: { 
-              'Authorization': `Bearer ${token}`,
-              'X-Goog-User-Project': projectId
-            }
-          });
-          if (memResp.ok) {
-            const memData: any = await memResp.json();
-            const memories = memData.memories || [];
-            if (memories.length > 0) {
-              const callerId = (await authService.getCallerIdentity?.()) || process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
-              if (callerId && isValidUserIdentity(callerId)) {
-                const cleanEmail = callerId.replace(/^user:/i, '').trim();
-                const existing = userMap.get(cleanEmail) || {
-                  email: cleanEmail,
-                  sessionsCount: 0,
-                  notebooksCount: 0,
-                  agentsCount: 0,
-                  memoriesCount: 0,
-                  sources: [] as string[]
-                };
-                existing.memoriesCount = (existing.memoriesCount || 0) + memories.length;
-                if (!existing.sources.includes('Personal Memories')) {
-                  existing.sources.push('Personal Memories');
-                }
-                userMap.set(cleanEmail, existing);
-              }
-            }
-          }
-        } catch (memErr: any) {
-          logger.debug(`Memories user discovery skipped: ${memErr.message}`);
-        }
       }
     }
 

@@ -27,13 +27,14 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.1.0')
+  .version('1.3.0')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
   .option('--no-agents', 'Skip custom agent migration')
   .option('--no-sessions', 'Skip chat conversation history migration')
   .option('--no-memories', 'Skip user personalized memories and facts migration')
+  .option('--no-skills', 'Skip Agent Registry skills migration')
   .option('--export-memories', 'Export backup snapshot of user memories to disk')
   .option('--export-artifacts', 'Export chat attachments and notebook studio artifacts to disk')
   .option('--agent-types <types...>', 'Filter agent migration by type: LOW_CODE, WORKFLOW, ADK, A2A, OTHER, ALL (default: ALL)')
@@ -44,6 +45,7 @@ program
   .option('--token <token>', 'Explicit Google OAuth Access Token (overrides ADC)')
   .option('--service-account-key <path>', 'Path to Google Cloud Service Account JSON key for Domain-Wide Delegation (DWD)')
   .option('--output-dir <dir>', 'Directory to output migration reports', './reports')
+  .option('--resume <reportPath>', 'Resume migration by skipping already-successful assets from a previous migration report JSON')
   .action(async (options) => {
     try {
       let baseConfig: any = {};
@@ -61,6 +63,9 @@ program
       }
 
       // Merge CLI flag overrides
+      if (options.resume) {
+        baseConfig.options = { ...baseConfig.options, resumeFrom: options.resume };
+      }
       if (options.dryRun !== undefined) {
         baseConfig.options = { ...baseConfig.options, dryRun: true };
       }
@@ -75,6 +80,9 @@ program
       }
       if (options.memories === false) {
         baseConfig.options = { ...baseConfig.options, migrateMemories: false };
+      }
+      if (options.skills === false) {
+        baseConfig.options = { ...baseConfig.options, migrateSkills: false };
       }
       if (options.exportMemories !== undefined) {
         baseConfig.options = { ...baseConfig.options, exportMemories: true };
@@ -119,6 +127,7 @@ program
       console.log(`Duration:             ${(report.durationMs / 1000).toFixed(2)}s`);
       console.log(`Migrated Agents:      ${report.summary.totalMigratedAgents}`);
       console.log(`Migrated Notebooks:   ${report.summary.totalMigratedNotebooks}`);
+      console.log(`Migrated Skills:      ${report.summary.totalMigratedSkills ?? 0}`);
       console.log(`Migrated Sessions:    ${report.summary.totalMigratedSessions ?? 0}`);
       console.log(`Migrated Memories:    ${report.summary.totalMigratedMemories ?? 0}`);
       console.log(`Failed Items:         ${report.summary.totalFailed}`);

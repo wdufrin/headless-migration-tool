@@ -29,6 +29,7 @@ import { memoriesRouter } from './routes/memories.js';
 import { wizardRouter } from './routes/wizard.js';
 import { sandboxRouter } from './routes/sandbox.js';
 import { maintenanceRouter } from './routes/maintenance.js';
+import { configAuditRouter } from './routes/configAudit.js';
 import { getDynamicConfig } from './routes/configHelper.js';
 import { logger } from './utils/logger.js';
 
@@ -88,6 +89,7 @@ app.use('/api', memoriesRouter);
 app.use('/api', wizardRouter);
 app.use('/api', sandboxRouter);
 app.use('/api', maintenanceRouter);
+app.use('/api', configAuditRouter);
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(port, host, () => {

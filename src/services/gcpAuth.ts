@@ -70,17 +70,21 @@ export class GcpAuthService {
       this.serviceAccountKey = options.serviceAccountKeyJson;
     } else if (options.serviceAccountKeyPath && fs.existsSync(options.serviceAccountKeyPath)) {
       try {
-        const content = fs.readFileSync(options.serviceAccountKeyPath, 'utf-8');
-        this.serviceAccountKey = JSON.parse(content);
-        logger.info(`Loaded Service Account Key for Domain-Wide Delegation: ${this.serviceAccountKey.client_email}`);
+        const content = fs.readFileSync(options.serviceAccountKeyPath, 'utf-8').trim();
+        if (content) {
+          this.serviceAccountKey = JSON.parse(content);
+          logger.info(`Loaded Service Account Key for Domain-Wide Delegation: ${this.serviceAccountKey.client_email}`);
+        }
       } catch (err: any) {
         logger.warn(`Failed to parse Service Account Key file: ${err.message}`);
       }
     } else if (fs.existsSync('./sa-dwd-key.json')) {
       try {
-        const content = fs.readFileSync('./sa-dwd-key.json', 'utf-8');
-        this.serviceAccountKey = JSON.parse(content);
-        logger.info(`Auto-loaded Service Account Key for DWD: ${this.serviceAccountKey.client_email}`);
+        const content = fs.readFileSync('./sa-dwd-key.json', 'utf-8').trim();
+        if (content) {
+          this.serviceAccountKey = JSON.parse(content);
+          logger.info(`Auto-loaded Service Account Key for DWD: ${this.serviceAccountKey.client_email}`);
+        }
       } catch (err: any) {
         logger.warn(`Failed to parse default sa-dwd-key.json: ${err.message}`);
       }

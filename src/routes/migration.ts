@@ -32,7 +32,7 @@ migrationRouter.post('/migrate', async (req, res) => {
     const callerToken = req.accessToken;
     const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
     const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH || 
-      (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
+      (fs.existsSync('./sa-dwd-key.json') && fs.statSync('./sa-dwd-key.json').size > 0 ? './sa-dwd-key.json' : undefined);
     const wifPath = validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
       (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
 
@@ -83,7 +83,7 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
     const callerToken = req.accessToken;
     const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
     const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH || 
-      (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
+      (fs.existsSync('./sa-dwd-key.json') && fs.statSync('./sa-dwd-key.json').size > 0 ? './sa-dwd-key.json' : undefined);
     const wifPath = validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
       (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
 

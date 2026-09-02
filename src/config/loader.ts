@@ -75,6 +75,7 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       migrateAgents: process.env.MIGRATE_AGENTS !== 'false',
       migrateSessions: process.env.MIGRATE_SESSIONS !== 'false',
       migrateMemories: process.env.MIGRATE_MEMORIES !== 'false',
+      migrateSkills: process.env.MIGRATE_SKILLS !== 'false',
       exportMemories: process.env.EXPORT_MEMORIES === 'true',
       exportArtifacts: process.env.EXPORT_ARTIFACTS !== 'false',
       agentTypes: (process.env.AGENT_TYPES?.split(',') as any) || ['ALL'],
@@ -89,6 +90,8 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       publishAgents: process.env.PUBLISH_AGENTS === 'true',
       prefixReplacements: {},
       allowOverwrite: process.env.ALLOW_OVERWRITE === 'true',
+      resumeFrom: process.env.RESUME_FROM || undefined,
+      skipIds: [],
       logLevel: (process.env.LOG_LEVEL as any) || 'INFO'
     }
   };

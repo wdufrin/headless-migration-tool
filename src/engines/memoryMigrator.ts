@@ -292,7 +292,7 @@ export class MemoryMigrator {
   public async importMemoriesFromFile(
     filePath: string,
     targetUserOverride?: string
-  ): Promise<{ successCount: number; failedCount: number; results: any[] }> {
+  ): Promise<{ total: number; successCount: number; failedCount: number; results: any[] }> {
     const resolvedPath = path.resolve(process.cwd(), filePath);
     if (!fs.existsSync(resolvedPath)) {
       throw new Error(`Memory backup file not found: ${resolvedPath}`);

@@ -57,6 +57,8 @@ export interface Agent {
   adkAgentDefinition?: Record<string, any>;
   a2aAgentDefinition?: Record<string, any>;
   lowCodeAgentDefinition?: Record<string, any>;
+  workflowAgentDefinition?: Record<string, any>;
+  skillAgentDefinition?: Record<string, any>;
   targetId?: string;
   iamPolicy?: IamPolicy;
   owner?: string;
@@ -194,5 +196,48 @@ export interface MemoryBackupSnapshot {
   totalUsers: number;
   users: string[];
   memories: Memory[];
+}
+
+
+
+export interface RegistrySkillFrontmatter {
+  name?: string;
+  description?: string;
+  version?: string;
+  [key: string]: any;
+}
+
+export interface RegistrySkillRevision {
+  name: string;
+  createTime?: string;
+  state?: 'STATE_UNSPECIFIED' | 'CREATING' | 'ACTIVE' | 'FAILED' | 'DISABLED' | 'DECOMMISSIONED' | string;
+  frontmatter?: RegistrySkillFrontmatter;
+  archiveUploadSource?: {
+    archiveContent?: string;
+  };
+  [key: string]: any;
+}
+
+export interface RegistrySkill {
+  name: string;
+  displayName: string;
+  description?: string;
+  type?: 'SIMPLE' | 'COMPOSITE' | string;
+  state?: 'STATE_ACTIVE' | 'STATE_DRAFT' | 'STATE_DISABLED' | 'STATE_DEPRECATED' | 'STATE_DECOMMISSIONED' | string;
+  targetState?: 'TARGET_STATE_ACTIVE' | 'TARGET_STATE_DRAFT' | 'TARGET_STATE_DISABLED' | 'TARGET_STATE_DEPRECATED' | string;
+  defaultRevision?: string;
+  publisher?: string;
+  skillId?: string;
+  createTime?: string;
+  updateTime?: string;
+  frontmatter?: RegistrySkillFrontmatter;
+  initialRevision?: {
+    frontmatter?: RegistrySkillFrontmatter;
+    archiveUploadSource?: {
+      archiveContent?: string;
+    };
+    [key: string]: any;
+  };
+  [key: string]: any;
 }
 

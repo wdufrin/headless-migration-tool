@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.1.0</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.3.0</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -96,6 +96,13 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
         <span>Migration Studio</span>
+      </button>
+
+      <button onclick="switchTab('audit')" id="nav-audit" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span class="text-amber-300 font-semibold">🔍 Config Pre-Check & Gaps</span>
       </button>
 
       <button onclick="switchTab('report')" id="nav-report" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
@@ -375,14 +382,24 @@
               
               <div id="sec-scope-config" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <!-- Checkbox toggles -->
-                <div class="space-y-2">
+                <div class="space-y-2.5">
                   <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optNotebooks" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
                     <span class="font-medium text-white">📓 Migrate Notebooks & Sources</span>
                   </label>
-                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" id="optAgents" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
-                    <span class="font-medium text-white">🤖 Migrate Agents & Workflows</span>
+                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optAgents" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
+                    <div>
+                      <span class="font-medium text-white">🤖 Migrate Agents & Workflows</span>
+                      <span class="block text-[10px] text-gray-400">Transfers agent definitions, instructions, grounding data connectors & assistant configs</span>
+                    </div>
+                  </label>
+                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optSkills" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-blue-500">
+                    <div>
+                      <span class="font-medium text-blue-300">🎯 Migrate Skills (Agent Registry)</span>
+                      <span class="block text-[10px] text-gray-400">Directly migrates enterprise and user skills between cloud registries</span>
+                    </div>
                   </label>
                   <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optSessions" checked class="rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
@@ -394,7 +411,7 @@
                   </label>
                   <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optArtifacts" checked class="rounded bg-gray-800 border-gray-700 text-purple-500 focus:ring-purple-500">
-                    <span class="font-medium text-purple-300">🎨 Export & Archive User Artifacts</span>
+                    <span class="font-medium text-purple-300">🎨 Export & Archive User Artifacts (Audio/Canvas)</span>
                   </label>
                   <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optDryRun" onchange="onDryRunOptionChange()" class="rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-500">
@@ -403,7 +420,7 @@
                 </div>
 
                 <!-- Agent Type & Lifecycle Filters -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="space-y-3">
                   <div>
                     <label class="block text-xs font-medium text-gray-400 mb-1">Agent Type Filter</label>
                     <select id="optAgentType" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
@@ -425,10 +442,17 @@
                   </div>
                 </div>
 
-                <!-- DWD Service Account Key Path -->
-                <div>
-                  <label class="block text-xs font-medium text-gray-400 mb-1">DWD Service Account Key Path</label>
-                  <input type="text" id="optSaKey" value="./sa-dwd-key.json" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <!-- Auth & Checkpoint Configuration -->
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">DWD Service Account Key Path</label>
+                    <input type="text" id="optSaKey" value="./sa-dwd-key.json" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Resume from Checkpoint Report (Optional)</label>
+                    <input type="text" id="optResumeFrom" placeholder="./reports/migration_report_xxx.json" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono">
+                    <p class="text-[10px] text-gray-500 mt-1">Skips already-migrated skills, notebooks, agents, and sessions.</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -447,10 +471,15 @@
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
-                  <button type="button" onclick="discoverSourceUsers()" id="btnDiscoverUsers" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
-                    <span id="discoverUsersSpinner" class="hidden animate-spin">🌀</span>
-                    <span>🔍 Discover Source Users</span>
-                  </button>
+                  <div class="inline-flex rounded-lg shadow-sm">
+                    <button type="button" onclick="discoverSourceUsers(true, 'single')" id="btnDiscoverUsers" title="Discover active users in the selected source app" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-l-lg text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
+                      <span id="discoverUsersSpinner" class="hidden animate-spin">🌀</span>
+                      <span>🔍 Discover App Users</span>
+                    </button>
+                    <button type="button" onclick="discoverSourceUsers(true, 'all')" id="btnDiscoverAllUsers" title="Discover all users across all apps in source project" class="px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-indigo-100 rounded-r-lg text-xs font-semibold border-l border-indigo-500 shadow-sm transition flex items-center gap-1">
+                      <span>🌐 All Apps</span>
+                    </button>
+                  </div>
                   <button type="button" onclick="toggleAllUsers(true)" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-medium rounded-lg border border-gray-700 transition">Select All</button>
                   <button type="button" onclick="toggleAllUsers(false)" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-medium rounded-lg border border-gray-700 transition">Deselect All</button>
                   <button type="button" onclick="toggleSection('sec-user-selection')" class="text-xs font-semibold px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition border border-gray-700 flex items-center gap-1">
@@ -462,7 +491,7 @@
               <div id="sec-user-selection" class="space-y-3">
                 <!-- Add Custom User Input Row -->
                 <div class="flex items-center gap-2">
-                  <input type="email" id="customUserEmailInput" placeholder="Enter specific user email to include (e.g. user@company.com)" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono">
+                  <input type="email" id="customUserEmailInput" onkeydown="if(event.key === 'Enter'){event.preventDefault(); addCustomUserToSelection();}" placeholder="Enter specific user email to include (e.g. user@company.com) - Press Enter to add" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono">
                   <button type="button" onclick="addCustomUserToSelection()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
                     <span>+</span> Add User
                   </button>
@@ -518,11 +547,11 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                   <div>
                     <label class="block text-gray-400 mb-1 font-medium">Source Domain / Suffix</label>
-                    <input type="text" id="mapFromDomain" placeholder="@legacy-ad.onmicrosoft.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono">
+                    <input type="text" id="mapFromDomain" oninput="renderUserSelectionTable()" placeholder="@legacy-ad.onmicrosoft.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono">
                   </div>
                   <div>
                     <label class="block text-gray-400 mb-1 font-medium">Target Google Cloud Identity Domain</label>
-                    <input type="text" id="mapToDomain" placeholder="@target-company.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono">
+                    <input type="text" id="mapToDomain" oninput="renderUserSelectionTable()" placeholder="@target-company.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono">
                   </div>
                 </div>
 
@@ -540,7 +569,15 @@
             </div>
 
             <!-- Action Controls -->
-            <div class="flex items-center justify-end pt-2">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+              <div>
+                <button type="button" onclick="runConfigPreCheck()" id="btnPreCheckGaps" class="px-4 py-2.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-sm">
+                  <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <span>🔍 Pre-Check Configurations & Gaps</span>
+                </button>
+              </div>
               <div class="flex items-center gap-3">
                 <button type="button" onclick="startMigration(document.getElementById('optDryRun').checked)" id="btnExecuteMigration" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-600/30 transition flex items-center gap-2">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -572,18 +609,21 @@
           </div>
 
           <!-- Stage Milestones -->
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+          <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
             <div id="stage-preflight" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>Pre-Flight</span>
+            </div>
+            <div id="stage-skills" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Enterprise Skills</span>
             </div>
             <div id="stage-notebooks" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>Notebooks</span>
             </div>
             <div id="stage-agents" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
-              <span class="stage-icon">⚪</span> <span>Agents & Tools</span>
+              <span class="stage-icon">⚪</span> <span>Agents</span>
             </div>
             <div id="stage-sessions" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
-              <span class="stage-icon">⚪</span> <span>Chat History</span>
+              <span class="stage-icon">⚪</span> <span>Chat & Memories</span>
             </div>
             <div id="stage-artifacts" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>User Artifacts</span>
@@ -627,6 +667,142 @@
 
       </section>
 
+      <!-- TAB: CONFIG PRE-CHECK & GAP AUDIT -->
+      <section id="tab-audit" class="tab-content space-y-6 hidden">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-4">
+            <div>
+              <div class="flex items-center gap-2.5">
+                <h2 class="text-lg font-bold text-white">Source vs. Target Configuration Pre-Check & Gap Audit</h2>
+                <span class="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-blue-900/60 text-blue-300 border border-blue-700/50">Read-Only Parity Check</span>
+                <span class="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-emerald-900/60 text-emerald-300 border border-emerald-700/50">Zero Mutations</span>
+              </div>
+              <p id="auditTimestampText" class="text-xs text-gray-400 mt-1">Compare Discovery Engine settings, Grounding DataStores, custom integrations, and IAM permissions to uncover gaps before migration.</p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button type="button" onclick="runConfigPreCheck()" id="btnAuditRerun" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
+                <span id="auditSpinner" class="hidden animate-spin">🌀</span>
+                <span>🔄 Run Pre-Check</span>
+              </button>
+              <button type="button" onclick="downloadAuditReport('markdown')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200 border border-gray-700 rounded-lg transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Export Report (.md)
+              </button>
+              <button type="button" onclick="downloadAuditReport('json')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200 border border-gray-700 rounded-lg transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Export JSON
+              </button>
+            </div>
+          </div>
+
+          <!-- Environment Comparison Summary Bar -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-gray-950/70 border border-blue-900/40 rounded-xl p-4 flex items-center gap-3.5">
+              <div class="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-xl shrink-0">🔵</div>
+              <div class="overflow-hidden">
+                <div class="text-[11px] uppercase tracking-wider text-blue-400 font-bold">Source Environment (Current)</div>
+                <div id="auditSourceProjectLabel" class="text-sm font-bold text-white truncate font-mono">Not configured</div>
+                <div id="auditSourceLocationLabel" class="text-xs text-gray-400 font-mono">Location: global | Engine: default_engine</div>
+              </div>
+            </div>
+            <div class="bg-gray-950/70 border border-emerald-900/40 rounded-xl p-4 flex items-center gap-3.5">
+              <div class="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xl shrink-0">🟢</div>
+              <div class="overflow-hidden">
+                <div class="text-[11px] uppercase tracking-wider text-emerald-400 font-bold">Target Environment (Destination)</div>
+                <div id="auditTargetProjectLabel" class="text-sm font-bold text-white truncate font-mono">Not configured</div>
+                <div id="auditTargetLocationLabel" class="text-xs text-gray-400 font-mono">Location: global | Engine: default_engine</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Readiness Score & Metric Cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
+              <div>
+                <div class="text-xs text-gray-400 font-medium">Readiness Score</div>
+                <div id="auditReadinessScore" class="text-2xl font-extrabold text-indigo-400 mt-1">--%</div>
+              </div>
+              <div id="auditGaugeIndicator" class="text-2xl">⏳</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400 font-medium">Total Checks</div>
+              <div id="auditTotalChecks" class="text-2xl font-bold text-white mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400 font-medium">Exact Matches</div>
+              <div id="auditMatchesCount" class="text-2xl font-bold text-emerald-400 mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400 font-medium">Missing in Target (Gaps)</div>
+              <div id="auditGapsCount" class="text-2xl font-bold text-rose-400 mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+              <div class="text-xs text-gray-400 font-medium">Differences / Warnings</div>
+              <div id="auditWarningsCount" class="text-2xl font-bold text-amber-400 mt-1">0</div>
+            </div>
+          </div>
+
+          <!-- Actionable Gap Remediation Plan Panel -->
+          <div id="auditRemediationContainer" class="hidden bg-gray-950/80 border border-amber-500/40 rounded-xl p-5 space-y-4">
+            <div class="flex items-center gap-2 border-b border-gray-800 pb-3">
+              <span class="text-lg">🛠️</span>
+              <div>
+                <h3 class="text-sm font-bold text-amber-300">Actionable Gap Remediation Plan</h3>
+                <p class="text-xs text-gray-400">The following missing components were detected in the target environment. Run these commands or configure them in Google Cloud Console before migrating.</p>
+              </div>
+            </div>
+            <div id="auditRemediationList" class="space-y-3 text-xs">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Parity Breakdown Table -->
+          <div class="bg-gray-950/80 border border-gray-800 rounded-xl p-5 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-bold text-white">Parity Checklist & Gaps</span>
+                <span id="auditItemsBadge" class="text-[10px] bg-gray-800 text-gray-300 border border-gray-700 px-2 py-0.5 rounded-full font-mono">0 Items</span>
+                <button type="button" id="btnSyncEngineSettings" onclick="syncEngineSettings()" class="hidden text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-2.5 py-1 rounded-lg border border-indigo-500/30 flex items-center gap-1.5 shadow-sm transition">
+                  <svg class="w-3.5 h-3.5 text-indigo-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                  <span>Sync Target Engine Settings</span>
+                </button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <!-- Category Filter Buttons -->
+                <div class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 text-[11px]">
+                  <button type="button" onclick="setAuditCategoryFilter('ALL')" class="audit-cat-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium" data-cat="ALL">All</button>
+                  <button type="button" onclick="setAuditCategoryFilter('DATASTORE')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="DATASTORE">DataStores</button>
+                  <button type="button" onclick="setAuditCategoryFilter('ENGINE')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="ENGINE">Engine</button>
+                  <button type="button" onclick="setAuditCategoryFilter('IDP')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="IDP">IdP</button>
+                  <button type="button" onclick="setAuditCategoryFilter('SKILLS')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="SKILLS">Skills</button>
+                  <button type="button" onclick="setAuditCategoryFilter('AUTHORIZATION')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="AUTHORIZATION">IAM</button>
+                </div>
+                <input type="text" id="auditSearchInput" oninput="filterAuditTable()" placeholder="Search checks, DataStores, IDs..." class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500">
+              </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/60 max-h-96 overflow-y-auto">
+              <table class="w-full text-left text-xs text-gray-300">
+                <thead class="bg-gray-950 text-gray-400 uppercase text-[10px] font-mono border-b border-gray-800 sticky top-0">
+                  <tr>
+                    <th class="py-2.5 px-3">Check / Feature</th>
+                    <th class="py-2.5 px-3 w-28 text-center">Status</th>
+                    <th class="py-2.5 px-3">Source Environment</th>
+                    <th class="py-2.5 px-3">Target Environment</th>
+                    <th class="py-2.5 px-3">Details & Impact</th>
+                  </tr>
+                </thead>
+                <tbody id="auditTableBody" class="divide-y divide-gray-800/60">
+                  <tr>
+                    <td colspan="5" class="py-8 text-center text-gray-500">No audit run yet. Click "Run Pre-Check" above to analyze environment parity.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- TAB 2: AUDIT & REPORT VIEWER -->
       <section id="tab-report" class="tab-content space-y-6 hidden">
         <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
@@ -648,34 +824,38 @@
           </div>
 
           <!-- Summary Metric Cards -->
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3" id="reportMetrics">
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Total Migrated Agents</div>
-              <div id="metricAgents" class="text-xl font-bold text-purple-400 mt-1">0</div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5" id="reportMetrics">
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Migrated Agents</div>
+              <div id="metricAgents" class="text-lg font-bold text-purple-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Total Migrated Notebooks</div>
-              <div id="metricNotebooks" class="text-xl font-bold text-blue-400 mt-1">0</div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Registry Skills</div>
+              <div id="metricSkills" class="text-lg font-bold text-blue-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Total Studio Artifacts</div>
-              <div id="metricArtifacts" class="text-xl font-bold text-pink-400 mt-1">0</div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Migrated Notebooks</div>
+              <div id="metricNotebooks" class="text-lg font-bold text-cyan-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Total Chat Sessions</div>
-              <div id="metricSessions" class="text-xl font-bold text-cyan-400 mt-1">0</div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Studio Artifacts</div>
+              <div id="metricArtifacts" class="text-lg font-bold text-pink-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Total User Memories</div>
-              <div id="metricMemories" class="text-xl font-bold text-emerald-400 mt-1">0</div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Chat Sessions</div>
+              <div id="metricSessions" class="text-lg font-bold text-indigo-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Failed / Skipped Items</div>
-              <div id="metricFailed" class="text-xl font-bold text-amber-400 mt-1">0</div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">User Memories</div>
+              <div id="metricMemories" class="text-lg font-bold text-emerald-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-3.5 rounded-xl">
-              <div class="text-[11px] text-gray-400">Pipeline Duration</div>
-              <div id="metricDuration" class="text-xl font-bold text-indigo-400 mt-1">0.00s</div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Failed / Skipped</div>
+              <div id="metricFailed" class="text-lg font-bold text-amber-400 mt-1">0</div>
+            </div>
+            <div class="bg-gray-950/80 border border-gray-800 p-3 rounded-xl">
+              <div class="text-[10px] text-gray-400 font-medium">Duration</div>
+              <div id="metricDuration" class="text-lg font-bold text-gray-200 mt-1">0.00s</div>
             </div>
           </div>
 
@@ -957,7 +1137,7 @@
                     </label>
                     <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
                       <input type="checkbox" id="singleOptAgents" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600">
-                      <span>🤖 Agents & Tools</span>
+                      <span>🤖 Agents & Workflows</span>
                     </label>
                     <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
                       <input type="checkbox" id="singleOptSessions" checked class="rounded bg-gray-800 border-gray-700 text-cyan-500">
@@ -1048,7 +1228,7 @@
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
                   <span>🤖</span>
-                  <span class="text-xs font-bold text-gray-300">Agents & Tools</span>
+                  <span class="text-xs font-bold text-gray-300">Agents & Workflows</span>
                 </div>
                 <span id="singleAgCount" class="text-xs px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-bold">0</span>
               </div>
@@ -2128,6 +2308,10 @@
   <script>
     let activeReportData = null;
     let tableItems = [];
+    let activeAuditResult = null;
+    let selectedAuditCategory = 'ALL';
+
+    let isAuditRunning = false;
 
     function switchTab(tabId) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -2144,7 +2328,11 @@
         navEl.classList.remove('text-gray-400', 'hover:bg-gray-800');
       }
 
-      if (tabId === 'history') {
+      if (tabId === 'audit') {
+        if (!activeAuditResult && !isAuditRunning) {
+          runConfigPreCheck();
+        }
+      } else if (tabId === 'history') {
         loadHistoricalRuns();
       } else if (tabId === 'sessions') {
         loadSourceSessions();
@@ -2173,6 +2361,431 @@
             inputUsers.value = candidateUsers.join(', ');
           }
         }
+      }
+    }
+
+    async function runConfigPreCheck() {
+      if (isAuditRunning) return;
+      isAuditRunning = true;
+
+      const btn = document.getElementById('btnPreCheckGaps');
+      const btnRerun = document.getElementById('btnAuditRerun');
+      const spinner = document.getElementById('auditSpinner');
+      const rerunLabel = btnRerun ? btnRerun.querySelector('span:last-child') : null;
+      if (btn) btn.disabled = true;
+      if (btnRerun) btnRerun.disabled = true;
+      if (spinner) spinner.classList.remove('hidden');
+      if (rerunLabel) rerunLabel.textContent = ' Scanning...';
+
+      // Ensure the audit tab is visible without calling switchTab recursively
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.nav-btn').forEach(el => {
+        el.classList.remove('bg-indigo-600', 'text-white', 'shadow-lg');
+        el.classList.add('text-gray-400', 'hover:text-white', 'hover:bg-gray-800');
+      });
+      const tabEl = document.getElementById('tab-audit');
+      const navEl = document.getElementById('nav-audit');
+      if (tabEl) tabEl.classList.remove('hidden');
+      if (navEl) {
+        navEl.classList.add('bg-indigo-600', 'text-white', 'shadow-lg');
+        navEl.classList.remove('text-gray-400', 'hover:bg-gray-800');
+      }
+
+      const srcProj = getFieldValue('srcProjectId') || '';
+      const srcLoc = getFieldValue('srcLocation') || 'global';
+      const srcColl = getFieldValue('srcCollectionId') || 'default_collection';
+      const srcApp = getFieldValue('srcAppId') || '';
+
+      const tgtProj = getFieldValue('tgtProjectId') || '';
+      const tgtLoc = getFieldValue('tgtLocation') || 'global';
+      const tgtColl = getFieldValue('tgtCollectionId') || 'default_collection';
+      const tgtApp = getFieldValue('tgtAppId') || '';
+
+      // Update summary bar labels
+      const srcProjEl = document.getElementById('auditSourceProjectLabel');
+      if (srcProjEl) srcProjEl.textContent = srcProj || 'Not configured';
+      const srcLocEl = document.getElementById('auditSourceLocationLabel');
+      if (srcLocEl) srcLocEl.textContent = `Location: ${srcLoc} | Engine: ${srcApp || 'default_engine'}`;
+
+      const tgtProjEl = document.getElementById('auditTargetProjectLabel');
+      if (tgtProjEl) tgtProjEl.textContent = tgtProj || 'Not configured';
+      const tgtLocEl = document.getElementById('auditTargetLocationLabel');
+      if (tgtLocEl) tgtLocEl.textContent = `Location: ${tgtLoc} | Engine: ${tgtApp || 'default_engine'}`;
+
+      // Reset metric cards to scanning state
+      const scoreEl = document.getElementById('auditReadinessScore');
+      const gaugeEl = document.getElementById('auditGaugeIndicator');
+      if (scoreEl) {
+        scoreEl.textContent = '--%';
+        scoreEl.className = 'text-2xl font-extrabold text-indigo-400 mt-1 animate-pulse';
+      }
+      if (gaugeEl) gaugeEl.textContent = '⏳';
+      const totalEl = document.getElementById('auditTotalChecks');
+      if (totalEl) totalEl.textContent = '...';
+      const matchEl = document.getElementById('auditMatchesCount');
+      if (matchEl) matchEl.textContent = '...';
+      const gapsEl = document.getElementById('auditGapsCount');
+      if (gapsEl) gapsEl.textContent = '...';
+      const warnEl = document.getElementById('auditWarningsCount');
+      if (warnEl) warnEl.textContent = '...';
+
+      const syncBtn = document.getElementById('btnSyncEngineSettings');
+      if (syncBtn) syncBtn.classList.add('hidden');
+
+      // Set remediation plan to "Building..." state while scans are running
+      const remContainer = document.getElementById('auditRemediationContainer');
+      const remList = document.getElementById('auditRemediationList');
+      if (remContainer && remList) {
+        remContainer.classList.remove('hidden');
+        remList.innerHTML = `
+          <div class="bg-gray-900/90 border border-amber-500/30 rounded-lg p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="font-bold text-amber-300 flex items-center gap-2 text-xs">
+                <span class="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-mono animate-spin">⚙️</span>
+                <span>Synchronize Engine Features & Settings</span>
+              </div>
+              <span class="text-[10px] px-2.5 py-0.5 rounded-full font-mono bg-amber-950 text-amber-300 border border-amber-800/60 animate-pulse font-semibold">Building...</span>
+            </div>
+            <p class="text-gray-400 text-xs">Evaluating configuration differences and assembling remediation commands while scans are running...</p>
+            <div class="bg-black/80 font-mono text-[11px] text-amber-400/90 p-3.5 rounded-lg border border-gray-800 flex items-center gap-3">
+              <svg class="animate-spin h-3.5 w-3.5 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="animate-pulse">Building.... scanning environments and verifying configuration parity</span>
+            </div>
+          </div>
+        `;
+      }
+
+      const tbody = document.getElementById('auditTableBody');
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-indigo-400 font-medium animate-pulse">Running configuration parity pre-check between source and target environments...</td></tr>';
+      }
+
+      try {
+        const configPayload = getAuditConfigPayload();
+        const response = await fetch('/api/audit/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(configPayload)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.message || `Audit check failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        activeAuditResult = data.audit;
+        renderAuditDashboard(activeAuditResult);
+      } catch (err) {
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-rose-400 font-medium">Failed to run configuration audit: ${escapeHtml(err.message)}</td></tr>`;
+        }
+        if (remContainer) {
+          remContainer.classList.add('hidden');
+        }
+      } finally {
+        isAuditRunning = false;
+        if (btn) btn.disabled = false;
+        if (btnRerun) btnRerun.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+        if (rerunLabel) rerunLabel.textContent = '🔄 Run Pre-Check';
+      }
+    }
+
+    function renderAuditDashboard(audit) {
+      if (!audit) return;
+
+      const timeEl = document.getElementById('auditTimestampText');
+      if (timeEl) {
+        timeEl.textContent = `Last Pre-Check Run: ${new Date(audit.timestamp).toLocaleString()} | Source: ${audit.sourceProject} (${audit.sourceLocation}) ➔ Target: ${audit.targetProject} (${audit.targetLocation})`;
+      }
+
+      // Metric Cards
+      const scoreEl = document.getElementById('auditReadinessScore');
+      const gaugeEl = document.getElementById('auditGaugeIndicator');
+      if (scoreEl) {
+        scoreEl.textContent = `${audit.readinessScore}%`;
+        if (audit.readinessScore >= 80) {
+          scoreEl.className = 'text-2xl font-extrabold text-emerald-400 mt-1';
+          if (gaugeEl) gaugeEl.textContent = '🟢 Ready';
+        } else if (audit.readinessScore >= 50) {
+          scoreEl.className = 'text-2xl font-extrabold text-amber-400 mt-1';
+          if (gaugeEl) gaugeEl.textContent = '🟡 Caution';
+        } else {
+          scoreEl.className = 'text-2xl font-extrabold text-rose-400 mt-1';
+          if (gaugeEl) gaugeEl.textContent = '🔴 Gaps Block Migration';
+        }
+      }
+
+      const totalEl = document.getElementById('auditTotalChecks');
+      if (totalEl) totalEl.textContent = audit.totalChecks;
+      const matchEl = document.getElementById('auditMatchesCount');
+      if (matchEl) matchEl.textContent = audit.matchingCount;
+      const gapsEl = document.getElementById('auditGapsCount');
+      if (gapsEl) gapsEl.textContent = audit.missingInTargetCount;
+      const warnEl = document.getElementById('auditWarningsCount');
+      if (warnEl) warnEl.textContent = audit.diffsCount + audit.warningsCount;
+
+      // Actionable Remediation Panel
+      const remContainer = document.getElementById('auditRemediationContainer');
+      const remList = document.getElementById('auditRemediationList');
+      if (remContainer && remList) {
+        if (audit.remediationPlan && audit.remediationPlan.length > 0) {
+          remContainer.classList.remove('hidden');
+          remList.innerHTML = audit.remediationPlan.map((plan, idx) => `
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-3.5 space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="font-bold text-white flex items-center gap-1.5">
+                  <span class="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-mono">${idx + 1}</span>
+                  <span>${escapeHtml(plan.title)}</span>
+                </div>
+                ${plan.command ? `<button type="button" onclick="copyPlanCommand(${idx}, this)" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[11px] font-mono border border-gray-700 flex items-center gap-1.5 transition"><span>📋</span><span>Copy CLI</span></button>` : ''}
+              </div>
+              <p class="text-gray-400 text-xs">${escapeHtml(plan.description)}</p>
+              ${plan.command ? `<div id="auditPlanCmd_${idx}" class="bg-black/80 font-mono text-[11px] text-amber-300 p-2.5 rounded-lg border border-gray-800 overflow-x-auto select-all whitespace-pre-wrap">${escapeHtml(plan.command)}</div>` : ''}
+            </div>
+          `).join('');
+        } else {
+          remContainer.classList.add('hidden');
+        }
+      }
+
+      const syncBtn = document.getElementById('btnSyncEngineSettings');
+      if (syncBtn) {
+        const hasEngineGaps = (audit.items || []).some(i => i.category === 'ENGINE' && (i.status === 'DIFF' || i.status === 'MISSING_IN_TARGET' || i.status === 'WARNING') && i.id.startsWith('engine-'));
+        if (hasEngineGaps) {
+          syncBtn.classList.remove('hidden');
+        } else {
+          syncBtn.classList.add('hidden');
+        }
+      }
+
+      filterAuditTable();
+    }
+
+    function copyTextValue(text, btn) {
+      if (!text) return;
+      const onCopied = () => {
+        if (btn) {
+          const origHtml = btn.innerHTML;
+          btn.innerHTML = '<span>✓</span> <span>Copied!</span>';
+          btn.classList.add('text-emerald-400', 'border-emerald-500/50');
+          setTimeout(() => {
+            btn.innerHTML = origHtml;
+            btn.classList.remove('text-emerald-400', 'border-emerald-500/50');
+          }, 2000);
+        }
+      };
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(onCopied).catch(() => {
+          fallbackCopyText(text, onCopied);
+        });
+      } else {
+        fallbackCopyText(text, onCopied);
+      }
+    }
+
+    function fallbackCopyText(text, onCopied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-999999px';
+        ta.style.top = '-999999px';
+        ta.setAttribute('readonly', '');
+        document.body.appendChild(ta);
+        ta.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (success && onCopied) onCopied();
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+    }
+
+    function copyPlanCommand(idx, btn) {
+      let text = '';
+      if (activeAuditResult && activeAuditResult.remediationPlan && activeAuditResult.remediationPlan[idx]) {
+        text = activeAuditResult.remediationPlan[idx].command || '';
+      }
+      if (!text) {
+        const el = document.getElementById(`auditPlanCmd_${idx}`);
+        if (el) text = el.textContent || el.innerText || '';
+      }
+      copyTextValue(text, btn);
+    }
+
+    function getAuditConfigPayload() {
+      const srcProj = getFieldValue('srcProjectId') || '';
+      const srcLoc = getFieldValue('srcLocation') || 'global';
+      const srcColl = getFieldValue('srcCollectionId') || 'default_collection';
+      const srcApp = getFieldValue('srcAppId') || '';
+
+      const tgtProj = getFieldValue('tgtProjectId') || '';
+      const tgtLoc = getFieldValue('tgtLocation') || 'global';
+      const tgtColl = getFieldValue('tgtCollectionId') || 'default_collection';
+      const tgtApp = getFieldValue('tgtAppId') || '';
+
+      return {
+        source: {
+          projectId: srcProj,
+          appLocation: srcLoc,
+          collectionId: srcColl,
+          appId: srcApp,
+          assistantId: 'default_assistant'
+        },
+        target: {
+          projectId: tgtProj,
+          appLocation: tgtLoc,
+          collectionId: tgtColl,
+          appId: tgtApp,
+          assistantId: 'default_assistant'
+        },
+        auth: {
+          authType: (document.getElementById('srcIdp')?.value === 'entra' || document.getElementById('srcIdp')?.value === 'okta' || document.getElementById('tgtIdp')?.value === 'entra' || document.getElementById('tgtIdp')?.value === 'okta')
+            ? 'WORKFORCE_IDENTITY_FEDERATION' 
+            : 'SERVICE_ACCOUNT_KEY',
+          wifConfigPath: './workforce-identity-config.json',
+          serviceAccountKeyPath: document.getElementById('optSaKey')?.value?.trim() || './sa-dwd-key.json'
+        },
+        idpMapping: {
+          sourceIdp: document.getElementById('srcIdp')?.value === 'entra' ? 'MICROSOFT_ENTRA_ID' : (document.getElementById('srcIdp')?.value === 'okta' ? 'OKTA' : 'GOOGLE_CLOUD_IDENTITY'),
+          targetIdp: document.getElementById('tgtIdp')?.value === 'entra' ? 'MICROSOFT_ENTRA_ID' : (document.getElementById('tgtIdp')?.value === 'okta' ? 'OKTA' : 'GOOGLE_CLOUD_IDENTITY'),
+          domainRules: (document.getElementById('srcIdp')?.value !== document.getElementById('tgtIdp')?.value) ? getActiveDomainRules() : []
+        },
+        options: {
+          dryRun: true
+        }
+      };
+    }
+
+    async function syncEngineSettings() {
+      const btn = document.getElementById('btnSyncEngineSettings');
+      const originalHtml = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-3.5 w-3.5 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Syncing...';
+      }
+
+      try {
+        const configPayload = getAuditConfigPayload();
+        const response = await fetch('/api/audit/sync-engine-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(configPayload)
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || data.error || 'Failed to sync engine settings');
+        }
+
+        alert('✅ ' + data.message + '\n\nRe-running configuration parity pre-check...');
+        await runConfigPreCheck();
+      } catch (err) {
+        alert('❌ Failed to synchronize engine settings: ' + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+      }
+    }
+
+    function setAuditCategoryFilter(cat) {
+      selectedAuditCategory = cat;
+      document.querySelectorAll('.audit-cat-btn').forEach(btn => {
+        if (btn.getAttribute('data-cat') === cat) {
+          btn.className = 'audit-cat-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium';
+        } else {
+          btn.className = 'audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white';
+        }
+      });
+      filterAuditTable();
+    }
+
+    function filterAuditTable() {
+      if (!activeAuditResult) return;
+      const q = (document.getElementById('auditSearchInput')?.value || '').toLowerCase().trim();
+      const tbody = document.getElementById('auditTableBody');
+      const badge = document.getElementById('auditItemsBadge');
+      if (!tbody) return;
+
+      const filtered = (activeAuditResult.items || []).filter(item => {
+        if (selectedAuditCategory !== 'ALL' && item.category !== selectedAuditCategory) return false;
+        if (q) {
+          const matchName = (item.name || '').toLowerCase().includes(q);
+          const matchSrc = String(item.sourceValue || '').toLowerCase().includes(q);
+          const matchTgt = String(item.targetValue || '').toLowerCase().includes(q);
+          const matchDetails = (item.details || '').toLowerCase().includes(q);
+          return matchName || matchSrc || matchTgt || matchDetails;
+        }
+        return true;
+      });
+
+      if (badge) badge.textContent = `${filtered.length} Items`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-500">No items match the selected filter.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(item => {
+        let badgeHtml = '';
+        if (item.status === 'MATCH') {
+          badgeHtml = '<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold text-[10px]">✅ MATCH</span>';
+        } else if (item.status === 'MISSING_IN_TARGET') {
+          badgeHtml = '<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-semibold text-[10px]">❌ MISSING GAP</span>';
+        } else if (item.status === 'WARNING') {
+          badgeHtml = '<span class="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold text-[10px]">⚠️ WARNING</span>';
+        } else {
+          badgeHtml = '<span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold text-[10px]">ℹ️ DIFF</span>';
+        }
+
+        return `
+          <tr class="hover:bg-gray-900/60 transition">
+            <td class="py-2.5 px-3 font-medium text-white">${escapeHtml(item.name)}</td>
+            <td class="py-2.5 px-3 text-center">${badgeHtml}</td>
+            <td class="py-2.5 px-3 font-mono text-[11px] text-gray-300">${escapeHtml(String(item.sourceValue || '-'))}</td>
+            <td class="py-2.5 px-3 font-mono text-[11px] ${item.status === 'MISSING_IN_TARGET' ? 'text-rose-400 font-bold' : 'text-emerald-300'}">${escapeHtml(String(item.targetValue || '-'))}</td>
+            <td class="py-2.5 px-3 text-[11px] text-gray-400">${escapeHtml(item.details || '-')}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function downloadAuditReport(format) {
+      if (!activeAuditResult) {
+        alert('Please run a configuration pre-check first before exporting.');
+        return;
+      }
+      if (format === 'json') {
+        const str = JSON.stringify(activeAuditResult, null, 2);
+        const blob = new Blob([str], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ge-config-audit-${activeAuditResult.sourceProject}-to-${activeAuditResult.targetProject}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const res = await fetch('/api/audit/config/markdown', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(activeAuditResult)
+        });
+        const md = await res.text();
+        const blob = new Blob([md], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ge-config-audit-${activeAuditResult.sourceProject}-to-${activeAuditResult.targetProject}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
       }
     }
 
@@ -2628,14 +3241,8 @@
     function copyModalCommand() {
       const code = document.getElementById('auditModalCode')?.textContent;
       if (!code) return;
-      navigator.clipboard.writeText(code).then(() => {
-        const btn = document.getElementById('btnCopyModalCmd');
-        if (btn) {
-          const orig = btn.textContent;
-          btn.textContent = '✓ Copied!';
-          setTimeout(() => btn.textContent = orig, 2000);
-        }
-      });
+      const btn = document.getElementById('btnCopyModalCmd');
+      copyTextValue(code, btn);
     }
 
     async function saveWifConfigFromAudit(btnEl = null) {
@@ -3041,15 +3648,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     function copyToClipboard(elementId, btnId) {
       const el = document.getElementById(elementId);
       if (!el) return;
-      const text = el.textContent || el.innerText;
-      navigator.clipboard.writeText(text).then(() => {
-        const btn = document.getElementById(btnId);
-        if (btn) {
-          const originalText = btn.innerHTML;
-          btn.innerHTML = '<span>✓ Copied!</span>';
-          setTimeout(() => { btn.innerHTML = originalText; }, 2000);
-        }
-      });
+      const text = el.textContent || el.innerText || '';
+      const btn = document.getElementById(btnId);
+      copyTextValue(text, btn);
     }
 
     function getFieldValue(fieldId) {
@@ -3214,14 +3815,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const appData = await resolveAppUrlForEngine(projectId, location, collectionId, engineId, idpType);
       const urlToCopy = appData.webAppUrl || appData.consoleUrl || (projectId ? `https://console.cloud.google.com/gen-app-builder/engines?project=${encodeURIComponent(projectId)}` : 'https://console.cloud.google.com/gen-app-builder/engines');
 
-      navigator.clipboard.writeText(urlToCopy).then(() => {
-        const btn = document.getElementById(isSrc ? 'btnCopySrcApp' : 'btnCopyTgtApp');
-        if (btn) {
-          const orig = btn.innerHTML;
-          btn.innerHTML = '<span>✓ Copied!</span>';
-          setTimeout(() => { btn.innerHTML = orig; }, 2000);
-        }
-      });
+      const btn = document.getElementById(isSrc ? 'btnCopySrcApp' : 'btnCopyTgtApp');
+      copyTextValue(urlToCopy, btn);
     }
 
     function handleEngineSelectChange(fieldId) {
@@ -3462,11 +4057,14 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const el = document.getElementById(`stage-${stageId}`);
       if (!el) return;
       if (status === 'active') {
-        el.className = 'bg-indigo-950/60 border border-indigo-500/50 p-3 rounded-lg flex items-center gap-2 text-indigo-300 font-medium animate-pulse';
+        el.className = 'bg-indigo-950/60 border border-indigo-500/50 p-2.5 rounded-lg flex items-center gap-2 text-indigo-300 font-medium animate-pulse';
         el.querySelector('.stage-icon').textContent = '⏳';
       } else if (status === 'done') {
-        el.className = 'bg-emerald-950/40 border border-emerald-500/40 p-3 rounded-lg flex items-center gap-2 text-emerald-300 font-medium';
+        el.className = 'bg-emerald-950/40 border border-emerald-500/40 p-2.5 rounded-lg flex items-center gap-2 text-emerald-300 font-medium';
         el.querySelector('.stage-icon').textContent = '✅';
+      } else if (status === 'pending') {
+        el.className = 'bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400';
+        el.querySelector('.stage-icon').textContent = '⚪';
       }
     }
 
@@ -3514,6 +4112,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           badge.className = 'text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded-md font-mono';
         }
       }
+      renderUserSelectionTable();
     }
 
     function setExplicitMapping(sourceIdentity, newTarget) {
@@ -3524,6 +4123,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       } else {
         delete explicitIdpOverrides[sourceIdentity];
       }
+      renderUserSelectionTable();
     }
 
     function applyIdpPreset(presetKey) {
@@ -3543,6 +4143,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         toInput.value = '';
       }
       previewAutoMapping();
+      renderUserSelectionTable();
     }
 
     function getActiveDomainRules() {
@@ -3716,8 +4317,16 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             <td class="py-2 px-3">
               ${sourceBadge}
             </td>
-            <td class="py-2 px-3 font-mono text-emerald-300">
-              <span class="text-gray-500 mr-1">➔</span>${escapeHtml(mappedTarget)}
+            <td class="py-2 px-3 font-mono">
+              <div class="flex items-center gap-1.5">
+                <span class="text-gray-500 text-xs">➔</span>
+                <input type="text" 
+                  value="${escapeHtml(mappedTarget)}" 
+                  onchange="updateTargetMappedIdentity('${escapeHtml(u.email)}', this.value)" 
+                  class="w-full max-w-xs bg-gray-900 border border-gray-700 hover:border-gray-600 focus:border-emerald-500 rounded px-2.5 py-1 text-xs text-emerald-300 font-mono focus:outline-none transition shadow-inner"
+                  placeholder="Target mapped identity"
+                  title="Click to edit destination identity for this user" />
+              </div>
             </td>
             <td class="py-2 px-3 text-center">
               <button type="button" onclick="removeUserFromSelection('${escapeHtml(u.email)}')" class="px-2 py-0.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/60 rounded transition" title="Delete / Remove this user from migration list">
@@ -3727,6 +4336,17 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           </tr>
         `;
       }).join('');
+    }
+
+    function updateTargetMappedIdentity(sourceEmail, targetEmail) {
+      if (!sourceEmail) return;
+      const cleanTarget = (targetEmail || '').trim();
+      if (cleanTarget && cleanTarget !== sourceEmail) {
+        explicitIdpOverrides[sourceEmail] = cleanTarget;
+      } else {
+        delete explicitIdpOverrides[sourceEmail];
+      }
+      renderUserSelectionTable();
     }
 
     function toggleUserSelection(email) {
@@ -3744,6 +4364,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
     function removeUserFromSelection(email) {
       targetedUsersList = targetedUsersList.filter(u => u.email !== email);
+      delete explicitIdpOverrides[email];
       renderUserSelectionTable();
     }
 
@@ -3767,24 +4388,37 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       }
     }
 
-    async function discoverSourceUsers(preserveManual = true) {
+    async function discoverSourceUsers(preserveManual = true, forceScope = null) {
       const btn = document.getElementById('btnDiscoverUsers');
+      const btnAll = document.getElementById('btnDiscoverAllUsers');
       const spinner = document.getElementById('discoverUsersSpinner');
       const srcProj = getFieldValue('srcProjectId') || '';
       const srcLoc = getFieldValue('srcLocation') || 'global';
       const srcApp = getFieldValue('srcAppId') || '';
 
       if (btn) btn.disabled = true;
+      if (btnAll) btnAll.disabled = true;
       if (spinner) spinner.classList.remove('hidden');
 
-      try {
-        const res = await fetch(`/api/users/discover?projectId=${encodeURIComponent(srcProj)}&location=${encodeURIComponent(srcLoc)}&appId=${encodeURIComponent(srcApp)}`);
-        const data = await res.json();
-        if (data.users && data.users.length > 0) {
-          const manualUsers = preserveManual 
-            ? targetedUsersList.filter(u => u.sources?.includes('Admin Specified'))
-            : [];
+      let queryParams = `projectId=${encodeURIComponent(srcProj)}&location=${encodeURIComponent(srcLoc)}`;
+      if (forceScope === 'all') {
+        queryParams += '&scope=all';
+      } else if (forceScope === 'single' && srcApp) {
+        queryParams += `&appId=${encodeURIComponent(srcApp)}&scope=single`;
+      } else if (srcApp && srcApp !== 'custom') {
+        queryParams += `&appId=${encodeURIComponent(srcApp)}`;
+      } else {
+        queryParams += '&scope=all';
+      }
 
+      try {
+        const res = await fetch(`/api/users/discover?${queryParams}`);
+        const data = await res.json();
+        const manualUsers = preserveManual 
+          ? targetedUsersList.filter(u => u.sources?.includes('Admin Specified'))
+          : [];
+
+        if (data.users && data.users.length > 0) {
           const newDiscovered = data.users.map(u => ({
             email: u.email,
             selected: true,
@@ -3800,14 +4434,15 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
               targetedUsersList.push(m);
             }
           }
-          renderUserSelectionTable();
         } else {
-          renderUserSelectionTable();
+          targetedUsersList = [...manualUsers];
         }
+        renderUserSelectionTable();
       } catch (err) {
         console.warn('Failed to discover source users:', err);
       } finally {
         if (btn) btn.disabled = false;
+        if (btnAll) btnAll.disabled = false;
         if (spinner) spinner.classList.add('hidden');
       }
     }
@@ -3832,6 +4467,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       // Clear previous logs
       document.getElementById('liveLogs').innerHTML = '';
 
+      ['preflight', 'skills', 'notebooks', 'agents', 'sessions', 'artifacts', 'reports'].forEach(s => updateStage(s, 'pending'));
       updateStage('preflight', 'active');
       addLog(`Initiating migration job (Dry Run: ${isDryRun})...`);
 
@@ -3890,12 +4526,14 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         },
         identityMapping: effectiveIdentityMapping,
         options: {
-          migrateNotebooks: document.getElementById('optNotebooks').checked,
-          migrateAgents: document.getElementById('optAgents').checked,
-          migrateSessions: document.getElementById('optSessions').checked,
+          migrateNotebooks: document.getElementById('optNotebooks') ? document.getElementById('optNotebooks').checked : true,
+          migrateSkills: document.getElementById('optSkills') ? document.getElementById('optSkills').checked : true,
+          migrateAgents: document.getElementById('optAgents') ? document.getElementById('optAgents').checked : true,
+          migrateSessions: document.getElementById('optSessions') ? document.getElementById('optSessions').checked : true,
           migrateMemories: document.getElementById('optMemories') ? document.getElementById('optMemories').checked : true,
           exportMemories: false,
-          exportArtifacts: document.getElementById('optArtifacts').checked,
+          exportArtifacts: document.getElementById('optArtifacts') ? document.getElementById('optArtifacts').checked : true,
+          resumeFrom: document.getElementById('optResumeFrom')?.value?.trim() || undefined,
           userFilter: selectedUsers,
           agentTypes: document.getElementById('optAgentType').value === 'LOW_CODE_WORKFLOWS' 
             ? ['LOW_CODE', 'WORKFLOW'] 
@@ -3958,31 +4596,36 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
                 const msg = data.message || data.line || '';
                 addLog(msg, data.level || 'INFO');
 
-                // Dynamic progress updates across all 6 phases
-                if (msg.includes('Executing Pre-Flight') || msg.includes('Verifying target')) {
+                // Dynamic progress updates across all phases
+                if (msg.includes('Executing Pre-Flight') || msg.includes('Verifying target') || msg.includes('RESUME CHECKPOINT')) {
                   updateStage('preflight', 'active');
                   document.getElementById('progressBar').style.width = '10%';
                   document.getElementById('progressPercent').textContent = '10%';
-                } else if (msg.includes('Discovering source notebooks') || msg.includes('Discovering notebooks') || msg.includes('Restored')) {
+                } else if (msg.includes('enterprise skills') || msg.includes('Creating Skill')) {
                   updateStage('preflight', 'done');
+                  updateStage('skills', 'active');
+                  document.getElementById('progressBar').style.width = '24%';
+                  document.getElementById('progressPercent').textContent = '24%';
+                } else if (msg.includes('Discovering source notebooks') || msg.includes('Discovering notebooks') || msg.includes('Restored notebook') || msg.includes('Restored DataStore')) {
+                  updateStage('skills', 'done');
                   updateStage('notebooks', 'active');
-                  document.getElementById('progressBar').style.width = '28%';
-                  document.getElementById('progressPercent').textContent = '28%';
+                  document.getElementById('progressBar').style.width = '42%';
+                  document.getElementById('progressPercent').textContent = '42%';
                 } else if (msg.includes('Discovering agents') || msg.includes('Created target Agent') || msg.includes('Published agent')) {
                   updateStage('notebooks', 'done');
                   updateStage('agents', 'active');
-                  document.getElementById('progressBar').style.width = '52%';
-                  document.getElementById('progressPercent').textContent = '52%';
-                } else if (msg.includes('Multi-User Chat History') || msg.includes('Restored session')) {
+                  document.getElementById('progressBar').style.width = '62%';
+                  document.getElementById('progressPercent').textContent = '62%';
+                } else if (msg.includes('Multi-User Chat History') || msg.includes('Restored session') || msg.includes('User Memories')) {
                   updateStage('agents', 'done');
                   updateStage('sessions', 'active');
-                  document.getElementById('progressBar').style.width = '75%';
-                  document.getElementById('progressPercent').textContent = '75%';
+                  document.getElementById('progressBar').style.width = '80%';
+                  document.getElementById('progressPercent').textContent = '80%';
                 } else if (msg.includes('user artifacts across') || msg.includes('Archived')) {
                   updateStage('sessions', 'done');
                   updateStage('artifacts', 'active');
-                  document.getElementById('progressBar').style.width = '90%';
-                  document.getElementById('progressPercent').textContent = '90%';
+                  document.getElementById('progressBar').style.width = '92%';
+                  document.getElementById('progressPercent').textContent = '92%';
                 }
               } else if (eventType === 'stage') {
                 if (data.stage === 'complete') {
@@ -4005,6 +4648,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         }
 
         updateStage('preflight', 'done');
+        updateStage('skills', 'done');
         updateStage('notebooks', 'done');
         updateStage('agents', 'done');
         updateStage('sessions', 'done');
@@ -4192,6 +4836,10 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const isDryRun = report.mode === 'DRY_RUN' || report.isDryRun || (report.results && report.results.some(r => r.status === 'DRY_RUN'));
 
       document.getElementById('metricAgents').textContent = report.summary?.totalMigratedAgents ?? 0;
+      const totalSkillsCount = report.summary?.totalMigratedSkills ?? (report.results || []).filter(r => r.type === 'SKILL' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length;
+      const elSkills = document.getElementById('metricSkills');
+      if (elSkills) elSkills.textContent = totalSkillsCount;
+
       document.getElementById('metricNotebooks').textContent = report.summary?.totalMigratedNotebooks ?? 0;
       const totalArtifactsCount = report.summary?.totalMigratedArtifacts ?? report.summary?.totalDiscoveredArtifacts ?? (report.results || []).reduce((acc, r) => acc + (r.details?.artifactsCount || 0) + (r.details?.notesCount || 0), 0);
       const totalSessionsCount = report.summary?.totalMigratedSessions ?? report.summary?.totalDiscoveredSessions ?? (report.results || []).filter(r => r.type === 'SESSION' || r.type === 'CHAT').length;
@@ -4339,14 +4987,16 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         }
 
         const typeBadge = item.type === 'NOTEBOOK'
-          ? '<span class="text-blue-400 font-semibold">📓 Notebook</span>'
+          ? '<span class="text-cyan-400 font-semibold">📓 Notebook</span>'
           : item.type === 'SESSION' || item.type === 'CHAT'
-            ? '<span class="text-cyan-400 font-semibold">💬 Chat History</span>'
+            ? '<span class="text-indigo-400 font-semibold">💬 Chat History</span>'
             : item.type === 'MEMORY'
               ? '<span class="text-emerald-400 font-semibold">🧠 Memory</span>'
               : item.type === 'ARTIFACT'
                 ? '<span class="text-pink-400 font-semibold">🎨 Studio Artifact</span>'
-                : '<span class="text-purple-400 font-semibold">🤖 Agent</span>';
+                : item.type === 'SKILL'
+                  ? '<span class="text-blue-400 font-semibold">🎯 Registry Skill</span>'
+                  : '<span class="text-purple-400 font-semibold">🤖 Agent</span>';
 
         const targetProj = (activeReportData && activeReportData.target && activeReportData.target.projectId) || (document.getElementById('tgtProjectId')?.value || 'testgebackupandrestorev2').trim();
         const targetApp = (activeReportData && activeReportData.target && (activeReportData.target.engineId || activeReportData.target.appId)) || (getFieldValue('tgtAppId') || 'testnotebooks_1784725785748').trim();
@@ -4359,7 +5009,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             targetIdHtml = `<a href="${agentUrl}" target="_blank" title="Open Agent in Cloud Console" class="text-emerald-400 hover:text-emerald-300 hover:underline font-mono inline-flex items-center gap-1"><span>${escapeHtml(item.targetId)}</span><svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a>`;
           } else if (item.type === 'NOTEBOOK') {
             const dsUrl = `https://console.cloud.google.com/gen-app-builder/data-stores?project=${encodeURIComponent(targetProj)}`;
-            targetIdHtml = `<a href="${dsUrl}" target="_blank" title="Open DataStores in Cloud Console" class="text-blue-400 hover:text-blue-300 hover:underline font-mono inline-flex items-center gap-1"><span>${escapeHtml(item.targetId)}</span><svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a>`;
+            targetIdHtml = `<a href="${dsUrl}" target="_blank" title="Open DataStores in Cloud Console" class="text-cyan-400 hover:text-cyan-300 hover:underline font-mono inline-flex items-center gap-1"><span>${escapeHtml(item.targetId)}</span><svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a>`;
           } else {
             targetIdHtml = escapeHtml(item.targetId);
           }
@@ -4413,6 +5063,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       lines.push(`| Asset Type / Category | Discovered | Successfully Migrated / Verified |`);
       lines.push(`| :--- | :--- | :--- |`);
       lines.push(`| **🤖 Custom Agents** | ${report.summary?.totalDiscoveredAgents || 0} | ${report.summary?.totalMigratedAgents || 0} |`);
+      lines.push(`| **🎯 Registry Skills** | ${report.summary?.totalDiscoveredSkills || (report.results || []).filter(r => r.type === 'SKILL').length} | ${report.summary?.totalMigratedSkills || (report.results || []).filter(r => r.type === 'SKILL' && (r.status === 'SUCCESS' || r.status === 'DRY_RUN')).length} |`);
       lines.push(`| **📓 Gemini Notebooks** | ${report.summary?.totalDiscoveredNotebooks || 0} | ${report.summary?.totalMigratedNotebooks || 0} |`);
       lines.push(`| **📄 Notebook Sources** | ${report.summary?.totalDiscoveredSources || 0} | ${report.summary?.totalMigratedSources || 0}${report.summary?.totalFailedSources > 0 ? ` (${report.summary.totalFailedSources} failed)` : ''} |`);
       lines.push(`| **💬 Chat History Sessions** | ${report.summary?.totalDiscoveredSessions || 0} | ${report.summary?.totalMigratedSessions || 0} |`);
@@ -4426,7 +5077,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         lines.push(`| Type | Display Name / Fact | Status | Original Owner | Target Owner / ID | Notes / Reason |`);
         lines.push(`| :--- | :--- | :---: | :--- | :--- | :--- |`);
         for (const r of report.results) {
-          const icon = r.type === 'MEMORY' ? '🧠' : r.type === 'AGENT' ? '🤖' : r.type === 'NOTEBOOK' ? '📓' : r.type === 'SESSION' || r.type === 'CHAT' ? '💬' : '🎨';
+          const icon = r.type === 'MEMORY' ? '🧠' : r.type === 'AGENT' ? '🤖' : r.type === 'NOTEBOOK' ? '📓' : r.type === 'SKILL' ? '🎯' : r.type === 'SESSION' || r.type === 'CHAT' ? '💬' : '🎨';
           const statusIcon = r.status === 'SUCCESS' ? '✅' : r.status === 'DRY_RUN' ? '🧪' : r.status === 'SKIPPED' ? '⏭️' : '❌';
           lines.push(`| ${icon} **${r.type}** | ${r.displayName || 'Untitled'} | ${statusIcon} ${r.status} | \`${r.originalOwner || 'N/A'}\` | \`${r.targetOwner || r.targetId || 'N/A'}\` | ${r.error || 'Ready / Restored'} |`);
         }

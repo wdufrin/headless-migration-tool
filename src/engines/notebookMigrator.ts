@@ -311,7 +311,14 @@ export class NotebookMigrator {
     logger.info(`Total discovered source notebooks across all users: ${allSourceNotebooks.length}`);
 
     const userFilter = options.userFilter || [];
-    const filteredNotebooks = allSourceNotebooks.filter(nb => this.isNotebookOwnedByUser(nb, userFilter));
+    const filteredNotebooks = allSourceNotebooks.filter(nb => {
+      const nbId = nb.name.split('/').pop() || '';
+      if (options.skipIds && (options.skipIds.includes(nbId) || options.skipIds.includes(`NOTEBOOK:${nbId}`))) {
+        logger.info(`Skipping already-migrated Notebook "${nb.title || nbId}" (${nbId}) from previous checkpoint.`);
+        return false;
+      }
+      return this.isNotebookOwnedByUser(nb, userFilter);
+    });
     logger.info(`Selected ${filteredNotebooks.length} notebooks matching user filters.`);
 
     const concurrency = options.concurrency || 10;

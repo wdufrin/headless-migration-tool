@@ -28,18 +28,34 @@ describe('MemoryMigrator Engine', () => {
       assistantId: 'default_assistant'
     },
     options: {
+      migrateNotebooks: true,
+      migrateAgents: true,
+      migrateSessions: true,
       migrateMemories: true,
+      migrateSkills: true,
       exportMemories: true,
+      exportArtifacts: true,
+      agentTypes: ['ALL'],
+      agentStatusFilter: 'ALL',
+      excludeDraftAgents: false,
+      notebookIds: [],
       dryRun: false,
       concurrency: 5,
       userFilter: [],
-      preserveOwnership: true
+      preserveOwnership: true,
+      preserveSharing: false,
+      publishAgents: false,
+      prefixReplacements: {},
+      allowOverwrite: false,
+      skipIds: [],
+      logLevel: 'INFO'
     },
     identityMapping: {
       'alice@source.com': 'alice@target.com'
     },
     datastoreMapping: {},
-    collectionMapping: {}
+    collectionMapping: {},
+    toolMapping: {}
   };
 
   const sampleMemories: Memory[] = [

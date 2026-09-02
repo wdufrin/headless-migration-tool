@@ -45,12 +45,14 @@ export class MigrationReporter {
     lines.push(`| **Discovered Notebook Sources** | ${report.summary.totalDiscoveredSources ?? 0} |`);
     lines.push(`| **Discovered Chat Sessions** | ${report.summary.totalDiscoveredSessions ?? 0} |`);
     lines.push(`| **Discovered User Memories** | ${report.summary.totalDiscoveredMemories ?? 0} |`);
+    lines.push(`| **Discovered Enterprise Skills** | ${report.summary.totalDiscoveredSkills ?? 0} |`);
     lines.push(`| **Successfully Migrated Agents** | ${report.summary.totalMigratedAgents} |`);
     lines.push(`| **Successfully Migrated Notebooks** | ${report.summary.totalMigratedNotebooks} |`);
     lines.push(`| **Successfully Migrated Sources** | ${report.summary.totalMigratedSources ?? 0} |`);
     lines.push(`| **Failed Notebook Sources** | ${report.summary.totalFailedSources ?? 0} |`);
     lines.push(`| **Successfully Migrated Chat Sessions** | ${report.summary.totalMigratedSessions ?? 0} |`);
     lines.push(`| **Successfully Migrated User Memories** | ${report.summary.totalMigratedMemories ?? 0} |`);
+    lines.push(`| **Successfully Migrated Skills** | ${report.summary.totalMigratedSkills ?? 0} |`);
     lines.push(`| **Exported Studio Artifacts** | ${report.summary.totalMigratedArtifacts ?? report.summary.totalDiscoveredArtifacts ?? 0} |`);
     lines.push(`| **Skipped Items** | ${report.summary.totalSkipped} |`);
     lines.push(`| **Failed Items** | ${report.summary.totalFailed} |\n`);
@@ -64,6 +66,7 @@ export class MigrationReporter {
       memories: number;
       sessions: number;
       artifacts: number;
+      skills: number;
       migrated: number;
       skipped: number;
       failed: number;
@@ -72,7 +75,7 @@ export class MigrationReporter {
     }>();
 
     for (const r of report.results) {
-      const u = r.originalOwner || 'Unknown User';
+      const u = r.originalOwner || 'System / Shared';
       if (!userGroups.has(u)) {
         userGroups.set(u, {
           agents: 0,
@@ -82,6 +85,7 @@ export class MigrationReporter {
           memories: 0,
           sessions: 0,
           artifacts: 0,
+          skills: 0,
           migrated: 0,
           skipped: 0,
           failed: 0,
@@ -99,6 +103,7 @@ export class MigrationReporter {
       else if (r.type === 'MEMORY') grp.memories++;
       else if (r.type === 'SESSION') grp.sessions++;
       else if (r.type === 'ARTIFACT') grp.artifacts++;
+      else if (r.type === 'SKILL') grp.skills++;
 
       if (r.status === 'SUCCESS' || r.status === 'DRY_RUN') {
         grp.migrated++;
@@ -114,8 +119,8 @@ export class MigrationReporter {
     if (userGroups.size > 0) {
       lines.push(`---`);
       lines.push(`## 3. User Reconciliation & Migration Status`);
-      lines.push(`| Source User Identity | Target Google Identity | Status | Agents | Notebooks | Sources Restored | Sources Failed | Memories | Sessions | Artifacts | Dropped/Skipped | Notes / Reason |`);
-      lines.push(`| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |`);
+      lines.push(`| Source User Identity | Target Google Identity | Status | Agents | Notebooks | Sources Restored | Sources Failed | Memories | Sessions | Skills | Artifacts | Dropped/Skipped | Notes / Reason |`);
+      lines.push(`| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |`);
 
       for (const [userEmail, stats] of userGroups.entries()) {
         let userStatus = '✅ FULLY MIGRATED';
@@ -135,7 +140,7 @@ export class MigrationReporter {
         const failedSourcesBadge = stats.sourcesFailed > 0 ? `⚠️ **${stats.sourcesFailed}**` : '0';
 
         lines.push(
-          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | ${stats.agents} | ${stats.notebooks} | ${stats.sourcesRestored} | ${failedSourcesBadge} | ${stats.memories} | ${stats.sessions} | ${stats.artifacts} | **${stats.skipped}** | ${notes} |`
+          `| \`${userEmail}\` | \`${stats.targetOwner}\` | ${statusBadge} **${userStatus}** | ${stats.agents} | ${stats.notebooks} | ${stats.sourcesRestored} | ${failedSourcesBadge} | ${stats.memories} | ${stats.sessions} | ${stats.skills} | ${stats.artifacts} | **${stats.skipped}** | ${notes} |`
         );
       }
       lines.push('');
@@ -148,7 +153,7 @@ export class MigrationReporter {
 
     for (const r of report.results) {
       const statusIcon = r.status === 'SUCCESS' ? '✅' : r.status === 'DRY_RUN' ? '🔍' : r.status === 'SKIPPED' ? '⏭️' : '❌';
-      const typeIcon = r.type === 'MEMORY' ? '🧠' : r.type === 'AGENT' ? '🤖' : r.type === 'NOTEBOOK' ? '📓' : r.type === 'SESSION' ? '💬' : '🎨';
+      const typeIcon = r.type === 'MEMORY' ? '🧠' : r.type === 'AGENT' ? '🤖' : r.type === 'NOTEBOOK' ? '📓' : r.type === 'SESSION' ? '💬' : r.type === 'SKILL' ? '🎯' : '🎨';
       
       let noteText = r.error || 'Migrated successfully';
       if (r.type === 'NOTEBOOK' && r.details) {

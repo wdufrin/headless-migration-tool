@@ -297,6 +297,13 @@ export class DiscoveryEngineClient {
     return this.request<AppEngine>(url, 'GET', undefined, env.projectId);
   }
 
+  async patchEngine(env: EnvironmentConfig, payload: any, updateMask: string): Promise<AppEngine> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const collection = env.collectionId || 'default_collection';
+    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}?updateMask=${encodeURIComponent(updateMask)}`;
+    return this.request<AppEngine>(url, 'PATCH', payload, env.projectId);
+  }
+
   async listDataStores(env: EnvironmentConfig): Promise<DataStore[]> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
