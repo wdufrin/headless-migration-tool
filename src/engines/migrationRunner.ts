@@ -400,7 +400,7 @@ export class MigrationRunner {
       try {
         const { ArtifactExtractor } = await import('./artifactExtractor.js');
         const artifactExtractor = new ArtifactExtractor(config, this.auth);
-        const artResult = await artifactExtractor.exportAllToDirectory('./exports/artifacts');
+        const artResult = await artifactExtractor.exportAllToDirectory('./exports/artifacts', discoveredUsers);
         logger.info(`Archived ${artResult.count} user presentations, dashboards, and media manifests to ${artResult.exportDir}`);
       } catch (artErr: any) {
         logger.warn(`Artifact export skipped: ${artErr.message}`);

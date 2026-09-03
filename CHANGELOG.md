@@ -5,6 +5,36 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-03
+
+### Added
+- **Standalone Zero-Dependency Interactive Quiz & Flashcards Applications**:
+  - Engineered dedicated interactive HTML5 players (`NotebookLmArtifactFormatter.renderInteractiveQuizHtml` and `renderInteractiveFlashcardsHtml`) that run 100% offline in any modern browser without external runtime dependencies or runtime errors.
+  - **Interactive Quiz Player**: Instant green/red feedback per selection, detailed answer rationales, hint reveal toggle, live score tracker, and quiz retake functionality.
+  - **Interactive 3D Flashcards Player**: Smooth CSS 3D card flip animations, next/prev navigation, randomized card shuffle, full study table sheet, and keyboard shortcuts (`Space`/`Enter` to flip, `Left`/`Right` arrows to navigate).
+  - **Dual-Format Learning Export**: Automatically exports each quiz and flashcard set into both an interactive browser application (`.html`) and a formatted printable Microsoft Word document (`.docx`) with Markdown question banks (`.md`).
+  - **NotebookLM App API Polyfill**: Added `NotebookLmArtifactFormatter.injectNotebookAppApiPolyfill` to inject `window.notebookAppApi` and strip CSP restrictions, resolving the `NotebookLMThemeProvider should not be used without a NotebookLM API` blank-screen crash on raw Google Angular bundles (`*_AngularApp.html`).
+- **Explainer Video Media Compression & Email Delivery (`ffmpeg`)**:
+  - Integrated `UserReportGenerator.isFfmpegAvailable` and updated `optimizeMediaArtifact` to automatically compress high-bitrate Explainer Videos (`.mp4`) > 12 MB via `ffmpeg`.
+  - Transcodes to 720p H.264 CRF 28 with 64k AAC audio, reducing file size by 70–75% (e.g. 24.2 MB &rarr; 6.7 MB) with zero perceptible quality degradation.
+  - Automatically promotes compressed videos into active email attachments, fitting under Gmail's 14.5 MB unencoded attachment threshold.
+- **NotebookLM Studio Artifacts Single-ZIP Archive (`NotebookLM_Artifacts.zip`)**:
+  - Bundles all user presentations (`.pptx`), infographics (`.jpg`), explainer videos (`.mp4`), interactive learning apps (`.html`), and study guides (`.docx`) into a single compressed `NotebookLM_Artifacts.zip` archive.
+  - Intelligent companion-file deduplication: static HTML document companions are excluded when Word documents are present, but interactive `.html` applications (`quiz`, `flashcard`, `app`) are explicitly retained alongside Word study guides.
+  - Automatic multi-part zip partitioning fallback (`NotebookLM_Artifacts_Part1.zip`, `Part2.zip`) if uncompressible files exceed 14.5 MB.
+- **Interactive Checklists & Action-Oriented User Onboarding**:
+  - Overhauled user handover checklist with actionable checkboxes `[ ]` showing exact steps for end users: First-time login, opening Connectors, authorizing enterprise workplace tools (Outlook, OneDrive, Google Drive, Jira, ServiceNow, Entra ID), publishing transferred agents, and extracting the artifacts archive.
+  - Collapsed raw technical source documents audit into an expandable `<details>` accordion to prevent cluttering user action items.
+- **Test Suite Expansion**:
+  - Expanded automated test suite to 71 tests across 10 test suites covering `isFfmpegAvailable`, `extractAppData`, interactive Quiz and Flashcards rendering, Angular API polyfilling, and interactive app attachment retention in email dispatching with 100% pass rate.
+
+### Changed
+- **Clean Notes Migration Policy (Removed Workaround)**:
+  - Completely removed fallback ingestion of studio notes into notebook grounding sources in `NotebookMigrator`.
+  - Notes are now strictly preserved and delivered as authentic user artifacts: formatted Microsoft Word documents (`Note - <Title>.docx`), clean styled HTML (`Note - <Title>.html`), and Markdown (`Note - <Title>.md`).
+
+---
+
 ## [1.3.0] - 2026-09-02
 
 ### Added
@@ -26,7 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replaced raw DataStore creation CLI commands with clear informational guidance directing administrators to the Google Cloud Console / Gemini Enterprise Console for connector setup.
 - **CLI & Config Schema Enhancements**:
   - Added `--no-skills` flag to headless CLI (`gemini-migrate`) and `migrateSkills: boolean` configuration parameter in `migration-config.json` schema.
-  - Added 47 comprehensive automated tests across 9 test suites covering `SkillMigrator`, `ConfigAuditEngine`, `AgentRegistryClient`, and E2E migration pipelines with 100% pass rate.
+  - Added `--generate-user-reports` and `--notify-users [overrideEmail]` CLI flags for automated post-migration handover dispatch.
+  - Added 60 comprehensive automated tests across 10 test suites covering `SkillMigrator`, `ConfigAuditEngine`, `NotebookLmArtifactFormatter`, and E2E migration pipelines with 100% pass rate.
+- **Bulk Organization Handover Email Dispatcher**:
+  - Added automated bulk email dispatching capabilities to `UserReportGenerator` (`sendBulkUserEmails`) and `POST /api/user-reports/send-bulk-email`.
+  - Built-in pacing delay (250ms default) between successive calls to avoid Google Workspace / Gmail REST API rate limits and SMTP burst throttling.
+  - **Safe Staging Mode**: Supports an override recipient email (e.g. `staging-auditor@company.com`) allowing admins to redirect all bulk user checklists and attachments to a staging inbox to audit formatting, links, and Office files before employee delivery.
+  - Enhanced User Handover UI: Table "Select All" checkbox and per-user row checkboxes, segmented toggle between `[ 👤 Single User Test ]` and `[ 👥 Bulk Organization Dispatch ]`, audience selector (All Discovered Users vs. Selected Users from Table), live animated progress bar, and itemized user dispatch logs.
+- **NotebookLM Direct Export Parity (`NotebookLmArtifactFormatter`)**:
+  - High-fidelity artifact formatting matching authentic direct-from-NotebookLM downloads.
+  - **Clean Human-Readable Filenames**: Automatically eliminates `(Restored)` tags, `(Copy)` suffixes, double underscores, and redundant title stuttering (e.g., `Trane Technologies - Q2 2026 Strategic Blueprint.pptx`).
+  - **Native Microsoft Word (`.docx`)**: Generates documents with standard 1-inch margins, Arial font hierarchy, native markdown table formatting with shading (`#F1F5F9`) and borders, bullet/numbered lists, inline bold/italics/code, citations (`[1]`, `[Source]`), and page numbers (`PageNumber.CURRENT` of `PageNumber.TOTAL_PAGES`).
+  - **Native Microsoft PowerPoint (`.pptx`)**: Generates 16:9 widescreen presentations (`LAYOUT_16x9`) with executive light theme, automatic slide splitting, multi-column card layouts, bold lead-in bullet points, presenter speaker notes extraction (`slide.addNotes`), and slide number footers (`Slide X of Y`).
+  - **Authentic Clean Markdown & HTML**: Strips internal debug markers (`**Artifact Type:** ...`) and generates Google Docs-styled printable HTML documents and interactive 16:9 presentation deck carousels.
+  - **Artifact Exporter Integration**: Updated `ArtifactExtractor.exportAllToDirectory` to output rich `.docx` and `.pptx` files into `./exports/artifacts/` alongside clean companion Markdown and HTML files.
 
 ### Fixed
 - **Pre-Check Audit UI Responsiveness & Timer**:

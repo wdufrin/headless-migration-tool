@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.3.0</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.4.0</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -1597,6 +1597,9 @@
                 <table class="w-full text-left text-xs">
                   <thead class="bg-gray-900/90 text-gray-400 uppercase font-mono border-b border-gray-800">
                     <tr>
+                      <th class="py-3 px-3 w-10 text-center">
+                        <input type="checkbox" id="selectAllUsersCheck" onchange="toggleSelectAllUsers(this.checked)" title="Select All Users" class="rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-400 cursor-pointer">
+                      </th>
                       <th class="py-3 px-4">User Account</th>
                       <th class="py-3 px-4">Migrated Assets</th>
                       <th class="py-3 px-4">Local Folder & Bundle</th>
@@ -1605,7 +1608,7 @@
                   </thead>
                   <tbody id="userReportsTableBody" class="divide-y divide-gray-800/60 font-mono">
                     <tr>
-                      <td colspan="4" class="py-8 text-center text-gray-500">
+                      <td colspan="5" class="py-8 text-center text-gray-500">
                         Loading discovered users and handover bundles...
                       </td>
                     </tr>
@@ -1619,15 +1622,27 @@
               <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
                 <div class="flex items-center justify-between">
                   <h3 class="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-2">
-                    <span>✉️ Google Workspace Gmail API Dispatcher</span>
+                    <span>✉️ Email Checklist Dispatcher</span>
                   </h3>
                   <span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-mono">Gmail REST API</span>
                 </div>
-                <p class="text-xs text-gray-400 leading-relaxed">
-                  Send the official handover checklist and attached artifacts directly via <strong>Google Workspace Gmail API</strong> (<code class="text-gray-300">gmail.googleapis.com</code>) using your enterprise credentials.
-                </p>
 
-                <div class="space-y-3 pt-1">
+                <!-- Mode Switcher: Single vs Bulk -->
+                <div class="flex rounded-lg bg-gray-900 p-1 border border-gray-800">
+                  <button type="button" id="tabModeSingle" onclick="switchEmailMode('single')" class="flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition bg-amber-600 text-white shadow">
+                    👤 Single User Test
+                  </button>
+                  <button type="button" id="tabModeBulk" onclick="switchEmailMode('bulk')" class="flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition text-gray-400 hover:text-white">
+                    👥 Bulk Organization
+                  </button>
+                </div>
+
+                <!-- PANEL 1: Single User Test Dispatch -->
+                <div id="panelSingleEmail" class="space-y-3 pt-1">
+                  <p class="text-xs text-gray-400 leading-relaxed">
+                    Test the official handover checklist and Office attachments (.docx, .pptx) for a single user via <strong>Google Workspace Gmail API</strong>.
+                  </p>
+
                   <div>
                     <label class="block text-xs font-medium text-gray-400 mb-1">Select User Handover Bundle</label>
                     <select id="selEmailUser" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-mono">
@@ -1652,22 +1667,103 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                       </svg>
-                      <span>🚀 Send Email via Gmail API</span>
+                      <span>🚀 Send Test Email via Gmail API</span>
                     </button>
+                  </div>
+
+                  <!-- Live Dispatch Feedback Window -->
+                  <div id="emailDispatchFeedback" class="hidden p-3 bg-gray-900 border border-gray-800 rounded-lg space-y-2">
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="font-semibold text-emerald-400 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>Dispatch Status</span>
+                      </span>
+                      <span id="emailDispatchStatusText" class="text-gray-400 font-mono text-[11px]">Ready</span>
+                    </div>
+                    <p id="emailDispatchMessage" class="text-xs text-gray-300"></p>
                   </div>
                 </div>
 
-                <!-- Live Dispatch Feedback Window -->
-                <div id="emailDispatchFeedback" class="hidden p-3 bg-gray-900 border border-gray-800 rounded-lg space-y-2">
-                  <div class="flex items-center justify-between text-xs">
-                    <span class="font-semibold text-emerald-400 flex items-center gap-1.5">
-                      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span>Dispatch Status</span>
-                    </span>
-                    <span id="emailDispatchStatusText" class="text-gray-400 font-mono text-[11px]">Ready</span>
+                <!-- PANEL 2: Bulk Organization Dispatch -->
+                <div id="panelBulkEmail" class="hidden space-y-3 pt-1">
+                  <p class="text-xs text-gray-400 leading-relaxed">
+                    Automate dispatch of personalized checklists and attachments across the entire organization with burst throttling protection.
+                  </p>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1.5">Target Audience</label>
+                    <div class="space-y-1.5">
+                      <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer p-2 rounded-lg bg-gray-900/60 border border-gray-800 hover:border-gray-700">
+                        <input type="radio" name="bulkAudience" id="bulkAudienceAll" value="all" checked onchange="onBulkAudienceChange()" class="text-amber-500 focus:ring-amber-400">
+                        <span>All Discovered Users <span id="bulkAllUsersCount" class="text-amber-400 font-mono font-semibold">(0)</span></span>
+                      </label>
+                      <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer p-2 rounded-lg bg-gray-900/60 border border-gray-800 hover:border-gray-700">
+                        <input type="radio" name="bulkAudience" id="bulkAudienceSelected" value="selected" onchange="onBulkAudienceChange()" class="text-amber-500 focus:ring-amber-400">
+                        <span>Selected Users from Table <span id="bulkSelectedUsersCount" class="text-indigo-400 font-mono font-semibold">(0 selected)</span></span>
+                      </label>
+                    </div>
                   </div>
-                  <p id="emailDispatchMessage" class="text-xs text-gray-300"></p>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Sender Email (<code class="text-amber-400">From</code>)</label>
+                    <input type="email" id="inputBulkSenderEmail" value="" placeholder="admin@your-company.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-amber-500">
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-amber-300 mb-1 flex items-center justify-between">
+                      <span>Safe Staging Mode (Override Recipient)</span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">Recommended</span>
+                    </label>
+                    <input type="email" id="inputBulkOverrideEmail" value="" placeholder="admin-staging@company.com (optional)" class="w-full bg-gray-900 border border-amber-500/50 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-amber-400">
+                    <p class="text-[11px] text-gray-400 mt-1">If set, all user checklists will be redirected to this address so you can audit email formatting & attachments before staff delivery.</p>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Pacing Delay</label>
+                      <select id="selBulkPacing" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none">
+                        <option value="250" selected>250ms (Balanced)</option>
+                        <option value="500">500ms (Conservative)</option>
+                        <option value="1000">1000ms (High Safety)</option>
+                        <option value="0">0ms (Immediate)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Delivery Protocol</label>
+                      <input type="text" readonly value="Gmail REST API" class="w-full bg-gray-900/50 border border-gray-800 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 font-mono cursor-not-allowed">
+                    </div>
+                  </div>
+
+                  <div class="pt-2">
+                    <button onclick="sendBulkHandoverEmails()" id="btnSendBulkEmails" class="w-full py-2.5 bg-gradient-to-r from-amber-600 via-indigo-600 to-purple-600 hover:from-amber-500 hover:via-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/20 transition flex items-center justify-center gap-2">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      <span>🚀 Dispatch Bulk Emails</span>
+                    </button>
+                  </div>
+
+                  <!-- Live Bulk Progress & Results Tracker -->
+                  <div id="bulkDispatchTracker" class="hidden p-3 bg-gray-900 border border-gray-800 rounded-lg space-y-3">
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="font-semibold text-amber-300 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                        <span id="bulkTrackerTitle">Dispatching Emails...</span>
+                      </span>
+                      <span id="bulkTrackerCount" class="text-gray-400 font-mono text-[11px]">0 / 0</span>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                      <div id="bulkProgressBar" class="bg-gradient-to-r from-amber-500 to-indigo-500 h-full w-0 transition-all duration-300"></div>
+                    </div>
+
+                    <!-- Itemized Log Scroll -->
+                    <div id="bulkResultsList" class="max-h-48 overflow-y-auto space-y-1.5 text-[11px] font-mono pr-1">
+                    </div>
+                  </div>
                 </div>
+
               </div>
             </div>
 
@@ -4069,6 +4165,44 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     }
 
     let explicitIdpOverrides = {};
+    let detectedTargetDomain = '@yourcompany.com';
+
+    async function loadDetectedTargetDomain() {
+      try {
+        const res = await fetch('/api/idp/presets');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.detectedTargetDomain && data.detectedTargetDomain !== '@yourcompany.com') {
+            detectedTargetDomain = data.detectedTargetDomain;
+            const toInput = document.getElementById('mapToDomain');
+            if (toInput && (!toInput.value || toInput.value === '@yourcompany.com')) {
+              toInput.value = detectedTargetDomain;
+              renderUserSelectionTable();
+            }
+          }
+        }
+      } catch {}
+    }
+    loadDetectedTargetDomain();
+
+    function computeMappedTarget(sourceEmail, domainRules) {
+      if (!sourceEmail) return '';
+      if (!domainRules || domainRules.length === 0) return sourceEmail;
+      const cleanEmail = sourceEmail.trim().toLowerCase();
+      for (const rule of domainRules) {
+        const from = (rule.fromDomain || '').trim().toLowerCase();
+        const to = (rule.toDomain || '').trim().toLowerCase();
+        if (!from || !to) continue;
+        const normalizedTo = to.startsWith('@') ? to : `@${to}`;
+        const cleanSuffix = from.replace(/^[@*.]*/, '');
+        if (cleanSuffix && (cleanEmail.endsWith(`.${cleanSuffix}`) || cleanEmail.endsWith(`@${cleanSuffix}`))) {
+          const atIdx = cleanEmail.indexOf('@');
+          const userPart = atIdx > -1 ? cleanEmail.substring(0, atIdx) : cleanEmail;
+          return `${userPart}${normalizedTo}`;
+        }
+      }
+      return sourceEmail;
+    }
 
     function onIdpSelectionChanged() {
       const srcIdp = document.getElementById('srcIdp')?.value || 'google';
@@ -4129,15 +4263,16 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     function applyIdpPreset(presetKey) {
       const fromInput = document.getElementById('mapFromDomain');
       const toInput = document.getElementById('mapToDomain');
+      const targetDomain = detectedTargetDomain || '@yourcompany.com';
       if (presetKey === 'ENTRA_TO_GOOGLE') {
         fromInput.value = '.onmicrosoft.com';
-        toInput.value = '@yourcompany.com';
+        toInput.value = targetDomain;
       } else if (presetKey === 'OKTA_TO_GOOGLE') {
         fromInput.value = '.okta.com';
-        toInput.value = '@yourcompany.com';
+        toInput.value = targetDomain;
       } else if (presetKey === 'PING_TO_GOOGLE') {
         fromInput.value = '.pingidentity.com';
-        toInput.value = '@yourcompany.com';
+        toInput.value = targetDomain;
       } else {
         fromInput.value = '';
         toInput.value = '';
@@ -4160,6 +4295,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const tableContainer = document.getElementById('idpMappingTableContainer');
       const countEl = document.getElementById('idpMappingCount');
       const srcProj = getFieldValue('srcProjectId') || '';
+      const srcLoc = getFieldValue('srcLocation') || 'global';
+      const srcApp = getFieldValue('srcAppId') || '';
 
       const domainRules = getActiveDomainRules();
       if (domainRules.length === 0) {
@@ -4171,11 +4308,15 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       tableContainer.innerHTML = '<div class="p-4 text-center text-gray-400">Discovering users and computing cross-IdP mappings...</div>';
 
       try {
+        const sourceUsers = targetedUsersList.map(u => u.email);
         const res = await fetch('/api/idp/auto-map', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             sourceProjectId: srcProj,
+            sourceLocation: srcLoc,
+            sourceAppId: srcApp,
+            sourceUsers: sourceUsers.length > 0 ? sourceUsers : undefined,
             domainRules,
             explicitMappings: explicitIdpOverrides
           })
@@ -4289,15 +4430,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
       const domainRules = getActiveDomainRules();
       tbody.innerHTML = targetedUsersList.map((u) => {
-        let mappedTarget = u.email;
-        if (domainRules.length > 0) {
-          for (const rule of domainRules) {
-            if (u.email.endsWith(rule.fromDomain)) {
-              mappedTarget = u.email.replace(new RegExp(rule.fromDomain + '$'), rule.toDomain);
-              break;
-            }
-          }
-        }
+        let mappedTarget = computeMappedTarget(u.email, domainRules);
         if (explicitIdpOverrides[u.email]) {
           mappedTarget = explicitIdpOverrides[u.email];
         }
@@ -4438,6 +4571,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           targetedUsersList = [...manualUsers];
         }
         renderUserSelectionTable();
+        if (typeof previewAutoMapping === 'function' && getActiveDomainRules().length > 0) {
+          previewAutoMapping();
+        }
       } catch (err) {
         console.warn('Failed to discover source users:', err);
       } finally {
@@ -4484,16 +4620,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
       usersToMap.forEach(u => {
         if (!effectiveIdentityMapping[u.email]) {
-          let mappedTarget = u.email;
-          if (domainRules.length > 0) {
-            for (const rule of domainRules) {
-              if (u.email.endsWith(rule.fromDomain)) {
-                mappedTarget = u.email.replace(new RegExp(rule.fromDomain + '$'), rule.toDomain);
-                break;
-              }
-            }
-          }
-          effectiveIdentityMapping[u.email] = mappedTarget;
+          effectiveIdentityMapping[u.email] = computeMappedTarget(u.email, domainRules);
         }
       });
 
@@ -6616,6 +6743,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         // Populate table
         tbody.innerHTML = loadedUserReports.map(u => `
           <tr class="hover:bg-gray-900/60 transition">
+            <td class="py-3.5 px-3 text-center">
+              <input type="checkbox" class="user-select-check rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-400 cursor-pointer" value="${escapeHtml(u.userEmail)}" onchange="updateSelectedUsersCount()">
+            </td>
             <td class="py-3.5 px-4 font-bold text-white flex items-center gap-2">
               <span class="w-7 h-7 rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center text-xs font-mono">👤</span>
               <div>
@@ -6651,9 +6781,61 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           </tr>
         `).join('');
 
+        updateBulkAudienceCounts();
+
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-red-400">Failed to load users: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-red-400">Failed to load users: ${err.message}</td></tr>`;
       }
+    }
+
+    function toggleSelectAllUsers(checked) {
+      const checks = document.querySelectorAll('.user-select-check');
+      checks.forEach(c => c.checked = checked);
+      updateSelectedUsersCount();
+    }
+
+    function updateSelectedUsersCount() {
+      const checks = document.querySelectorAll('.user-select-check:checked');
+      const count = checks.length;
+      const total = document.querySelectorAll('.user-select-check').length;
+      const badge = document.getElementById('bulkSelectedUsersCount');
+      if (badge) badge.textContent = `(${count} selected)`;
+      const selectAll = document.getElementById('selectAllUsersCheck');
+      if (selectAll) {
+        selectAll.checked = count > 0 && count === total;
+        selectAll.indeterminate = count > 0 && count < total;
+      }
+    }
+
+    function switchEmailMode(mode) {
+      const btnSingle = document.getElementById('tabModeSingle');
+      const btnBulk = document.getElementById('tabModeBulk');
+      const pnlSingle = document.getElementById('panelSingleEmail');
+      const pnlBulk = document.getElementById('panelBulkEmail');
+
+      if (mode === 'single') {
+        if (btnSingle) btnSingle.className = 'flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition bg-amber-600 text-white shadow';
+        if (btnBulk) btnBulk.className = 'flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition text-gray-400 hover:text-white';
+        if (pnlSingle) pnlSingle.classList.remove('hidden');
+        if (pnlBulk) pnlBulk.classList.add('hidden');
+      } else {
+        if (btnBulk) btnBulk.className = 'flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition bg-indigo-600 text-white shadow';
+        if (btnSingle) btnSingle.className = 'flex-1 py-1.5 px-3 rounded-md text-xs font-semibold transition text-gray-400 hover:text-white';
+        if (pnlBulk) pnlBulk.classList.remove('hidden');
+        if (pnlSingle) pnlSingle.classList.add('hidden');
+        updateBulkAudienceCounts();
+      }
+    }
+
+    function onBulkAudienceChange() {
+      updateBulkAudienceCounts();
+    }
+
+    function updateBulkAudienceCounts() {
+      const total = loadedUserReports.length;
+      const countEl = document.getElementById('bulkAllUsersCount');
+      if (countEl) countEl.textContent = `(${total})`;
+      updateSelectedUsersCount();
     }
 
     async function generateAllUserBundles() {
@@ -6690,8 +6872,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     }
 
     function selectUserForEmail(userEmail) {
-      document.getElementById('selEmailUser').value = userEmail;
-      document.getElementById('inputTestEmail').focus();
+      switchEmailMode('single');
+      const sel = document.getElementById('selEmailUser');
+      if (sel) sel.value = userEmail;
+      const inp = document.getElementById('inputTestEmail');
+      if (inp) inp.focus();
     }
 
     async function sendTestHandoverEmail() {
@@ -6775,7 +6960,129 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         }
       } finally {
         btn.disabled = false;
-        btn.innerHTML = `<span>🚀 Send Email via Gmail API</span>`;
+        btn.innerHTML = `<span>🚀 Send Test Email via Gmail API</span>`;
+      }
+    }
+
+    async function sendBulkHandoverEmails() {
+      const isSelected = document.getElementById('bulkAudienceSelected')?.checked;
+      let targetEmails = [];
+
+      if (isSelected) {
+        const checked = document.querySelectorAll('.user-select-check:checked');
+        targetEmails = Array.from(checked).map(c => c.value);
+        if (targetEmails.length === 0) {
+          alert('Please select at least one user from the table, or choose "All Discovered Users".');
+          return;
+        }
+      } else {
+        targetEmails = loadedUserReports.map(u => u.userEmail);
+        if (targetEmails.length === 0) {
+          alert('No discovered users found to send emails to. Please run a migration first.');
+          return;
+        }
+      }
+
+      const senderEmail = (document.getElementById('inputBulkSenderEmail')?.value || '').trim();
+      const overrideEmail = (document.getElementById('inputBulkOverrideEmail')?.value || '').trim();
+      const pacingDelayMs = parseInt(document.getElementById('selBulkPacing')?.value || '250', 10);
+
+      const confirmMsg = overrideEmail
+        ? `Dispatch bulk emails for ${targetEmails.length} user(s) in SAFE STAGING MODE?\n\nAll ${targetEmails.length} customized checklists and attachments will be sent to:\n👉 ${overrideEmail}`
+        : `⚠️ LIVE PRODUCTION SEND WARNING ⚠️\n\nYou are about to send official migration handover emails to ${targetEmails.length} REAL corporate users.\n\nContinue?`;
+
+      if (!confirm(confirmMsg)) return;
+
+      const btn = document.getElementById('btnSendBulkEmails');
+      const tracker = document.getElementById('bulkDispatchTracker');
+      const trackerTitle = document.getElementById('bulkTrackerTitle');
+      const trackerCount = document.getElementById('bulkTrackerCount');
+      const progressBar = document.getElementById('bulkProgressBar');
+      const resultsList = document.getElementById('bulkResultsList');
+
+      btn.disabled = true;
+      btn.innerHTML = `<span>⏳ Dispatching Bulk Emails (${targetEmails.length})...</span>`;
+      tracker.classList.remove('hidden');
+      trackerTitle.textContent = `Dispatching Bulk Handover Emails...`;
+      trackerCount.textContent = `0 / ${targetEmails.length}`;
+      progressBar.style.width = '15%';
+      resultsList.innerHTML = `<div class="text-gray-400 py-1">Initializing bulk queue and preparing Office attachments...</div>`;
+
+      try {
+        const env = getActiveEnvParams();
+        const headers = { 'Content-Type': 'application/json' };
+        if (env?.queryParams?.token) {
+          headers['Authorization'] = `Bearer ${env.queryParams.token}`;
+        }
+
+        const activeId = activeReportData ? (activeReportData.migrationId || activeReportData.id) : undefined;
+        const res = await fetch('/api/user-reports/send-bulk-email', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            userEmails: targetEmails,
+            senderEmail: senderEmail || undefined,
+            overrideRecipientEmail: overrideEmail || undefined,
+            pacingDelayMs,
+            reportId: activeId
+          })
+        });
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.message);
+
+        progressBar.style.width = '100%';
+        progressBar.className = data.failed === 0 ? 'bg-emerald-500 h-full w-full transition-all' : 'bg-amber-500 h-full w-full transition-all';
+        trackerTitle.textContent = data.failed === 0 ? `🎉 All ${data.sent} Emails Sent!` : `Completed: ${data.sent} Sent, ${data.failed} Failed`;
+        trackerCount.textContent = `${data.sent} / ${data.total}`;
+
+        const items = data.results || [];
+        const hasScopeError = items.some(it => it.error && (it.error.toLowerCase().includes('insufficient authentication scopes') || it.error.includes('403')));
+
+        let scopeAlertHtml = '';
+        if (hasScopeError) {
+          scopeAlertHtml = `
+            <div class="p-2.5 rounded-lg bg-red-950/40 border border-red-800/80 space-y-1.5 text-xs text-left mb-2">
+              <div class="text-red-400 font-semibold flex items-center gap-1.5">
+                <span>⚠️</span>
+                <span>Gmail API Scope Required for Dispatch</span>
+              </div>
+              <p class="text-gray-300 text-[11px]">
+                Your gcloud credentials require the <code class="text-amber-300">gmail.send</code> scope to send messages on behalf of your sender account. Run in your terminal:
+              </p>
+              <div class="bg-black/90 p-2 rounded border border-gray-700 font-mono text-[11px] text-emerald-400 select-all overflow-x-auto">
+                gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/gmail.send
+              </div>
+              <p class="text-[10px] text-gray-400">
+                All personalized MIME bundles (.eml) and attachments are already preserved on disk in <code>./user_handover_reports/</code>.
+              </p>
+            </div>
+          `;
+        }
+
+        resultsList.innerHTML = scopeAlertHtml + items.map(item => `
+          <div class="p-2 rounded bg-gray-950 border ${item.success ? 'border-emerald-800/60' : 'border-red-800/60'} space-y-1 text-left">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white">${escapeHtml(item.userEmail)}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold ${item.success ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-red-950 text-red-300 border border-red-800'}">
+                ${item.success ? '✓ SENT' : '✗ FAILED'}
+              </span>
+            </div>
+            <div class="text-[10px] text-gray-400 flex items-center justify-between">
+              <span>To: <span class="text-amber-300">${escapeHtml(item.recipient)}</span></span>
+              <span>${item.attachmentsCount} Attachment(s)</span>
+            </div>
+            ${item.messageId ? `<div class="text-[9px] text-gray-500 truncate">ID: ${escapeHtml(item.messageId)}</div>` : ''}
+            ${item.error ? `<div class="text-[10px] text-red-400 mt-1 whitespace-pre-line">${escapeHtml(item.error)}</div>` : ''}
+          </div>
+        `).join('');
+
+      } catch (err) {
+        trackerTitle.textContent = `❌ Bulk Send Error`;
+        resultsList.innerHTML = `<div class="text-red-400 p-2 bg-red-950/40 rounded border border-red-800">Error: ${escapeHtml(err.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>🚀 Dispatch Bulk Emails</span>`;
       }
     }
 

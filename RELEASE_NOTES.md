@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
-## Release Notes — Version 1.3.0
+## Release Notes — Version 1.4.0
 
-**Release Date:** September 2, 2026  
+**Release Date:** September 3, 2026  
 **License:** Apache-2.0  
 **Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
 
@@ -9,48 +9,44 @@
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.3.0** introduces **User-Created Skills Migration** across Google Agent Registry and Discovery Engine, a comprehensive **Configuration Pre-Check & Gap Audit Engine** with live readiness scoring, **1-Click Engine Feature & Settings Synchronization**, **Attached DataStore Parity Auditing**, and significant **UI Responsiveness & Clipboard Resilience** improvements.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.4.0** introduces **Standalone Zero-Dependency Interactive Quiz & Flashcards Applications** (running 100% offline in any browser with zero blank screens or host dependencies), **Explainer Video Media Compression (`ffmpeg`)** with automatic 70–75% size reductions, **Single-ZIP Handover Packaging (`NotebookLM_Artifacts.zip`)** with smart companion retention, a **Clean Notes Migration Policy** that eliminates artificial source pollution, and **Action-Oriented Interactive User Onboarding Checklists**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 🎯 Custom User-Created Skills Migration Engine (`SkillMigrator`)
-* **Agent Registry & Discovery Engine Integration**: Automatically discovers, exports, and migrates custom user-created Skills from Google Agent Registry (`apigee.googleapis.com` / `agentregistry.googleapis.com`) and Discovery Engine Skill Agents.
-* **Smart Catalog Filtering**: Automatically filters out public Google 1P catalog skills and system templates (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`), ensuring migrations are strictly confined to custom, user-authored skills.
-* **Full Pipeline Integration**: Included across live migration stages, executive summaries, Markdown/JSON reports, and end-user handover packages.
+#### 1. 🧠 Standalone Zero-Dependency Interactive Quiz & Flashcards Applications
+* **Dedicated Offline HTML5 Players**: Replaced fragile compiled Angular bundles with clean, self-contained, zero-dependency HTML5 players (`NotebookLmArtifactFormatter.renderInteractiveQuizHtml` and `renderInteractiveFlashcardsHtml`) that run 100% offline in any modern browser.
+* **Interactive Quiz Player**: Instant green/red feedback on answer selection, detailed answer rationales, hint reveal toggle, live score tracker, and quiz retake functionality.
+* **Interactive 3D Flashcards Player**: Smooth CSS 3D card flip animations, next/prev navigation, randomized card shuffle, full study table sheet, and keyboard shortcuts (`Space`/`Enter` to flip, `Left`/`Right` arrows to navigate).
+* **Elimination of Blank Screen Crashes**: Resolved the Angular runtime crash (`NotebookLMThemeProvider should not be used without a NotebookLM API`) by synthesizing native players from extracted `data-app-data` and polyfilling `window.notebookAppApi` (`NotebookLmArtifactFormatter.injectNotebookAppApiPolyfill`).
+* **Dual-Format Learning Export**: Every quiz and flashcard set is automatically exported into both an interactive browser app (`.html`) and a formatted printable Microsoft Word document (`.docx`) and Markdown bank (`.md`).
+* **Preserved Raw Bundles**: Raw Google Angular apps are preserved with injected polyfills as secondary backups (`*_AngularApp.html`).
 
-#### 2. 🔍 Configuration Pre-Check & Gap Audit Engine (`ConfigAuditEngine`)
-* **Pre-Flight Gap Analysis**: Validates environment compatibility and identifies configuration discrepancies before any data migration takes place.
-* **Comprehensive Feature Parity**: Audits all primary Gemini Enterprise features:
-  * User Memory & Personalization (`personalization-memory`)
-  * Agent Gallery & Catalog (`agent-gallery`)
-  * Create Agents / No-Code Agent Builder (`no-code-agent-builder`)
-  * Create & Execute Skills (`skills`)
-  * Skill Sharing & Session Sharing (`skill-sharing`, `session-sharing`)
-  * Observability & Sensitive Audit Logging
-  * Chat Session TTL & Retention Policies
-* **Weighted Readiness Score**: Computes an actionable 0–100% environment readiness score (`MATCH`, `WARNING`, `DIFF`, `MISSING_IN_TARGET`).
+#### 2. 🎬 Explainer Video Media Compression & Packaging (`ffmpeg`)
+* **Automated Video Optimization**: Integrated `UserReportGenerator.isFfmpegAvailable` and updated `optimizeMediaArtifact` to automatically detect `ffmpeg` and compress high-bitrate Explainer Videos (`.mp4`) > 12 MB.
+* **High-Efficiency Transcoding**: Transcodes to 720p H.264 CRF 28 with 64k AAC audio, reducing video sizes by 70–75% (e.g., 24.2 MB &rarr; 6.7 MB) with zero perceptible visual degradation.
+* **Email Attachment Promotion**: Successfully promotes compressed videos under Gmail's 14.5 MB unencoded attachment threshold, ensuring videos are delivered directly inside the active handover package.
 
-#### 3. ⚡ 1-Click Engine Feature & Settings Synchronization
-* **Automatic Target Alignment**: Integrated 1-click `/api/audit/sync-engine-settings` API and UI button to automatically align target engine flags and observability settings to mirror the source engine via Discovery Engine PATCH API.
-* **Deterministic CLI Remediation**: Generates alphabetically sorted JSON payloads for remediation commands, eliminating command flicker and layout shifts across repeated scans.
+#### 3. 📦 Single-Archive Handover ZIP (`NotebookLM_Artifacts.zip`)
+* **Consolidated Archive**: Packages all user presentations (`.pptx`), infographics (`.jpg`), explainer videos (`.mp4`), interactive learning apps (`.html`), and study guides (`.docx`) into a single `NotebookLM_Artifacts.zip` archive under 14.5 MB.
+* **Smart Companion Deduplication**: Static HTML document viewers are excluded when authentic Word documents are attached, but interactive web apps (`quiz`, `flashcard`, `app`) are explicitly retained alongside Word study guides.
+* **Partitioning Fallback**: Automatically partitions into multi-part archives (`NotebookLM_Artifacts_Part1.zip`, `Part2.zip`) if uncompressible assets exceed 14.5 MB.
 
-#### 4. 🗄️ Attached DataStore & Connector Parity Auditing
-* **Attached-Only Scoping**: Filters audits strictly to DataStores referenced by the source Engine (`engine.dataStoreIds` and `dataStores`), ignoring orphaned or unattached project DataStores.
-* **Three-Tier Parity States**:
-  * `MATCH`: Provisioned in target project and attached to target engine.
-  * `WARNING`: Provisioned in target project but unattached to target engine. Generates clean PATCH remediation (`PATCH ...?updateMask=dataStoreIds`).
-  * `MISSING_IN_TARGET`: Not yet provisioned in target project. Provides clear guidance to configure connectors in Google Cloud Console.
+#### 4. 📝 Clean Notes Migration Policy (Removed Workaround)
+* **No Artificial Source Pollution**: Completely removed legacy fallback ingestion of studio notes into notebook grounding sources in `NotebookMigrator`.
+* **Authentic Artifact Preservation**: Notes are strictly preserved as distinct artifacts in native Microsoft Word (`Note - <Title>.docx`), clean styled HTML (`Note - <Title>.html`), and Markdown (`Note - <Title>.md`).
 
-#### 5. 🛠️ UI Responsiveness, Stability & Clipboard Resilience
-* **Stable Loading State**: Replaced shifting top remediation commands with an animated `"Building..."` placeholder card and spinner while scans are evaluating.
-* **Recursion & Timer Fixes**: Eliminated cyclical re-entry loops in the Pre-Check tab and restored accurate elapsed run timers.
-* **Resilient Clipboard Copying**: Replaced fragile inline HTML attribute handlers with `copyTextValue()`, supporting modern `navigator.clipboard` with automatic fallback to `document.execCommand('copy')` and inline `✓ Copied!` visual feedback.
+#### 5. ✅ Action-Oriented Interactive User Onboarding Checklists
+* **Checkable Action Items**: Handover checklists feature interactive checkboxes `[ ]` guiding employees step-by-step through first-time sign-in, Connectors enablement, tool authorization (Outlook, OneDrive, Drive, Jira, ServiceNow, Entra ID), agent publishing, and artifact retrieval.
+* **Clean Technical Reference**: Technical source document audit lists are neatly tucked into an expandable `<details>` accordion to keep user action items prominent.
+
+#### 6. 🧪 Test Suite Expansion (71/71 Tests Passing)
+* Expanded automated test coverage to 71 tests across 10 test suites covering `isFfmpegAvailable`, `extractAppData`, interactive Quiz and Flashcards rendering, Angular API polyfilling, and interactive app attachment retention in email dispatching with 100% pass rate.
 
 ---
 
-### 📦 Upgrade Guide (v1.2.0 &rarr; v1.3.0)
+### 📦 Upgrade Guide (v1.3.0 &rarr; v1.4.0)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -61,7 +57,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.3.0** introdu
    ```bash
    npm run build
    ```
-3. **Run Test Suite (All 47 Tests Passing)**:
+3. **Run Test Suite (All 71 Tests Passing)**:
    ```bash
    npm test
    ```
@@ -78,7 +74,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.3.0** introdu
 
 ### 📜 Version History
 
-* **v1.3.0** *(Current)*: User-created skills migration, Configuration Pre-Check & Gap Audit engine, 1-click engine feature sync, attached DataStore filtering, and clipboard resilience.
+* **v1.4.0** *(Current)*: Standalone zero-dependency interactive Quiz & Flashcards applications, Explainer Video compression (`ffmpeg`), single-ZIP handover archive (`NotebookLM_Artifacts.zip`), clean notes migration policy, and interactive action checklists.
+* **v1.3.0**: User-created skills migration (`SkillMigrator`), Configuration Pre-Check & Gap Audit engine (`ConfigAuditEngine`), 1-click engine feature sync, attached DataStore filtering, and clipboard resilience.
 * **v1.2.0**: Granular notebook source migration & audit trail, batch-with-fallback ingestion, multi-user target cleanup, quota diagnostics, and enhanced user checklists.
 * **v1.1.0**: Memory and personalization facts migration, multi-turn chat rehydration, native Office `.pptx`/`.docx` document generation, and permissions least-privilege auditor.
 * **v1.0.0**: Initial release with Low-Code / Workflow agent migration, research notebooks sync, cross-IdP transformation matrix, DWD/WiF auto-detection, and headless CLI runner.

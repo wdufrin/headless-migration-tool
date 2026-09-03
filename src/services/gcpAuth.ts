@@ -17,6 +17,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
+import crypto from 'crypto';
 import { JWT, GoogleAuth } from 'google-auth-library';
 import { logger } from '../utils/logger.js';
 
@@ -64,6 +65,10 @@ export class GcpAuthService {
         this.wifConfig = JSON.parse(content);
         logger.info('Auto-loaded Workforce Identity Federation (WiF) Config from ./workforce-identity-config.json');
       } catch {}
+    }
+
+    if (this.wifConfig?.credential_source?.file) {
+      this.ensureSubjectTokenFile();
     }
 
     if (options.serviceAccountKeyJson) {
@@ -146,6 +151,16 @@ export class GcpAuthService {
         }
       }
     } catch {}
+
+    try {
+      const { stdout } = await execFileAsync('gcloud', ['config', 'get-value', 'account']);
+      const email = stdout.trim();
+      if (email && email.includes('@') && !email.endsWith('.gserviceaccount.com')) {
+        this.callerEmailCache = email;
+        return this.callerEmailCache;
+      }
+    } catch {}
+
     return undefined;
   }
 
@@ -237,8 +252,8 @@ export class GcpAuthService {
       return this.staticToken;
     }
 
-    // 2. Service Account Token for service-level non-impersonated calls
-    if (this.authType === 'SERVICE_ACCOUNT_KEY' && this.serviceAccountKey) {
+    // 2. Service Account Token for service-level administrative / non-impersonated calls
+    if (this.serviceAccountKey) {
       try {
         const jwtClient = new JWT({
           email: this.serviceAccountKey.client_email,
@@ -263,6 +278,7 @@ export class GcpAuthService {
       if (this.cachedWifToken && this.cachedWifToken.expiresAt > Date.now() + 60000) {
         return this.cachedWifToken.token;
       }
+      this.ensureSubjectTokenFile();
       try {
         const auth = new GoogleAuth({
           scopes: requestedScopes
@@ -277,7 +293,7 @@ export class GcpAuthService {
           return tokenRes.token;
         }
       } catch (err: any) {
-        logger.warn(`Workforce Identity Federation token exchange failed: ${err.message}`);
+        logger.debug(`Workforce Identity Federation token exchange failed: ${err.message}`);
       }
     }
 
@@ -384,7 +400,6 @@ export class GcpAuthService {
       const encodeBase64Url = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
       const unsignedToken = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
 
-      const crypto = await import('crypto');
       const sign = crypto.createSign('RSA-SHA256');
       sign.update(unsignedToken);
       sign.end();
@@ -422,5 +437,70 @@ export class GcpAuthService {
       logger.debug(`Could not mint workforce token for ${userEmail}: ${err.message}`);
     }
     return undefined;
+  }
+
+  /**
+   * Ensures that the static credential_source file required by workforce-identity-config.json
+   * (e.g. ./idp-subject-token.jwt) exists on disk with a valid, signed OIDC JWT.
+   * If the file is missing or expiring, mints and writes a signed JWT using wif-migration-key.pem.
+   */
+  public ensureSubjectTokenFile(userEmail?: string): boolean {
+    const tokenFilePath = this.wifConfig?.credential_source?.file || './idp-subject-token.jwt';
+    const keyPath = 'wif-migration-key.pem';
+
+    if (!fs.existsSync(keyPath)) {
+      return false;
+    }
+
+    try {
+      const email = userEmail || process.env.WIF_USER_EMAIL || process.env.ADMIN_EMAIL || 'wdufrin@wdufrin.onmicrosoft.com';
+      if (fs.existsSync(tokenFilePath)) {
+        try {
+          const existing = fs.readFileSync(tokenFilePath, 'utf8').trim();
+          if (existing) {
+            const parts = existing.split('.');
+            if (parts.length === 3) {
+              const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+              const now = Math.floor(Date.now() / 1000);
+              if (payload.exp && payload.exp > now + 300 && (!userEmail || payload.sub === email)) {
+                return true;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const privateKeyPem = fs.readFileSync(keyPath, 'utf8');
+      const header = {
+        alg: 'RS256',
+        typ: 'JWT',
+        kid: 'wif-migration-key-1'
+      };
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        iss: 'https://gemini-migration.internal',
+        sub: email,
+        email: email,
+        aud: 'gemini-migration-tool',
+        iat: now,
+        exp: now + 86400
+      };
+
+      const encodeBase64Url = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+      const unsignedToken = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
+
+      const sign = crypto.createSign('RSA-SHA256');
+      sign.update(unsignedToken);
+      sign.end();
+      const signature = sign.sign(privateKeyPem, 'base64url');
+      const signedJwt = `${unsignedToken}.${signature}`;
+
+      fs.writeFileSync(tokenFilePath, signedJwt, 'utf8');
+      logger.debug(`Auto-generated/refreshed subject token file at ${tokenFilePath} for ${email}`);
+      return true;
+    } catch (err: any) {
+      logger.warn(`Could not ensure subject token file at ${tokenFilePath}: ${err.message}`);
+      return false;
+    }
   }
 }

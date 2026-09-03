@@ -10,8 +10,8 @@ describe('MigrationReporter with Sources Audit', () => {
     endTime: '2026-09-01T12:05:00Z',
     durationMs: 300000,
     dryRun: false,
-    sourceEnvironment: { projectId: 'ancient-sandbox', appLocation: 'global' },
-    targetEnvironment: { projectId: 'target-sandbox', appLocation: 'global' },
+    sourceEnvironment: { projectId: 'ancient-sandbox', appLocation: 'global', appId: 'ancient-app' },
+    targetEnvironment: { projectId: 'target-sandbox', appLocation: 'global', appId: 'target-app' },
     summary: {
       totalDiscoveredAgents: 2,
       totalDiscoveredNotebooks: 1,

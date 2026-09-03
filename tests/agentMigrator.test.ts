@@ -75,4 +75,50 @@ describe('AgentMigrator Engine', () => {
     expect(migrator.isAgentOwnedByUser(agentWithIam, ['*@fedex.com'])).toBe(true);
     expect(migrator.isAgentOwnedByUser(agentWithIam, ['alice@fedex.com'])).toBe(false);
   });
+
+  it('should filter agents owned by Workforce Identity Federation (WiF) principals', () => {
+    const wifAgent: Agent = {
+      name: 'projects/123/locations/eu/collections/default_collection/engines/entraid-test/assistants/default_assistant/agents/agent-wif-1',
+      displayName: 'Entra Connected Agent',
+      iamPolicy: {
+        bindings: [
+          {
+            role: 'roles/discoveryengine.agentOwner',
+            members: ['principal://iam.googleapis.com/locations/global/workforcePools/wdufrin-entra/subject/wdufrin@wdufrin.onmicrosoft.com']
+          }
+        ]
+      }
+    };
+
+    expect(migrator.isAgentOwnedByUser(wifAgent, ['wdufrin@wdufrin.onmicrosoft.com'])).toBe(true);
+    expect(migrator.isAgentOwnedByUser(wifAgent, ['*@wdufrin.onmicrosoft.com'])).toBe(true);
+    expect(migrator.isAgentOwnedByUser(wifAgent, ['other@domain.com'])).toBe(false);
+  });
+
+  it('should correctly map Workforce Identity Federation IAM members to Cloud Identity user prefixes', async () => {
+    const { mapIamMember } = await import('../src/engines/agentMigrator.js');
+    const mapping = {
+      'wdufrin@wdufrin.onmicrosoft.com': 'admin@wdufrin.altostrat.com'
+    };
+
+    const wifPrincipal = 'principal://iam.googleapis.com/locations/global/workforcePools/wdufrin-entra/subject/wdufrin@wdufrin.onmicrosoft.com';
+    const mapped = mapIamMember(wifPrincipal, mapping);
+    expect(mapped).toBe('user:admin@wdufrin.altostrat.com');
+
+    const standardUser = 'user:bob@oldcorp.com';
+    const mappedUser = mapIamMember(standardUser, { 'bob@oldcorp.com': 'bob@newcorp.com' });
+    expect(mappedUser).toBe('user:bob@newcorp.com');
+  });
+
+  it('should extract user identities across various IdP formats using extractUserIdentity', async () => {
+    const { extractUserIdentity } = await import('../src/routes/discovery.js');
+
+    expect(extractUserIdentity('principal://iam.googleapis.com/locations/global/workforcePools/wdufrin-entra/subject/wdufrin@wdufrin.onmicrosoft.com')).toBe('wdufrin@wdufrin.onmicrosoft.com');
+    expect(extractUserIdentity('principal://iam.googleapis.com/locations/global/workforcePools/wdufrin-entra/subject/wdufrin%40wdufrin.onmicrosoft.com')).toBe('wdufrin@wdufrin.onmicrosoft.com');
+    expect(extractUserIdentity('principalSet://iam.googleapis.com/locations/global/workforcePools/wdufrin-entra/attribute.user_email/alice@domain.com')).toBe('alice@domain.com');
+    expect(extractUserIdentity('user:admin@wdufrin.altostrat.com')).toBe('admin@wdufrin.altostrat.com');
+    expect(extractUserIdentity('admin@wdufrin.altostrat.com')).toBe('admin@wdufrin.altostrat.com');
+    expect(extractUserIdentity('serviceAccount:sa@project.iam.gserviceaccount.com')).toBeNull();
+    expect(extractUserIdentity('allUsers')).toBeNull();
+  });
 });

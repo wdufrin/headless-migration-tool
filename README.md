@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](package.json)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.3.0-orange.svg)](RELEASE_NOTES.md)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](package.json)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.4.0-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -9,32 +9,32 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ---
 
-## 🚀 What's New in v1.3.0
+## 🚀 What's New in v1.4.0
 
-* **🛠️ User-Created Skills Migration Engine (`SkillMigrator`)**:
-  * **Custom Skills Discovery & Restoration**: Discovers, exports, and restores user-created Skills across Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents.
-  * **Automatic 1P Catalog Filtering**: Intelligently identifies and excludes pre-packaged Google 1P public catalog skills (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`), ensuring only proprietary custom skills are migrated.
-  * **Seamless Pipeline Integration**: Deeply integrated into the migration runner, live SSE progress stream, executive summary KPI dashboards, and Markdown/JSON audit reports.
-* **🔍 Configuration Pre-Check & Gap Audit Engine (`ConfigAuditEngine`)**:
-  * **Pre-Flight Parity Readiness Scoring**: Calculates a weighted 0–100% readiness score evaluating feature flags, attached connectors, IAM roles, and storage requirements before migration execution.
-  * **Deep Engine Feature Comparison**: Audits parity across 10 critical engine capabilities: User Memory & Personalization, Agent Catalog & Gallery, No-Code Agent Builder, Create & Execute Skills, Skill Sharing, Session Sharing, Audio, Canvas, Observability, and Chat Session TTL.
-* **⚡ 1-Click Target Engine Settings Synchronization**:
-  * **Automated Flag Alignment**: Instantly updates target Discovery Engine feature flags to match source engine settings via the Discovery Engine PATCH API.
-  * **Deterministic CLI Remediation**: Generates copy-ready `curl` and `gcloud` commands with alphabetically sorted JSON keys to eliminate UI flicker across audit cycles.
-* **🔗 Attached DataStore Parity & Connector Scoping**:
-  * **Source Engine Scoping**: Restricts DataStore audits strictly to DataStores attached to the source Engine (`engine.dataStoreIds`), ignoring unattached or orphaned project DataStores.
-  * **State Auditing**: Validates target DataStore attachment states (`MATCH`, `WARNING` for unattached target stores, and `MISSING_IN_TARGET`).
-  * **Engine Attachment Remediation**: Provides one-click/CLI remediation to attach provisioned DataStores to target engines via `PATCH /engines/${appId}?updateMask=dataStoreIds`.
-  * **Console Guidance for Missing Connectors**: Replaced raw DataStore creation commands with clear, guided instructions directing administrators to the Google Cloud Console or Gemini Enterprise Console for connector provisioning.
-* **📋 Clipboard Resilience & UI Responsiveness**:
-  * **Bulletproof Copy CLI**: Resolved quote escaping syntax errors in the Web Console with `copyTextValue()`, automatic fallback to `document.execCommand('copy')`, and clear inline `✓ Copied!` visual confirmations.
-  * **Re-entrancy Protection & Stable Timing**: Added `isAuditRunning` guard preventing concurrent duplicate scans, accurate elapsed time tracking for "Last Pre-Check Run", and an animated loading spinner in remediation containers.
+* **🧠 Standalone Zero-Dependency Interactive Quiz & Flashcards Applications**:
+  * **Zero-Dependency HTML5 Players**: Self-contained interactive apps (`.html`) that load instantly and run 100% offline in any web browser with zero external runtime dependencies.
+  * **Interactive Quiz Player**: Instant green/red answer feedback, detailed rationales, hint toggle, live score tracker, and quiz retake button.
+  * **3D Flashcards Player**: Smooth CSS 3D card flip animations, next/prev navigation, randomized card shuffle, study table view, and keyboard shortcuts (`Space`/`Enter`/`Arrows`).
+  * **No More Blank Screens**: Resolved the Angular runtime crash (`NotebookLMThemeProvider should not be used without a NotebookLM API`) by synthesizing native players from extracted `data-app-data` and polyfilling `window.notebookAppApi`.
+  * **Dual-Format Learning Export**: Every quiz and flashcard set is exported into both an interactive browser app (`.html`) and a formatted printable Microsoft Word document (`.docx`) and Markdown bank (`.md`).
+* **🎬 Explainer Video Media Compression (`ffmpeg`)**:
+  * **Automated Video Optimization**: Automatically detects `ffmpeg` and compresses high-bitrate Explainer Videos (`.mp4`) > 12 MB to 720p H.264 CRF 28 with 64k AAC audio.
+  * **70–75% Size Reduction**: Shrinks large videos (e.g. 24.2 MB &rarr; 6.7 MB) with zero perceptible quality degradation.
+  * **Handover Promotion**: Compressed videos fit comfortably under Gmail's 14.5 MB unencoded per-message threshold and are packaged directly inside active email attachments.
+* **📦 Single-Archive Handover ZIP (`NotebookLM_Artifacts.zip`)**:
+  * **All-in-One Delivery**: Packages all presentations (`.pptx`), infographics (`.jpg`), videos (`.mp4`), interactive apps (`.html`), and study guides (`.docx`) into a single `NotebookLM_Artifacts.zip` archive.
+  * **Smart Retention Deduplication**: Static HTML document viewers are excluded when authentic Word documents are attached, but interactive web apps (`quiz`, `flashcard`, `app`) are explicitly preserved alongside Word study guides.
+* **📝 Clean Notes Migration Policy**:
+  * **Workaround Removed**: Completely removed fallback ingestion of notes into notebook grounding sources.
+  * **Authentic Artifact Preservation**: Notes are strictly preserved as distinct artifacts (`Note - <Title>.docx`, `Note - <Title>.html`, and `Note - <Title>.md`).
+* **✅ Action-Oriented Interactive Checklists**:
+  * Replaced flat document summaries with clean, checkable action items (`[ ]`) guiding users step-by-step through first-time login, connector authorization (Outlook, OneDrive, Drive, Jira, ServiceNow), agent publishing, and artifact retrieval.
 
 ---
 
 ## 📋 Table of Contents
 
-- [What's New in v1.3.0](#-whats-new-in-v130)
+- [What's New in v1.4.0](#-whats-new-in-v140)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
 - [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
@@ -63,9 +63,10 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 * **🤖 Custom Agent Migration & Auto-Publishing**: Deep-copies Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags. Automatically assigns `scope: ALL_USERS` and publishes them so they immediately appear in the user's left sidebar and Agent Gallery.
 * **🛠️ User-Created Skills Migration**: Discovers, exports, and restores custom user skills in Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents, while intelligently excluding public Google 1P catalog templates (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`).
 * **🔍 Configuration Pre-Check & Gap Audit**: Computes an end-to-end Parity Readiness Score (0–100%) and deep feature comparison (Memory, Agent Gallery, Low-Code Builder, Skills, Sharing, Audio, Canvas, Observability, TTL). Scopes DataStore audits strictly to attached DataStores, provides 1-click target settings synchronization, and renders copy-ready CLI remediation commands with zero UI flicker.
-* **📔 Research Notebooks & Granular Source Auditing**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), studio notes, and outputs directly into the target environment. Tracks every source individually with fault-isolated batching and dedicated integrity reporting.
-* **🧠 User Memories & Personalization Facts**: Discovers, migrates, and restores learned user preferences, personal context facts, and Reasoning Engine memories across Discovery Engine instances.
-* **📊 Office Document & Artifact Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (Microsoft PowerPoint)** and briefing docs/study guides as native **`.docx` (Microsoft Word)** files into `./exports/artifacts`.
+* **📔 Research Notebooks & Granular Source Auditing**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), and studio outputs directly into the target environment. Tracks every source individually with fault-isolated batching and dedicated integrity reporting. Notes are strictly preserved as distinct artifacts, eliminating artificial source pollution.
+* **🧠 Standalone Interactive Quizzes & 3D Flashcards Apps**: Converts raw compiled Angular applications into 100% offline, zero-dependency HTML5 interactive apps that run in any browser without blank screens or host dependencies. Generates interactive quiz players (with instant feedback, hints, rationales, and retake scoring), 3D flashcard flippers (with flip animations, shuffle, keyboard shortcuts, and table views), and matching printable Microsoft Word (`.docx`) study guides and Markdown banks (`.md`).
+* **🎬 Explainer Video Media Compression (`ffmpeg`)**: Automatically detects `ffmpeg` and compresses high-bitrate Explainer Videos (`.mp4`) > 12 MB to 720p H.264 CRF 28 with 64k AAC audio, reducing file size by 70–75% (e.g. 24.2 MB &rarr; 6.7 MB) with zero visual loss so they fit securely inside email archives.
+* **📊 NotebookLM Direct Export Parity & Office Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (Microsoft PowerPoint)** presentations and briefing docs/study guides as native **`.docx` (Microsoft Word)** files matching authentic direct NotebookLM exports (clean human-readable filenames without `(Restored)` tags or duplicate title stuttering, native markdown tables with shading and borders, 1-inch margins, bullet/numbered lists, inline citations, 16:9 widescreen slides, card container layouts, and presenter speaker notes).
 * **💬 Multi-turn Chat Conversation History**: Rehydrates full turn-by-turn question/answer dialogues, thoughts, and citations in chronological order (oldest $\rightarrow$ newest) directly into users' left-hand History sidebar.
 * **👤 Multi-Tenant Identity Resolution & Auto-Auth Detection**:
   * **Google Workspace / Cloud Identity**: Uses Domain-Wide Delegation (DWD) with `sa-dwd-key.json` to mint user-scoped OAuth2 tokens.
@@ -74,7 +75,7 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 * **🔄 Context-Aware Cross-IdP Transformation Matrix**: Supports domain transformation rules (e.g. `user@onmicrosoft.com` $\rightarrow$ `user@company.com`). The mapping interface is hidden when IdPs match and automatically reveals preset suggestions when switching between different IdPs.
 * **🛡️ Built-in Permissions & Least-Privilege Auditor**: Evaluates live IAM permissions, flags over-provisioned OAuth scopes, assigns security letter grades (A/B/C/F), verifies Google SAIF compliance, and provides 1-click `gcloud` IAM policy auto-fixes.
 * **🧹 Selective Multi-User Target Maintenance**: Granular controls to clean Chats, Agents, Notebooks, Exported Artifacts, or Reports across all target users prior to fresh migration runs.
-* **📬 End-User Handover Bundle & Authenticated SSO Links**: Generates personalized Markdown and HTML handover checklists with direct Google Cloud Workforce Sign-In gateway URLs (`auth.cloud.google/signin/...`), source readiness status, and Step 1 connector authorization walkthroughs.
+* **📬 Action-Oriented Handover Checklists & Single-ZIP Archive**: Generates personalized Markdown and HTML handover checklists with interactive checkboxes `[ ]` showing exact user onboarding steps (First-time sign-in, Connectors enablement, tool authorization, agent publishing). Packages all user presentations, videos, infographics, and interactive apps into a single `NotebookLM_Artifacts.zip` archive delivered via Gmail API or corporate SMTP with **Safe Staging Mode** and burst rate-limiting protection.
 
 ---
 
@@ -394,7 +395,7 @@ Designed to run **strictly on the administrator's local machine**:
 
 ## 📬 User Handover, SSO Gateway & Email Notification Engine
 
-Following a migration, end-users receive an individual handover bundle:
+Following a migration, administrators can generate and dispatch individual handover bundles:
 
 1. **Checklist Email with Interactive Checkboxes & SSO Links**:
    * Generates location-aware Google Cloud Workforce Sign-In gateway URLs:
@@ -402,12 +403,15 @@ Following a migration, end-users receive an individual handover bundle:
    * Step 1: Login & Authorize Connected Workplace Tools via the prompt bar Connectors menu (⊶ / Sliders icon for Outlook, OneDrive, Google Workspace, Jira, etc.).
    * Step 2: Access Transferred Custom Agents in the left sidebar and Agent Gallery.
    * Step 3: Access Research Notebooks & Sources.
-2. **Native Office Document Attachments**:
-   * Slide Decks &rarr; Attached as real **`.pptx` (Microsoft PowerPoint)** presentations.
-   * Reports & Study Guides &rarr; Attached as real **`.docx` (Microsoft Word)** documents.
-3. **Dispatch Options**:
-   * **Google Gmail REST API**: Native OAuth2 dispatch using Domain-Wide Delegation.
-   * **Corporate SMTP**: Integration with corporate relays (Office 365, Postfix, SendGrid).
+2. **Authentic NotebookLM Direct Export Office Attachments**:
+   * Slide Decks &rarr; Attached as authentic **`.pptx` (Microsoft PowerPoint)** presentations (16:9 widescreen, executive theme, speaker notes, and clean filenames like `Notebook - Title.pptx`).
+   * Reports & Study Guides &rarr; Attached as authentic **`.docx` (Microsoft Word)** documents (1-inch margins, Arial hierarchy, native tables with borders and shading, bullet/numbered lists, inline citations).
+   * Local Backup & EML &rarr; All files and MIME packages are saved offline in `./user_handover_reports/<user>/`.
+3. **Dispatch Modes**:
+   * **Single User Test**: Validates email rendering, formatting, and Office attachments for a single recipient.
+   * **Bulk Organization Dispatch**: Dispatches personalized checklists across all migrated users or selected users from the UI table, with automated pacing delays (default: 250ms) to prevent API burst throttling.
+   * **Safe Staging Mode**: Supports an override recipient address so all bulk bundles are redirected to an administrative staging inbox for validation before staff delivery.
+   * **Headless CLI Trigger**: Use `--generate-user-reports` and `--notify-users [overrideEmail]` to automate handover directly from CI/CD pipelines.
 
 ---
 
@@ -427,10 +431,10 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
-The platform includes an extensive automated test suite with **47 tests across 9 test suites** covering authentication, Agent Registry skills discovery/filtering, configuration gap audits, memory migration, session rehydration, reporters, and E2E execution flows:
+The platform includes an extensive automated test suite with **60 tests across 10 test suites** covering authentication, Agent Registry skills discovery/filtering, configuration gap audits, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, and E2E execution flows:
 
 ```bash
-# Run complete unit and integration test suite (47 tests across 9 suites)
+# Run complete unit and integration test suite (60 tests across 10 suites)
 npm test
 
 # Run End-to-End matrix permutations test (DWD/WiF permutations)

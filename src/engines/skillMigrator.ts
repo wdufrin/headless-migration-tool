@@ -20,7 +20,7 @@ import { EnvironmentConfig, MigrationOptions, MigrationItemResult } from '../typ
 import { RegistrySkill, RegistrySkillRevision, Agent, IamPolicy } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
-import { isAgentOwnedByUser } from './agentMigrator.js';
+import { isAgentOwnedByUser, mapIamMember } from './agentMigrator.js';
 
 export const PUBLIC_1P_SKILL_IDS = new Set([
   'email-writing-style',
@@ -323,10 +323,7 @@ export class SkillMigrator {
                   (agent.iamPolicy.bindings || []).forEach(b => {
                     if (b.role !== 'roles/discoveryengine.agentOwner') {
                       b.members.forEach(m => {
-                        const hasUserPrefix = m.startsWith('user:');
-                        const cleanMember = hasUserPrefix ? m.substring(5) : m;
-                        const mappedClean = identityMapping[cleanMember] || cleanMember;
-                        const mapped = identityMapping[m] || (hasUserPrefix ? `user:${mappedClean}` : mappedClean);
+                        const mapped = mapIamMember(m, identityMapping);
                         if (!sharedUsers.includes(mapped)) sharedUsers.push(mapped);
                       });
                     }

@@ -27,7 +27,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.3.0')
+  .version('1.4.0')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
@@ -46,6 +46,10 @@ program
   .option('--service-account-key <path>', 'Path to Google Cloud Service Account JSON key for Domain-Wide Delegation (DWD)')
   .option('--output-dir <dir>', 'Directory to output migration reports', './reports')
   .option('--resume <reportPath>', 'Resume migration by skipping already-successful assets from a previous migration report JSON')
+  .option('--generate-user-reports', 'Generate post-migration handover bundles and checklists per user')
+  .option('--notify-users [overrideEmail]', 'Dispatch bulk handover emails to migrated users (or provide override email for safe staging validation)')
+  .option('--no-zip-attachments', 'Disable packaging user NotebookLM artifacts into .zip archive before emailing')
+  .option('--no-optimize-media', 'Disable automatic media optimization for slide decks and images')
   .action(async (options) => {
     try {
       let baseConfig: any = {};
@@ -67,7 +71,7 @@ program
         baseConfig.options = { ...baseConfig.options, resumeFrom: options.resume };
       }
       if (options.dryRun !== undefined) {
-        baseConfig.options = { ...baseConfig.options, dryRun: true };
+        baseConfig.options = { ...baseConfig.options, dryRun: options.dryRun };
       }
       if (options.notebooks === false) {
         baseConfig.options = { ...baseConfig.options, migrateNotebooks: false };
@@ -135,6 +139,32 @@ program
 
       if (report.summary.totalFailed > 0 && !validatedConfig.options?.dryRun) {
         process.exit(1);
+      }
+
+      if (options.generateUserReports || options.notifyUsers !== undefined) {
+        try {
+          const { UserReportGenerator } = await import('./engines/userReportGenerator.js');
+          const generator = new UserReportGenerator();
+          const bundles = await generator.generateAllUserBundles(report);
+          console.log(`Generated ${Object.keys(bundles).length} User Handover Bundles in ./user_handover_reports/`);
+
+          if (options.notifyUsers !== undefined) {
+            const overrideEmail = typeof options.notifyUsers === 'string' && options.notifyUsers.includes('@')
+              ? options.notifyUsers.trim()
+              : undefined;
+            const bulkRes = await generator.sendBulkUserEmails({
+              overrideRecipientEmail: overrideEmail,
+              senderEmail: options.senderEmail || process.env.SENDER_EMAIL,
+              accessToken: options.token,
+              zipAttachments: options.zipAttachments !== false,
+              optimizeMedia: options.optimizeMedia !== false,
+              authService
+            }, report);
+            console.log(`Bulk Email Handover: ${bulkRes.sent} sent, ${bulkRes.failed} failed of ${bulkRes.total} total.`);
+          }
+        } catch (repErr: any) {
+          logger.warn(`User handover processing error: ${repErr.message}`);
+        }
       }
     } catch (err: any) {
       logger.error(`Fatal Migration Error: ${err.message}`);

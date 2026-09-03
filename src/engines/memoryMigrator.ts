@@ -162,11 +162,16 @@ export class MemoryMigrator {
 
     if (!targetUserId) {
       const srcUser = memory.owner || memory.userEmail || memory.userPseudoId;
-      const defaultUser = this.config.options?.userFilter?.[0]?.replace(/^user:/i, '').trim();
-      if (srcUser && this.config.identityMapping?.[srcUser]) {
+      const defaultUser = this.config.options?.userFilter?.[0]?.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim();
+      let cleanSrcUser = srcUser ? srcUser.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim() : '';
+      try { cleanSrcUser = decodeURIComponent(cleanSrcUser); } catch {}
+
+      if (cleanSrcUser && this.config.identityMapping?.[cleanSrcUser]) {
+        targetUserId = this.config.identityMapping[cleanSrcUser];
+      } else if (srcUser && this.config.identityMapping?.[srcUser]) {
         targetUserId = this.config.identityMapping[srcUser];
-      } else if (srcUser && srcUser.includes('@')) {
-        targetUserId = srcUser;
+      } else if (cleanSrcUser && cleanSrcUser.includes('@')) {
+        targetUserId = cleanSrcUser;
       } else if (defaultUser && defaultUser.includes('@')) {
         targetUserId = defaultUser;
       } else {

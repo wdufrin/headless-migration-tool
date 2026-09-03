@@ -23,12 +23,81 @@ import { logger } from '../utils/logger.js';
 
 export const discoveryRouter = express.Router();
 
-function isValidUserIdentity(id: string): boolean {
+export function isValidUserIdentity(id: string): boolean {
   if (!id || id === 'unknown' || id === 'undefined' || id === 'null') return false;
   const trimmed = id.trim();
   if (/^\d+$/.test(trimmed)) return false;
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) return false;
-  return trimmed.includes('@') || trimmed.startsWith('principal://') || trimmed.startsWith('user:');
+  return trimmed.includes('@') || trimmed.startsWith('principal://') || trimmed.startsWith('principalSet://') || trimmed.startsWith('user:');
+}
+
+/**
+ * Extracts and cleans a user identity (email or UPN) from GCP IAM member strings,
+ * Workforce Identity Federation principals, or user: prefixed identifiers.
+ */
+export function extractUserIdentity(member: string): string | null {
+  if (!member || typeof member !== 'string') return null;
+  let trimmed = member.trim();
+  if (
+    !trimmed || 
+    trimmed === 'allUsers' || 
+    trimmed === 'allAuthenticatedUsers' || 
+    trimmed.startsWith('deleted:') ||
+    trimmed.endsWith('.gserviceaccount.com') ||
+    trimmed.startsWith('serviceAccount:')
+  ) {
+    return null;
+  }
+
+  // 1. Workforce Identity Federation principals:
+  // e.g. principal://iam.googleapis.com/locations/global/workforcePools/wdufrin-entra/subject/wdufrin@wdufrin.onmicrosoft.com
+  // or   principal://iam.googleapis.com/projects/12345/locations/global/workforcePools/pool/subject/user@domain.com
+  if (trimmed.startsWith('principal://') || trimmed.startsWith('principalSet://')) {
+    const subjectMatch = trimmed.match(/\/subject\/([^/]+)$/i);
+    if (subjectMatch && subjectMatch[1]) {
+      let decoded = subjectMatch[1];
+      try {
+        decoded = decodeURIComponent(decoded).trim();
+      } catch {}
+      if (isValidUserIdentity(decoded) && !decoded.endsWith('.gserviceaccount.com')) {
+        return decoded.replace(/^user:/i, '').trim();
+      }
+    }
+
+    const attrMatch = trimmed.match(/\/attribute\.(?:user_email|email|upn|mail)\/([^/]+)$/i);
+    if (attrMatch && attrMatch[1]) {
+      let decoded = attrMatch[1];
+      try {
+        decoded = decodeURIComponent(decoded).trim();
+      } catch {}
+      if (isValidUserIdentity(decoded) && !decoded.endsWith('.gserviceaccount.com')) {
+        return decoded.replace(/^user:/i, '').trim();
+      }
+    }
+
+    // Check for any email pattern embedded within the principal string
+    const emailMatch = trimmed.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (emailMatch && emailMatch[1]) {
+      const email = emailMatch[1].trim();
+      if (!email.endsWith('.gserviceaccount.com') && isValidUserIdentity(email)) {
+        return email;
+      }
+    }
+
+    return null;
+  }
+
+  // 2. Standard user: prefix (Google Cloud Identity / Workspace)
+  if (trimmed.toLowerCase().startsWith('user:')) {
+    trimmed = trimmed.replace(/^user:/i, '').trim();
+  }
+
+  // 3. Clean user email address
+  if (trimmed.includes('@') && isValidUserIdentity(trimmed) && !trimmed.endsWith('.gserviceaccount.com')) {
+    return trimmed;
+  }
+
+  return null;
 }
 
 // User Discovery Endpoint (Gathers users directly across Discovery Engine sessions, agents, & notebooks)
@@ -95,40 +164,63 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             const agData: any = await agResp.json();
             const agents = agData.agents || [];
             
-            // Inspect IAM policies on agents in parallel batches
-            await Promise.all(agents.slice(0, 30).map(async (a: any) => {
-              try {
-                const iamRes = await fetch(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`, {
-                  headers: { 
-                    'Authorization': `Bearer ${token}`,
-                    'X-Goog-User-Project': projectId
-                  }
-                });
-                if (iamRes.ok) {
-                  const iamData: any = await iamRes.json();
-                  for (const binding of iamData.bindings || []) {
-                    for (const m of binding.members || []) {
-                      if (m.startsWith('user:') && isValidUserIdentity(m)) {
-                        const cleanEmail = m.replace(/^user:/i, '').trim();
-                        const existing = userMap.get(cleanEmail) || {
-                          email: cleanEmail,
-                          sessionsCount: 0,
-                          notebooksCount: 0,
-                          agentsCount: 0,
-                          sources: [] as string[]
-                        };
-                        existing.agentsCount++;
-                        const srcLabel = `Agent (${a.displayName || 'Custom'})`;
-                        if (!existing.sources.includes(srcLabel) && existing.sources.length < 3) {
-                          existing.sources.push(srcLabel);
+            // Check direct agent owner / creator fields
+            for (const a of agents) {
+              const directOwner = extractUserIdentity(a.owner || a.creator || a.skillAgentDefinition?.owner || '');
+              if (directOwner) {
+                const existing = userMap.get(directOwner) || {
+                  email: directOwner,
+                  sessionsCount: 0,
+                  notebooksCount: 0,
+                  agentsCount: 0,
+                  sources: [] as string[]
+                };
+                const srcLabel = `Agent (${a.displayName || 'Custom'})`;
+                if (!existing.sources.includes(srcLabel) && existing.sources.length < 3) {
+                  existing.sources.push(srcLabel);
+                }
+                userMap.set(directOwner, existing);
+              }
+            }
+
+            // Inspect IAM policies on agents in concurrent batches of 10
+            const chunkSize = 10;
+            for (let i = 0; i < agents.length; i += chunkSize) {
+              const chunk = agents.slice(i, i + chunkSize);
+              await Promise.all(chunk.map(async (a: any) => {
+                try {
+                  const iamRes = await fetch(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`, {
+                    headers: { 
+                      'Authorization': `Bearer ${token}`,
+                      'X-Goog-User-Project': projectId
+                    }
+                  });
+                  if (iamRes.ok) {
+                    const iamData: any = await iamRes.json();
+                    for (const binding of iamData.bindings || []) {
+                      for (const m of binding.members || []) {
+                        const cleanEmail = extractUserIdentity(m);
+                        if (cleanEmail) {
+                          const existing = userMap.get(cleanEmail) || {
+                            email: cleanEmail,
+                            sessionsCount: 0,
+                            notebooksCount: 0,
+                            agentsCount: 0,
+                            sources: [] as string[]
+                          };
+                          existing.agentsCount++;
+                          const srcLabel = `Agent (${a.displayName || 'Custom'})`;
+                          if (!existing.sources.includes(srcLabel) && existing.sources.length < 3) {
+                            existing.sources.push(srcLabel);
+                          }
+                          userMap.set(cleanEmail, existing);
                         }
-                        userMap.set(cleanEmail, existing);
                       }
                     }
                   }
-                }
-              } catch {}
-            }));
+                } catch {}
+              }));
+            }
           }
         } catch (agErr: any) {
           logger.debug(`Agents user discovery skipped for ${curAppId}: ${agErr.message}`);
@@ -148,8 +240,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             const sessions = sessData.sessions || [];
             for (const s of sessions) {
               const userEmail = s.userPseudoId || s.user || '';
-              if (isValidUserIdentity(userEmail)) {
-                const cleanEmail = userEmail.replace(/^user:/i, '').trim();
+              const cleanEmail = extractUserIdentity(userEmail);
+              if (cleanEmail) {
                 const existing = userMap.get(cleanEmail) || {
                   email: cleanEmail,
                   sessionsCount: 0,
@@ -183,8 +275,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             const memories = memData.memories || [];
             if (memories.length > 0) {
               const callerId = (await authService.getCallerIdentity?.()) || process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
-              if (callerId && isValidUserIdentity(callerId)) {
-                const cleanEmail = callerId.replace(/^user:/i, '').trim();
+              const cleanEmail = extractUserIdentity(callerId);
+              if (cleanEmail) {
                 const existing = userMap.get(cleanEmail) || {
                   email: cleanEmail,
                   sessionsCount: 0,
@@ -220,8 +312,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
           const notebooks = nbData.notebooks || [];
           for (const nb of notebooks) {
             const owner = nb.owner || nb.creator || nb.metadata?.owner || nb.metadata?.ownerEmail || nb.metadata?.creatorEmail || '';
-            if (isValidUserIdentity(owner)) {
-              const cleanOwner = owner.replace(/^user:/i, '').trim();
+            const cleanOwner = extractUserIdentity(owner);
+            if (cleanOwner) {
               const existing = userMap.get(cleanOwner) || {
                 email: cleanOwner,
                 sessionsCount: 0,

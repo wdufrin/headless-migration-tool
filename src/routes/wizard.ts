@@ -20,13 +20,25 @@ import { GcpAuthService } from '../services/gcpAuth.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
 
+import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
+import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
+import { extractUserIdentity } from './discovery.js';
+
 export const wizardRouter = express.Router();
 
 // IdP Presets Endpoint
-wizardRouter.get('/idp/presets', (_req, res) => {
+wizardRouter.get('/idp/presets', async (_req, res) => {
   try {
+    const authService = new GcpAuthService();
+    const callerIdentity = await authService.getCallerIdentity().catch(() => undefined);
+    let detectedTargetDomain = '@yourcompany.com';
+    if (callerIdentity && callerIdentity.includes('@')) {
+      detectedTargetDomain = '@' + callerIdentity.split('@')[1];
+    }
     return res.status(200).json({
-      presets: IdentityMappingService.getIdpPresets()
+      presets: IdentityMappingService.getIdpPresets(),
+      detectedTargetDomain,
+      callerIdentity
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'FailedToGetPresets', message: err.message });
@@ -36,9 +48,71 @@ wizardRouter.get('/idp/presets', (_req, res) => {
 // IdP Auto-Mapping Preview & Transformation Endpoint
 wizardRouter.post('/idp/auto-map', async (req, res) => {
   try {
-    const { sourceUsers, domainRules, explicitMappings, fallbackUserEmail } = req.body || {};
+    const { sourceUsers, domainRules, explicitMappings, fallbackUserEmail, sourceProjectId, sourceLocation, sourceAppId } = req.body || {};
 
     let usersToMap: string[] = Array.isArray(sourceUsers) ? sourceUsers : [];
+
+    // If sourceUsers is empty and sourceProjectId is provided, discover users dynamically
+    if (usersToMap.length === 0 && sourceProjectId) {
+      try {
+        const saKeyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || 
+          (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
+        const wifConfigPath = process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
+          (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
+        const authService = new GcpAuthService({
+          staticToken: req.accessToken,
+          serviceAccountKeyPath: saKeyPath,
+          wifConfigPath
+        });
+        const token = await authService.getAccessToken().catch(() => null);
+        const location = sourceLocation || 'global';
+        const baseUrl = getSafeDiscoveryEngineUrl(location);
+        if (token) {
+          const enginesToScan: string[] = [];
+          if (sourceAppId && sourceAppId !== 'all' && sourceAppId !== 'custom') {
+            enginesToScan.push(sourceAppId);
+          } else {
+            const client = new DiscoveryEngineClient(authService);
+            const listed = await client.listEngines({ projectId: sourceProjectId, appLocation: location });
+            for (const eng of listed) {
+              const eid = eng.name?.split('/').pop() || eng.id;
+              if (eid) enginesToScan.push(eid);
+            }
+          }
+          for (const curApp of enginesToScan) {
+            const agUrl = `${baseUrl}/v1alpha/projects/${sourceProjectId}/locations/${location}/collections/default_collection/engines/${curApp}/assistants/default_assistant/agents?pageSize=100`;
+            const agResp = await fetch(agUrl, {
+              headers: { 'Authorization': `Bearer ${token}`, 'X-Goog-User-Project': sourceProjectId }
+            });
+            if (agResp.ok) {
+              const agData: any = await agResp.json();
+              for (const a of (agData.agents || [])) {
+                const directOwner = extractUserIdentity(a.owner || a.creator || a.skillAgentDefinition?.owner || '');
+                if (directOwner && !usersToMap.includes(directOwner)) {
+                  usersToMap.push(directOwner);
+                }
+                const iamRes = await fetch(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`, {
+                  headers: { 'Authorization': `Bearer ${token}`, 'X-Goog-User-Project': sourceProjectId }
+                });
+                if (iamRes.ok) {
+                  const iamData: any = await iamRes.json();
+                  for (const binding of iamData.bindings || []) {
+                    for (const m of binding.members || []) {
+                      const cleanEmail = extractUserIdentity(m);
+                      if (cleanEmail && !usersToMap.includes(cleanEmail)) {
+                        usersToMap.push(cleanEmail);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (discErr: any) {
+        logger.debug(`Could not discover users for auto-map preview: ${discErr.message}`);
+      }
+    }
 
     const mappingService = new IdentityMappingService({
       domainRules: domainRules || [],

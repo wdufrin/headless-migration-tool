@@ -21,6 +21,37 @@ import { mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
 /**
+ * Maps IAM member identities across IdPs (Workforce Identity Federation to Cloud Identity/Workspace).
+ * Strips workforce pool URLs and user prefixes, applies identity mapping, and formats with valid IAM prefix.
+ */
+export function mapIamMember(member: string, identityMapping: Record<string, string> = {}): string {
+  if (!member || typeof member !== 'string') return member;
+  const trimmed = member.trim();
+  if (trimmed === 'allUsers' || trimmed === 'allAuthenticatedUsers' || trimmed.startsWith('deleted:')) {
+    return trimmed;
+  }
+
+  let clean = trimmed
+    .replace(/^.*\/subject\//i, '')
+    .replace(/^.*_subject_/i, '')
+    .replace(/^principal(set)?:\/\/.*?\//i, '')
+    .replace(/^user:/i, '')
+    .trim();
+
+  try {
+    clean = decodeURIComponent(clean);
+  } catch {}
+
+  const mapped = identityMapping[clean] || identityMapping[trimmed] || clean;
+
+  // In Cloud Identity / Workspace IAM policies, user accounts must have the user: prefix.
+  if (mapped.includes('@') && !mapped.includes(':')) {
+    return `user:${mapped}`;
+  }
+  return mapped;
+}
+
+/**
  * Evaluates if an agent matches the specified user filter by inspecting IAM policy bindings or creator metadata.
  */
 export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boolean {
@@ -40,13 +71,17 @@ export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boo
   }
 
   if (primaryOwner) {
-    const cleanOwner = primaryOwner
+    let cleanOwner = primaryOwner
       .replace(/^.*\/subject\//i, '')
       .replace(/^.*_subject_/i, '')
       .replace(/^principal(set)?:\/\/.*?\//i, '')
       .replace(/^user:/i, '')
       .replace(/^serviceAccount:/i, '')
       .toLowerCase().trim();
+
+    try {
+      cleanOwner = decodeURIComponent(cleanOwner);
+    } catch {}
 
     return lowerFilters.some(filter => {
       if (filter.startsWith('*@')) {
@@ -331,15 +366,25 @@ export class AgentMigrator {
     const currentPolicy = await this.client.getAgentIamPolicy(targetAgentName, targetEnv);
     const ownerBindings = (currentPolicy.bindings || []).filter(b => b.role === 'roles/discoveryengine.agentOwner');
     
+    // Extract source owners and ensure mapped owners are preserved in roles/discoveryengine.agentOwner
+    const sourceOwners: string[] = [];
+    (sourcePolicy.bindings || []).forEach(b => {
+      if (b.role === 'roles/discoveryengine.agentOwner') {
+        b.members.forEach(m => {
+          const mapped = mapIamMember(m, identityMapping);
+          if (!sourceOwners.includes(mapped)) {
+            sourceOwners.push(mapped);
+          }
+        });
+      }
+    });
+
     // Extract shared users from source policy and map to roles/discoveryengine.agentUser
     const sharedUsers: string[] = [];
     (sourcePolicy.bindings || []).forEach(b => {
       if (b.role !== 'roles/discoveryengine.agentOwner') {
         b.members.forEach(m => {
-          const hasUserPrefix = m.startsWith('user:');
-          const cleanMember = hasUserPrefix ? m.substring(5) : m;
-          const mappedClean = identityMapping[cleanMember] || cleanMember;
-          const mapped = identityMapping[m] || (hasUserPrefix ? `user:${mappedClean}` : mappedClean);
+          const mapped = mapIamMember(m, identityMapping);
           if (!sharedUsers.includes(mapped)) {
             sharedUsers.push(mapped);
           }
@@ -347,7 +392,19 @@ export class AgentMigrator {
       }
     });
 
-    const finalBindings = [...ownerBindings];
+    const finalBindings: any[] = [];
+    const mergedOwnerMembers = Array.from(new Set([
+      ...(ownerBindings[0]?.members || []),
+      ...sourceOwners
+    ]));
+
+    if (mergedOwnerMembers.length > 0) {
+      finalBindings.push({
+        role: 'roles/discoveryengine.agentOwner',
+        members: mergedOwnerMembers
+      });
+    }
+
     if (sharedUsers.length > 0) {
       finalBindings.push({
         role: 'roles/discoveryengine.agentUser',
@@ -509,9 +566,13 @@ export class AgentMigrator {
             createErr.message.includes('User does not exist') ||
             createErr.message.includes('client_is_not_authorized') ||
             createErr.message.includes('unauthorized_client') ||
-            createErr.message.includes('invalid_grant')
+            createErr.message.includes('invalid_grant') ||
+            createErr.message.includes('discoveryengine.agents.create') ||
+            createErr.message.includes('PERMISSION_DENIED') ||
+            createErr.message.includes('Permission') ||
+            createErr.status === 403
           ) {
-            logger.warn(`DWD impersonation not available for "${userOwner}". Restoring Agent "${result.displayName}" directly into target engine via Service Account.`);
+            logger.warn(`DWD impersonation or user permissions not available for "${userOwner}" (${createErr.message}). Restoring Agent "${result.displayName}" directly into target engine via Service Account.`);
             createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, undefined);
           } else if (
             createErr.message.includes('authorization') ||

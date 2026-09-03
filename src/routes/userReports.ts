@@ -36,7 +36,7 @@ export function getLatestMigrationReport(reportId?: string): any {
       }
     }
 
-    const reportObjects: { file: string; startTimeMs: number }[] = [];
+    const reportObjects: { file: string; startTimeMs: number; resultsCount: number; usersCount: number }[] = [];
     for (const f of files) {
       try {
         const fullPath = path.join(reportsDir, f);
@@ -44,14 +44,20 @@ export function getLatestMigrationReport(reportId?: string): any {
         const raw = fs.readFileSync(fullPath, 'utf8');
         const parsed = JSON.parse(raw);
         const startTimeMs = parsed.startTime ? new Date(parsed.startTime).getTime() : stats.mtimeMs;
-        reportObjects.push({ file: f, startTimeMs });
+        const resultsCount = Array.isArray(parsed.results) ? parsed.results.length : 0;
+        const usersCount = Array.isArray(parsed.discoveredUsers) ? parsed.discoveredUsers.length : 0;
+        reportObjects.push({ file: f, startTimeMs, resultsCount, usersCount });
       } catch {}
     }
 
     reportObjects.sort((a, b) => b.startTimeMs - a.startTimeMs);
     if (reportObjects.length === 0) return null;
 
-    const raw = fs.readFileSync(path.join(reportsDir, reportObjects[0].file), 'utf8');
+    // Prefer the most recent report that has actual migration results
+    const reportsWithData = reportObjects.filter(r => r.resultsCount > 0);
+    const targetFile = reportsWithData.length > 0 ? reportsWithData[0].file : reportObjects[0].file;
+
+    const raw = fs.readFileSync(path.join(reportsDir, targetFile), 'utf8');
     return JSON.parse(raw);
   } catch {
     return null;
@@ -150,12 +156,19 @@ userReportsRouter.post('/user-reports/send-email', async (req, res) => {
     // Ensure bundles exist
     await generator.generateAllUserBundles(latestReport);
 
-    const authService = new GcpAuthService({ staticToken: callerToken });
+    const callerScopes = req.user?.scope || '';
+    const hasGmailScope = callerScopes.includes('https://www.googleapis.com/auth/gmail.send') || callerScopes.includes('https://mail.google.com/');
+    const gmailToken = hasGmailScope ? callerToken : undefined;
+    const authService = new GcpAuthService();
+
     const result = await generator.sendUserEmail({
       userEmail,
       senderEmail: senderEmail || process.env.SENDER_EMAIL || process.env.ADMIN_EMAIL || userEmail,
       overrideRecipientEmail: overrideRecipientEmail || userEmail,
-      accessToken: callerToken,
+      accessToken: gmailToken,
+      singleEmailMode: req.body?.singleEmailMode !== undefined ? !!req.body.singleEmailMode : true,
+      zipAttachments: req.body?.zipAttachments !== undefined ? !!req.body.zipAttachments : true,
+      optimizeMedia: req.body?.optimizeMedia !== undefined ? !!req.body.optimizeMedia : true,
       authService,
       smtpConfig
     }, latestReport);
@@ -163,6 +176,42 @@ userReportsRouter.post('/user-reports/send-email', async (req, res) => {
     return res.status(200).json(result);
   } catch (err: any) {
     return res.status(500).json({ error: 'SendEmailFailed', message: err.message });
+  }
+});
+
+userReportsRouter.post('/user-reports/send-bulk-email', async (req, res) => {
+  try {
+    const callerToken = req.accessToken;
+    const { userEmails, overrideRecipientEmail, senderEmail, smtpConfig, reportId, pacingDelayMs, singleEmailMode, zipAttachments, optimizeMedia } = req.body || {};
+
+    const { UserReportGenerator } = await import('../engines/userReportGenerator.js');
+    const generator = new UserReportGenerator();
+    const latestReport = getLatestMigrationReport(reportId);
+    if (!latestReport) {
+      return res.status(400).json({ error: 'NoMigrationReport', message: 'No migration reports found to dispatch emails from.' });
+    }
+
+    const callerScopes = req.user?.scope || '';
+    const hasGmailScope = callerScopes.includes('https://www.googleapis.com/auth/gmail.send') || callerScopes.includes('https://mail.google.com/');
+    const gmailToken = hasGmailScope ? callerToken : undefined;
+    const authService = new GcpAuthService();
+
+    const result = await generator.sendBulkUserEmails({
+      userEmails: Array.isArray(userEmails) && userEmails.length > 0 ? userEmails : undefined,
+      senderEmail: senderEmail || process.env.SENDER_EMAIL || process.env.ADMIN_EMAIL,
+      overrideRecipientEmail: overrideRecipientEmail ? overrideRecipientEmail.trim() : undefined,
+      accessToken: gmailToken,
+      singleEmailMode: singleEmailMode !== undefined ? !!singleEmailMode : true,
+      zipAttachments: zipAttachments !== undefined ? !!zipAttachments : true,
+      optimizeMedia: optimizeMedia !== undefined ? !!optimizeMedia : true,
+      authService,
+      smtpConfig,
+      pacingDelayMs: typeof pacingDelayMs === 'number' ? pacingDelayMs : 250
+    }, latestReport);
+
+    return res.status(200).json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'SendBulkEmailFailed', message: err.message });
   }
 });
 

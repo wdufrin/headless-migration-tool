@@ -3,6 +3,7 @@ import path from 'path';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { SessionMigrator, ChatSession } from './sessionMigrator.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
+import { NotebookLmArtifactFormatter } from '../services/notebookLmArtifactFormatter.js';
 import { logger } from '../utils/logger.js';
 
 export interface DiscoveredArtifact {
@@ -34,9 +35,12 @@ export class ArtifactExtractor {
     this.migrator = new SessionMigrator(config, authService);
   }
 
-  public async scanAllArtifacts(): Promise<DiscoveredArtifact[]> {
+  public async scanAllArtifacts(candidateUsers?: string[]): Promise<DiscoveredArtifact[]> {
     logger.info('Starting full discovery scan for user artifacts across all chat sessions...');
-    const sessions = await this.migrator.listSourceSessions();
+    const users = candidateUsers && candidateUsers.length > 0
+      ? candidateUsers
+      : (this.config.options?.userFilter ? this.config.options.userFilter.map(f => f.replace(/^user:/, '').trim()) : []);
+    const sessions = await this.migrator.listSourceSessions(users);
     const artifacts: DiscoveredArtifact[] = [];
 
     for (const session of sessions) {
@@ -521,13 +525,15 @@ export class ArtifactExtractor {
 </html>`;
   }
 
-  public async exportAllToDirectory(outputDir: string = './exports/artifacts'): Promise<{ count: number; exportDir: string }> {
-    const artifacts = await this.scanAllArtifacts();
+  public async exportAllToDirectory(outputDir: string = './exports/artifacts', candidateUsers?: string[]): Promise<{ count: number; exportDir: string }> {
+    const artifacts = await this.scanAllArtifacts(candidateUsers);
     const resolvedDir = path.resolve(process.cwd(), outputDir);
 
     if (!fs.existsSync(resolvedDir)) {
       fs.mkdirSync(resolvedDir, { recursive: true });
     }
+
+    const exportedManifests: any[] = [];
 
     for (const art of artifacts) {
       const sessionSlug = art.sessionTitle.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
@@ -535,23 +541,92 @@ export class ArtifactExtractor {
       if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
       const safeId = art.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanBase = NotebookLmArtifactFormatter.cleanArtifactFilename(art.sessionTitle, art.title, '').replace(/\.[^/.]+$/, '');
+      const exportedFiles: string[] = [];
 
-      if (art.htmlContent) {
-        fs.writeFileSync(path.join(sessionDir, `${safeId}.html`), art.htmlContent, 'utf8');
-      }
+      try {
+        if (art.type === 'SLIDE_DECK') {
+          const textContent = (art.slides && art.slides.length > 0)
+            ? art.slides.join('\n\n---\n\n')
+            : (art.rawText || '');
 
-      if (art.rawText) {
-        fs.writeFileSync(path.join(sessionDir, `${safeId}.md`), art.rawText, 'utf8');
+          // 1. Native Microsoft PowerPoint (.pptx)
+          const pptxFilename = `${cleanBase}.pptx`;
+          const pptxPath = path.join(sessionDir, pptxFilename);
+          await NotebookLmArtifactFormatter.generatePptxPresentation(art.title, art.sessionTitle, textContent, pptxPath);
+          exportedFiles.push(pptxFilename);
+
+          // 2. Interactive Presentation HTML
+          const deckHtml = NotebookLmArtifactFormatter.renderSlideDeckPresentation(art.title, art.sessionTitle, textContent);
+          const deckFilename = `${cleanBase}_SlideDeck.html`;
+          fs.writeFileSync(path.join(sessionDir, deckFilename), deckHtml, 'utf8');
+          fs.writeFileSync(path.join(sessionDir, `${safeId}.html`), deckHtml, 'utf8');
+          exportedFiles.push(deckFilename);
+
+          // 3. Clean authentic Markdown
+          const cleanMd = NotebookLmArtifactFormatter.cleanNotebookLmMarkdown(art.title, textContent);
+          const mdFilename = `${cleanBase}.md`;
+          fs.writeFileSync(path.join(sessionDir, mdFilename), cleanMd, 'utf8');
+          fs.writeFileSync(path.join(sessionDir, `${safeId}.md`), cleanMd, 'utf8');
+          exportedFiles.push(mdFilename);
+        } else if (art.type === 'CANVAS_DOCUMENT') {
+          const textContent = art.rawText || '';
+
+          // 1. Native Microsoft Word (.docx)
+          const docxFilename = `${cleanBase}.docx`;
+          const docxPath = path.join(sessionDir, docxFilename);
+          await NotebookLmArtifactFormatter.generateDocxDocument(art.title, 'Canvas Document', art.sessionTitle, textContent, docxPath);
+          exportedFiles.push(docxFilename);
+
+          // 2. Executive HTML Document
+          const docHtml = NotebookLmArtifactFormatter.renderDocumentHtml(art.title, 'Canvas Document', art.sessionTitle, textContent);
+          const htmlFilename = `${cleanBase}.html`;
+          fs.writeFileSync(path.join(sessionDir, htmlFilename), docHtml, 'utf8');
+          fs.writeFileSync(path.join(sessionDir, `${safeId}.html`), docHtml, 'utf8');
+          exportedFiles.push(htmlFilename);
+
+          // 3. Clean authentic Markdown
+          const cleanMd = NotebookLmArtifactFormatter.cleanNotebookLmMarkdown(art.title, textContent);
+          const mdFilename = `${cleanBase}.md`;
+          fs.writeFileSync(path.join(sessionDir, mdFilename), cleanMd, 'utf8');
+          fs.writeFileSync(path.join(sessionDir, `${safeId}.md`), cleanMd, 'utf8');
+          exportedFiles.push(mdFilename);
+        } else {
+          if (art.htmlContent) {
+            const htmlFilename = `${cleanBase}.html`;
+            fs.writeFileSync(path.join(sessionDir, htmlFilename), art.htmlContent, 'utf8');
+            fs.writeFileSync(path.join(sessionDir, `${safeId}.html`), art.htmlContent, 'utf8');
+            exportedFiles.push(htmlFilename);
+          }
+          if (art.rawText) {
+            const cleanMd = NotebookLmArtifactFormatter.cleanNotebookLmMarkdown(art.title, art.rawText);
+            const mdFilename = `${cleanBase}.md`;
+            fs.writeFileSync(path.join(sessionDir, mdFilename), cleanMd, 'utf8');
+            fs.writeFileSync(path.join(sessionDir, `${safeId}.md`), cleanMd, 'utf8');
+            exportedFiles.push(mdFilename);
+          }
+        }
+      } catch (exportErr: any) {
+        logger.warn(`Failed to export rich format for artifact "${art.title}" (${art.id}): ${exportErr.message}`);
+        // Fallback to raw files
+        if (art.htmlContent) fs.writeFileSync(path.join(sessionDir, `${safeId}.html`), art.htmlContent, 'utf8');
+        if (art.rawText) fs.writeFileSync(path.join(sessionDir, `${safeId}.md`), art.rawText, 'utf8');
       }
 
       fs.writeFileSync(path.join(sessionDir, `${safeId}.meta.json`), JSON.stringify(art, null, 2), 'utf8');
+      exportedManifests.push({
+        ...art,
+        cleanBaseName: cleanBase,
+        exportedFiles,
+        sessionDirectory: sessionSlug
+      });
     }
 
     // Write Master Manifest
     fs.writeFileSync(path.join(resolvedDir, 'manifest.json'), JSON.stringify({
       exportedAt: new Date().toISOString(),
       totalArtifacts: artifacts.length,
-      artifacts
+      artifacts: exportedManifests
     }, null, 2), 'utf8');
 
     logger.info(`Successfully exported ${artifacts.length} artifacts to ${resolvedDir}`);
