@@ -39,10 +39,21 @@ const app = express();
 const port = parseInt(process.env.PORT || '8080', 10);
 const host = process.env.HOST || '127.0.0.1';
 
-// Mitigation #3: Lock CORS to authorized origin
-const allowedOrigin = process.env.CORS_ALLOWED_ORIGIN || '*';
+// Mitigation #3: Lock CORS to authorized origin (Localhost & 127.0.0.1)
+const allowedOriginEnv = process.env.CORS_ALLOWED_ORIGIN;
 app.use(cors({
-  origin: allowedOrigin === '*' ? true : allowedOrigin,
+  origin: (origin, callback) => {
+    // Direct requests, curl, or same-origin has undefined origin
+    if (!origin) return callback(null, true);
+    if (allowedOriginEnv && allowedOriginEnv !== '*') {
+      return callback(null, allowedOriginEnv === origin);
+    }
+    // Allow local workstation ports
+    if (origin.startsWith('http://127.0.0.1:') || origin.startsWith('http://localhost:')) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS policy: Access blocked from unauthorized origin'));
+  },
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -92,9 +103,18 @@ app.use('/api', maintenanceRouter);
 app.use('/api', configAuditRouter);
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     logger.info(`Gemini Enterprise Admin Migration Console running locally on http://${host}:${port}`);
     logger.info(`🔒 Localhost Isolation active: Bound to ${host} (Local workstation only).`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.error(`Port ${port} is already in use by another running process.`);
+      logger.info(`👉 Tip: You can launch on a different port using: PORT=${port + 5} npm start`);
+      process.exit(1);
+    }
+    throw err;
   });
 }
 

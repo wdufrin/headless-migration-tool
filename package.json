@@ -18,6 +18,7 @@
     "test:e2e-matrix": "tsx scripts/run-e2e-matrix.ts",
     "env:spinup": "bash scripts/spin-up-test-env.sh",
     "env:teardown": "bash scripts/teardown-test-env.sh",
+    "docs:build": "tsx scripts/generate-guides-docx.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
