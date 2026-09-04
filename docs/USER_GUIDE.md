@@ -104,34 +104,7 @@ Once configured, click **🚀 Run Live Migration** (or **Simulate Dry Run**). Th
 
 ---
 
-## 7. Deep Dive: Asset Preservation & Studio Parity
-
-A central achievement of v1.4.0 is authentic fidelity and export parity for all Gemini Enterprise Studio outputs:
-
-### A. PowerPoint Presentations (`.pptx`)
-Generated slide decks are exported directly into native Microsoft PowerPoint (`.pptx`) format with 16:9 widescreen layouts, card container geometry, bullet hierarchy, and presenter notes matching authentic Google Slides and PowerPoint standards.
-
-![Figure 2.5: Gemini Enterprise Studio Presentation & Slide Deck Export](images/06_gemini_studio_slide_export.png)
-*Figure 2.5: Gemini Enterprise Studio Presentation & Slide Deck Export Options*
-
-### B. Restored Research Notebooks & Infographics
-Restored notebooks preserve all research grounding documents and display infographics directly inside the Studio view.
-
-![Figure 2.6: Restored Gemini Enterprise Notebook with Studio Infographic](images/07_gemini_studio_notebook_infographic.png)
-*Figure 2.6: Restored Gemini Enterprise Notebook with Studio Infographic*
-
-### C. Studio Artifacts Hub & Offline Interactive Applications
-Studio artifacts (Audio Overviews, Slide Decks, Explainer Videos, Mind Maps, Quizzes, and Flashcards) are systematically cataloged. Quizzes and flashcards are synthesized into standalone HTML5 players with zero external dependencies and smooth 3D CSS animations.
-
-![Figure 2.7: Gemini Enterprise Studio Artifacts Hub](images/08_gemini_studio_artifacts_hub.png)
-*Figure 2.7: Gemini Enterprise Studio Artifacts Hub*
-
-![Figure 2.8: User Artifacts Gallery & Media Inspection Console](images/16_user_artifacts_gallery.png)
-*Figure 2.8: User Artifacts Gallery & Media Inspection Console*
-
----
-
-## 8. Migration Reports & Reconciliation Auditing
+## 7. Migration Reports & Reconciliation Auditing
 
 Upon pipeline completion, the platform generates comprehensive executive and machine-readable audit reports saved in `reports/`:
 * **Markdown Report** (`reports/migration-report-<ID>-<TIMESTAMP>.md`): Human-readable executive summary with detailed asset breakdown.
@@ -143,7 +116,7 @@ Upon pipeline completion, the platform generates comprehensive executive and mac
 
 ---
 
-## 9. User Handover Delivery & Notification Engine
+## 8. User Handover Delivery & Notification Engine
 
 To deliver a seamless day-one onboarding experience, the platform packages each user's assets into a single consolidated `NotebookLM_Artifacts.zip` archive and dispatches an onboarding email.
 
@@ -165,7 +138,7 @@ To deliver a seamless day-one onboarding experience, the platform packages each 
 
 ---
 
-## 10. Target Maintenance & Selective Rollback
+## 9. Target Maintenance & Selective Rollback
 
 During testing or staged rollouts, administrators can use the **Target Maintenance** tab to selectively clean migrated assets in the target environment prior to fresh migration runs.
 
@@ -182,7 +155,7 @@ During testing or staged rollouts, administrators can use the **Target Maintenan
 
 ---
 
-## 11. Enterprise Migration Playbook & Best Practices
+## 10. Enterprise Migration Playbook & Best Practices
 
 Follow this recommended four-phase migration playbook for enterprise rollouts:
 
