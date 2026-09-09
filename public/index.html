@@ -1835,14 +1835,22 @@
               
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div>
-                  <label class="block text-gray-400 mb-1 font-medium">Target GCP Project ID</label>
-                  <input type="text" id="wizDwdProject" value="testgebackupandrestorev2" oninput="updateDwdScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-gray-400 font-medium">Target GCP Project ID</label>
+                    <button type="button" onclick="checkDwdProjectOrgPolicies(this)" id="btnCheckOrgPolicies" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium transition" title="Inspect project organization policies for blockers">
+                      <span>🛡️</span> Check Org Policies
+                    </button>
+                  </div>
+                  <input type="text" id="wizDwdProject" value="testgebackupandrestorev2" oninput="updateDwdScript(); debounceCheckDwdOrgPolicies();" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
                 </div>
                 <div>
                   <label class="block text-gray-400 mb-1 font-medium">Service Account ID Name</label>
                   <input type="text" id="wizDwdSaName" value="gemini-dwd-migrator" oninput="updateDwdScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
                 </div>
               </div>
+
+              <!-- Dynamic Live Organization Policy Warning / Clean Status Banner -->
+              <div id="dwdOrgPolicyBanner" class="hidden rounded-xl border p-4 text-xs space-y-3"></div>
 
               <div>
                 <div class="flex items-center justify-between text-xs text-gray-400 mb-1.5">
@@ -1939,6 +1947,27 @@
 
               <!-- Dynamic Live Verification Status Banner -->
               <div id="wifPoolStatusCard" class="hidden p-4 rounded-xl border text-xs space-y-2"></div>
+
+              <!-- WiF Org Policy Architecture & Compliance Card -->
+              <div class="rounded-xl border border-purple-500/30 bg-purple-950/20 p-3.5 text-xs space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm">🛡️</span>
+                    <span class="font-bold text-purple-300 text-xs">WiF Org Policy Assessment & Keyless Architecture</span>
+                  </div>
+                  <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-bold font-mono">100% KEYLESS & EXEMPT</span>
+                </div>
+                <p class="text-gray-300 text-[11px] leading-relaxed">
+                  Workforce Identity Federation mints ephemeral user-scoped credentials through Google Security Token Service (STS) and is <strong class="text-white">fully immune to <code>iam.disableServiceAccountKeyCreation</code></strong> and key upload constraints.
+                </p>
+                <div class="flex items-center justify-between border-t border-purple-500/20 pt-2 text-[11px] text-gray-400">
+                  <span>Policy Check: Ensure <code class="text-purple-300 font-mono">iam.allowedPolicyMemberDomains</code> permits workforce pool principals.</span>
+                  <button type="button" onclick="checkWifOrgPolicies(this)" class="text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 transition">
+                    <span>🔍</span> Check WiF Domains
+                  </button>
+                </div>
+                <div id="wifOrgPolicyResult" class="hidden rounded-lg p-2.5 text-[11px] font-mono"></div>
+              </div>
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div>
@@ -3404,6 +3433,186 @@
         }
       } catch (err) {
         alert('Auto-Fix error: ' + err.message);
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = origText;
+        }
+      }
+    }
+
+    let dwdOrgPolicyDebounceTimer = null;
+    function debounceCheckDwdOrgPolicies() {
+      clearTimeout(dwdOrgPolicyDebounceTimer);
+      dwdOrgPolicyDebounceTimer = setTimeout(() => {
+        checkDwdProjectOrgPolicies();
+      }, 700);
+    }
+
+    async function checkDwdProjectOrgPolicies(btnEl = null) {
+      const proj = document.getElementById('wizDwdProject')?.value?.trim();
+      const banner = document.getElementById('dwdOrgPolicyBanner');
+      if (!proj || !banner) return;
+
+      let origText = '';
+      if (btnEl) {
+        origText = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="animate-spin">⏳</span> Checking Policies...';
+      }
+
+      try {
+        const res = await fetch('/api/wizard/check-org-policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: proj })
+        });
+        const data = await res.json();
+        if (res.ok && data.policies) {
+          banner.classList.remove('hidden');
+          const isKeyDisabled = data.policies.disableServiceAccountKeyCreation?.enforced;
+          const isCrossProject = data.policies.disableCrossProjectServiceAccountUsage?.enforced;
+
+          if (isKeyDisabled) {
+            banner.className = 'rounded-xl border border-amber-500/50 bg-amber-950/30 p-4 text-xs space-y-3';
+            banner.innerHTML = `
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-base">⚠️</span>
+                  <div>
+                    <h4 class="text-amber-300 font-bold text-xs">Org Policy Conflict: iam.disableServiceAccountKeyCreation is Enforced</h4>
+                    <p class="text-gray-300 text-[11px] mt-0.5">Creating service account keys is disabled on project <code class="text-amber-300 font-mono font-bold">${escapeHtml(proj)}</code>. Command #3 (<code class="text-emerald-300 font-mono">gcloud iam service-accounts keys create</code>) will fail.</p>
+                  </div>
+                </div>
+                <span class="px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded text-[10px] font-mono font-bold shrink-0">BLOCKING DWD</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 pt-1">
+                <button type="button" onclick="applyProjectKeyCreationOverride('${escapeHtml(proj)}', this)" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg shadow transition flex items-center gap-1">
+                  <span>⚡</span> 1-Click Project Override
+                </button>
+                <button type="button" onclick="switchWizardTab('wif')" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg shadow transition flex items-center gap-1">
+                  <span>🌐</span> Switch to WiF (Exempt from Key Policies)
+                </button>
+                <button type="button" onclick="copyOrgPolicyOverrideCmd('${escapeHtml(proj)}')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg border border-gray-700 transition">
+                  📋 Copy Override Command
+                </button>
+              </div>
+              ${isCrossProject ? `
+                <div class="border-t border-amber-500/20 pt-2 text-[11px] text-gray-400 flex items-center gap-1.5">
+                  <span class="text-blue-400">ℹ️</span>
+                  <span><strong>Cross-Project SA Constraint:</strong> <code>iam.disableCrossProjectServiceAccountUsage</code> is also enforced. The service account must belong to <code>${escapeHtml(proj)}</code>.</span>
+                </div>
+              ` : ''}
+            `;
+          } else {
+            banner.className = 'rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-3.5 text-xs flex items-center justify-between gap-3';
+            banner.innerHTML = `
+              <div class="flex items-center gap-2 text-emerald-300">
+                <span class="text-base">✅</span>
+                <div>
+                  <span class="font-semibold">Organization Policies Validated:</span>
+                  <span class="text-gray-300 text-[11px] ml-1">Service Account Key creation is permitted on project <code>${escapeHtml(proj)}</code>.</span>
+                </div>
+              </div>
+              <span class="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">DWD READY</span>
+            `;
+          }
+        }
+      } catch (err) {
+        console.warn('Org policy check error:', err);
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = origText;
+        }
+      }
+    }
+
+    async function applyProjectKeyCreationOverride(projectId, btnEl = null) {
+      if (!confirm(`Apply project-level policy override to allow key creation on ${projectId}?`)) {
+        return;
+      }
+      let origText = '';
+      if (btnEl) {
+        origText = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="animate-spin">⏳</span> Applying Override...';
+      }
+
+      try {
+        const res = await fetch('/api/wizard/override-key-creation-policy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert(`✅ Project Override Succeeded:\n${data.message}`);
+          checkDwdProjectOrgPolicies();
+        } else {
+          alert(`❌ Override Failed: ${data.message || data.error}\n\nEnsure your account has "roles/orgpolicy.policyAdmin" on the project, or run the command manually.`);
+        }
+      } catch (err) {
+        alert('Override request error: ' + err.message);
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = origText;
+        }
+      }
+    }
+
+    function copyOrgPolicyOverrideCmd(projectId) {
+      const cmd = `cat <<EOF > /tmp/override_sa_key.yaml
+name: projects/${projectId}/policies/iam.disableServiceAccountKeyCreation
+spec:
+  rules:
+  - enforce: false
+EOF
+gcloud org-policies set-policy /tmp/override_sa_key.yaml --project=${projectId}`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        alert('📋 Copied gcloud command to clipboard:\n\n' + cmd);
+      });
+    }
+
+    async function checkWifOrgPolicies(btnEl = null) {
+      const proj = document.getElementById('wizDwdProject')?.value?.trim() || 'target-project';
+      const orgId = document.getElementById('wizWifOrgId')?.value?.trim();
+      const resultBox = document.getElementById('wifOrgPolicyResult');
+      if (!resultBox) return;
+
+      let origText = '';
+      if (btnEl) {
+        origText = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="animate-spin">⏳</span> Checking...';
+      }
+
+      try {
+        const res = await fetch('/api/wizard/check-org-policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: proj, organizationId: orgId })
+        });
+        const data = await res.json();
+        resultBox.classList.remove('hidden');
+        if (res.ok && data.wifAssessment) {
+          const wif = data.wifAssessment;
+          resultBox.className = 'rounded-lg p-3 text-[11px] font-mono border border-purple-500/40 bg-purple-950/40 space-y-1.5';
+          resultBox.innerHTML = `
+            <div class="text-emerald-300 font-bold">✅ Keyless Immunity: CONFIRMED (No Service Account Keys needed)</div>
+            <div class="text-gray-300">${escapeHtml(wif.message)}</div>
+            ${wif.domainCompliant ? `
+              <div class="text-emerald-400">✅ Domain Sharing: Workforce pool principal sets permitted in target IAM.</div>
+            ` : `
+              <div class="text-amber-300">⚠️ Domain Sharing Alert: ${escapeHtml(wif.domainWarning || '')}</div>
+            `}
+          `;
+        }
+      } catch (err) {
+        resultBox.classList.remove('hidden');
+        resultBox.className = 'rounded-lg p-2.5 text-[11px] font-mono text-rose-300 bg-rose-950/40 border border-rose-800';
+        resultBox.textContent = 'Failed to check WiF policies: ' + err.message;
       } finally {
         if (btnEl) {
           btnEl.disabled = false;

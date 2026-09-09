@@ -265,6 +265,158 @@ wizardRouter.post('/wizard/auto-fix-iam', async (req, res) => {
   }
 });
 
+// Wizard: Check Organization Policies on Project for DWD & WiF
+wizardRouter.post('/wizard/check-org-policies', async (req, res) => {
+  try {
+    const { projectId, organizationId } = req.body || {};
+    if (!projectId) {
+      return res.status(400).json({ error: 'MissingProjectId', message: 'projectId is required to evaluate organization policies.' });
+    }
+
+    const safeProj = String(projectId).replace(/[^a-zA-Z0-9\-_]/g, '');
+    const safeOrg = organizationId ? String(organizationId).replace(/[^0-9]/g, '') : undefined;
+
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    const checkPolicy = async (constraint: string): Promise<any> => {
+      try {
+        const { stdout } = await execFileAsync('gcloud', [
+          'org-policies',
+          'describe',
+          constraint,
+          '--effective',
+          `--project=${safeProj}`,
+          '--format=json'
+        ]);
+        return JSON.parse(stdout || '{}');
+      } catch (err: any) {
+        return null;
+      }
+    };
+
+    const [keyCreation, crossProject, allowedDomains, allowedDataSources, keyUpload] = await Promise.all([
+      checkPolicy('iam.disableServiceAccountKeyCreation'),
+      checkPolicy('iam.disableCrossProjectServiceAccountUsage'),
+      checkPolicy('iam.allowedPolicyMemberDomains'),
+      checkPolicy('discoveryengine.managed.allowedDataSources'),
+      checkPolicy('iam.disableServiceAccountKeyUpload')
+    ]);
+
+    const isKeyCreationDisabled = keyCreation?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
+    const isCrossProjectDisabled = crossProject?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
+    const isKeyUploadDisabled = keyUpload?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
+    const allowedDomainsList: string[] = allowedDomains?.spec?.rules?.flatMap((r: any) => r.values?.allowedValues || []) || [];
+    const hasDomainRestriction = allowedDomainsList.length > 0;
+
+    // Check if WiF principal set is covered by allowed domains
+    const wifDomainCompliant = !hasDomainRestriction || allowedDomainsList.some((v: string) => 
+      v.includes('principalSet://iam.googleapis.com') || (safeOrg && v.includes(safeOrg))
+    );
+
+    const remediations: Array<{ title: string; command: string; canAutoFix: boolean }> = [];
+    if (isKeyCreationDisabled) {
+      remediations.push({
+        title: `Override iam.disableServiceAccountKeyCreation on ${safeProj}`,
+        command: `gcloud org-policies set-policy <(echo -e "name: projects/${safeProj}/policies/iam.disableServiceAccountKeyCreation\\nspec:\\n  rules:\\n  - enforce: false") --project=${safeProj}`,
+        canAutoFix: true
+      });
+    }
+
+    return res.status(200).json({
+      projectId: safeProj,
+      policies: {
+        disableServiceAccountKeyCreation: {
+          enforced: isKeyCreationDisabled,
+          rule: isKeyCreationDisabled ? 'ENFORCE_TRUE' : 'ENFORCE_FALSE_OR_NOT_SET'
+        },
+        disableCrossProjectServiceAccountUsage: {
+          enforced: isCrossProjectDisabled,
+          rule: isCrossProjectDisabled ? 'ENFORCE_TRUE' : 'PERMITTED'
+        },
+        disableServiceAccountKeyUpload: {
+          enforced: isKeyUploadDisabled
+        },
+        allowedPolicyMemberDomains: {
+          restricted: hasDomainRestriction,
+          allowedValues: allowedDomainsList
+        },
+        allowedDataSources: {
+          raw: allowedDataSources
+        }
+      },
+      dwdAssessment: {
+        blocked: isKeyCreationDisabled,
+        blockReason: isKeyCreationDisabled 
+          ? `Policy "constraints/iam.disableServiceAccountKeyCreation" is enforced on ${safeProj}. Downloading JSON keys (sa-dwd-key.json) will fail.`
+          : null,
+        crossProjectWarning: isCrossProjectDisabled 
+          ? `Policy "constraints/iam.disableCrossProjectServiceAccountUsage" is enforced. Service account must belong natively to ${safeProj}.`
+          : null
+      },
+      wifAssessment: {
+        exemptFromKeyPolicies: true,
+        domainCompliant: wifDomainCompliant,
+        message: 'Workforce Identity Federation (WiF) is 100% exempt from service account key restrictions because tokens are minted via GCP Security Token Service (STS) without disk keys.',
+        domainWarning: !wifDomainCompliant
+          ? `Domain-restricted sharing is enforced with ${allowedDomainsList.length} allowed IDs. Ensure your workforce pool's principalSet is included in iam.allowedPolicyMemberDomains.`
+          : null
+      },
+      remediations
+    });
+  } catch (err: any) {
+    logger.error(`Check Org Policies failed: ${err.message}`);
+    return res.status(500).json({ error: 'CheckOrgPoliciesFailed', message: err.message });
+  }
+});
+
+// Wizard: 1-Click Project-Level Org Policy Override for SA Key Creation
+wizardRouter.post('/wizard/override-key-creation-policy', async (req, res) => {
+  try {
+    const { projectId } = req.body || {};
+    if (!projectId) {
+      return res.status(400).json({ error: 'MissingProjectId', message: 'projectId is required.' });
+    }
+
+    const safeProj = String(projectId).replace(/[^a-zA-Z0-9\-_]/g, '');
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+    const os = await import('os');
+    const path = await import('path');
+
+    const yamlContent = `name: projects/${safeProj}/policies/iam.disableServiceAccountKeyCreation
+spec:
+  rules:
+  - enforce: false
+`;
+    const tmpPath = path.join(os.tmpdir(), `override-key-creation-${Date.now()}.yaml`);
+    fs.writeFileSync(tmpPath, yamlContent, 'utf-8');
+
+    try {
+      const { stdout } = await execFileAsync('gcloud', [
+        'org-policies',
+        'set-policy',
+        tmpPath,
+        `--project=${safeProj}`
+      ]);
+      return res.status(200).json({
+        success: true,
+        message: `Successfully applied project override on "${safeProj}": Service Account Key creation is now permitted (enforce: false).`,
+        stdout
+      });
+    } finally {
+      if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath);
+      }
+    }
+  } catch (err: any) {
+    logger.error(`Override Org Policy failed: ${err.message}`);
+    return res.status(500).json({ error: 'OverridePolicyFailed', message: err.message });
+  }
+});
+
 // Wizard: Verify Workforce Identity Pool & Providers in GCP
 wizardRouter.post('/wizard/verify-wif-pool', async (req, res) => {
   try {

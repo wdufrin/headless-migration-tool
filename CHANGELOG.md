@@ -5,6 +5,31 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-09-09
+
+### Added
+- **Organization Policy Pre-Flight Scanner & Matrix**:
+  - Added `POST /api/wizard/check-org-policies` endpoint in `src/routes/wizard.ts` to inspect target project organization policies using the Cloud Resource Manager / Org Policy REST API.
+  - Automatically assesses four critical enterprise constraints: `iam.disableServiceAccountKeyCreation`, `iam.disableCrossProjectServiceAccountUsage`, `iam.allowedPolicyMemberDomains`, and `discoveryengine.managed.allowedDataSources`.
+  - Added live `🛡️ Check Org Policies` button, dynamic debounced project ID listener, and color-coded alert banners in Step 1 (DWD) of the Auth Wizard in `public/index.html`.
+- **1-Click Project-Level Organization Policy Override**:
+  - Added `POST /api/wizard/override-key-creation-policy` in `src/routes/wizard.ts` to programmatically apply a project-level override (`enforce: false`) on `iam.disableServiceAccountKeyCreation` for administrators with `roles/orgpolicy.policyAdmin`.
+  - Added `⚡ 1-Click Project Override` button and copyable `gcloud org-policies set-policy` command generator in `public/index.html`.
+- **Workforce Identity Federation (WiF) Keyless Policy & Architecture Assessment**:
+  - Added comprehensive architectural guidance in Step 2 of the Auth Wizard explaining that WiF token exchanges (`sts.googleapis.com`) mint ephemeral, short-lived tokens and are **100% immune** to `iam.disableServiceAccountKeyCreation` and `iam.disableServiceAccountKeyUpload`.
+  - Audits `iam.allowedPolicyMemberDomains` to ensure workforce pool principal sets (`principalSet://iam.googleapis.com/...`) are authorized.
+- **Permissions & Least-Privilege Auditor Integration**:
+  - Extended `PermissionAuditor.ts` (`auditOrgPolicies`) to evaluate organization policy compliance alongside IAM role bindings and OAuth2 scopes.
+- **Documentation Overhaul**:
+  - Updated `docs/INSTALLATION_GUIDE.md` with Section 4.1 (Organization Policy Pre-Flight Matrix & Constraints), Step 3 key creation failure callouts, and troubleshooting guidance.
+  - Updated `docs/USER_GUIDE.md` with Section 9 (Auth & Identity Provider Configuration Wizard) detailing DWD setup, 1-click overrides, and WiF keyless architecture.
+
+### Fixed
+- **TypeScript Test Typing**:
+  - Resolved missing `appId` property errors in `tests/skillMigrator.test.ts` for `sourceEnv` and `targetEnv`.
+
+---
+
 ## [1.4.0] - 2026-09-03
 
 ### Added

@@ -501,7 +501,114 @@ export class PermissionAuditor {
       }
     }
 
-    // 5. Over-Provisioning & Destructive Safety Check on Source
+    // 5. Audit Target Project Organization Policies (SA Key Creation, Cross-Project, Allowed Domains)
+    if (targetProject) {
+      try {
+        const { execFile } = await import('child_process');
+        const { promisify } = await import('util');
+        const execFileAsync = promisify(execFile);
+        const safeTargetProj = targetProject.replace(/[^a-zA-Z0-9\-_]/g, '');
+
+        const checkPolicy = async (constraint: string): Promise<any> => {
+          try {
+            const { stdout } = await execFileAsync('gcloud', [
+              'org-policies',
+              'describe',
+              constraint,
+              '--effective',
+              `--project=${safeTargetProj}`,
+              '--format=json'
+            ]);
+            return JSON.parse(stdout || '{}');
+          } catch {
+            return null;
+          }
+        };
+
+        const [keyCreationPolicy, crossProjectPolicy, allowedDomainsPolicy] = await Promise.all([
+          checkPolicy('iam.disableServiceAccountKeyCreation'),
+          checkPolicy('iam.disableCrossProjectServiceAccountUsage'),
+          checkPolicy('iam.allowedPolicyMemberDomains')
+        ]);
+
+        const isKeyCreationDisabled = keyCreationPolicy?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
+        const isCrossProjectDisabled = crossProjectPolicy?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
+
+        if (isTargetWif) {
+          permissions.push({
+            id: 'ORG_POLICY_KEY_CREATION',
+            category: 'WIF_FEDERATION',
+            name: 'Org Policy: Service Account Key Exemption (WiF)',
+            status: 'SAFE',
+            level: 'REQUIRED',
+            details: `Workforce Identity Federation (WiF) uses short-lived tokens via GCP STS and is completely exempt from service account key restrictions.`
+          });
+          totalGranted++;
+        } else {
+          if (isKeyCreationDisabled) {
+            permissions.push({
+              id: 'ORG_POLICY_KEY_CREATION',
+              category: 'TARGET_RESTORE',
+              name: 'Org Policy: Service Account Key Creation (DWD)',
+              status: 'MISSING',
+              level: 'REQUIRED',
+              details: `Organization policy "constraints/iam.disableServiceAccountKeyCreation" is enforced on ${safeTargetProj}. Generating sa-dwd-key.json will fail.`,
+              remediation: `Apply a project-level override on ${safeTargetProj} (enforce: false) or switch to Workforce Identity Federation (WiF).`,
+              fixAction: {
+                type: 'NAVIGATE_TAB',
+                title: 'Apply Org Policy Override in DWD Tab',
+                targetTab: 'dwd',
+                steps: [
+                  `1. Switch to the Domain-Wide Delegation (DWD) tab in the wizard.`,
+                  `2. Click "1-Click Project Override" under Step 1 to allow key creation for ${safeTargetProj}.`,
+                  `3. Or switch to the WiF tab for keyless authentication.`
+                ]
+              }
+            });
+            totalMissing++;
+          } else {
+            permissions.push({
+              id: 'ORG_POLICY_KEY_CREATION',
+              category: 'TARGET_RESTORE',
+              name: 'Org Policy: Service Account Key Creation (DWD)',
+              status: 'GRANTED',
+              level: 'REQUIRED',
+              details: `Organization policy allows service account key creation on project ${safeTargetProj}.`
+            });
+            totalGranted++;
+          }
+        }
+
+        if (isCrossProjectDisabled) {
+          permissions.push({
+            id: 'ORG_POLICY_CROSS_PROJECT',
+            category: 'TARGET_RESTORE',
+            name: 'Org Policy: Cross-Project Service Account Usage',
+            status: 'SAFE',
+            level: 'RECOMMENDED',
+            details: `Cross-project service account usage is disabled by org policy. Service account must belong natively to project ${safeTargetProj}.`
+          });
+          totalGranted++;
+        }
+
+        const allowedValues = allowedDomainsPolicy?.spec?.rules?.flatMap((r: any) => r.values?.allowedValues || []) || [];
+        if (allowedValues.length > 0) {
+          permissions.push({
+            id: 'ORG_POLICY_ALLOWED_DOMAINS',
+            category: 'TARGET_RESTORE',
+            name: 'Org Policy: Domain-Restricted Sharing',
+            status: 'SAFE',
+            level: 'RECOMMENDED',
+            details: `Domain-restricted sharing is active (${allowedValues.length} allowed customer IDs / principal sets). Ensure identityMapping maps external users.`
+          });
+          totalGranted++;
+        }
+      } catch (err: any) {
+        logger.debug(`PermissionAuditor org policy check skipped: ${err.message}`);
+      }
+    }
+
+    // 6. Over-Provisioning & Destructive Safety Check on Source
     if (effectiveToken || isTargetWif) {
       permissions.push({
         id: 'SEC_DESTRUCTIVE_ENGINE_DELETE',

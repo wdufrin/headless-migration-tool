@@ -11,12 +11,14 @@ describe('SkillMigrator', () => {
 
   const sourceEnv: EnvironmentConfig = {
     projectId: 'source-project',
-    appLocation: 'global'
+    appLocation: 'global',
+    appId: 'source-app'
   };
 
   const targetEnv: EnvironmentConfig = {
     projectId: 'target-project',
-    appLocation: 'global'
+    appLocation: 'global',
+    appId: 'target-app'
   };
 
   const sampleSkill: RegistrySkill = {

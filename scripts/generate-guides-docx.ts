@@ -537,7 +537,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'Gemini Enterprise Admin Migration Platform',
     'Installation, Environment Setup & Pre-Requisites Technical Guide',
     {
-      'Document Version': 'v1.4.0 (Enterprise Release)',
+      'Document Version': 'v1.4.1 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Platform': 'Google Cloud Discovery Engine & Gemini Enterprise',
       'Execution Profile': 'Headless CLI & Local Workstation Web Console (127.0.0.1:8080)',
@@ -655,8 +655,34 @@ gcloud services enable discoveryengine.googleapis.com \\
   b.addCallout({
     title: 'Resolution of 403 serviceusage.serviceUsageConsumer Errors',
     type: 'tip',
-    text: 'Granting `roles/serviceusage.serviceUsageConsumer` on both Source and Target projects is mandatory. In v1.4.0, administrative pre-flight checks are isolated to the configured Service Account key, ensuring that user-scoped WiF tokens are never erroneously used for administrative engine validation.'
+    text: 'Granting `roles/serviceusage.serviceUsageConsumer` on both Source and Target projects is mandatory. Administrative pre-flight checks are isolated to the configured Service Account key, ensuring that user-scoped WiF tokens are never erroneously used for administrative engine validation.'
   });
+
+  // Section 4.1
+  b.addHeading1('4.1 Google Cloud Organization Policies & Security Constraints');
+  b.addParagraph(
+    'Enterprise Google Cloud landing zones frequently enforce organizational constraints at the Organization or Folder hierarchy level. Before provisioning credentials, evaluate the following policies:'
+  );
+
+  b.addTable(
+    ['Organization Policy Constraint', 'Target Requirement', 'Impact on Migration Tool', 'Remediation / Alternative'],
+    [
+      ['constraints/iam.disableServiceAccountKeyCreation', 'Key creation permitted on target project', 'Blocks Pattern A Step 3: Prevents generating sa-dwd-key.json', 'Use 1-Click project override in Auth Wizard, or adopt Pattern B (WiF) which is keyless and exempt.'],
+      ['constraints/iam.disableCrossProjectServiceAccountUsage', 'Target SA created within target project', 'Blocks Cross-Project DWD: A service account from source project cannot access target Discovery Engine', 'Create and bind gemini-dwd-migrator directly within the Target GCP Project.'],
+      ['constraints/iam.allowedPolicyMemberDomains', 'Workforce & user domains allowed in IAM', 'Restricts Cross-Domain Sharing: Agent/Skill IAM sync fails if users belong to unauthorized domains', 'Map source identities to target domain via identityMapping, or verify workforce pool principalSet is permitted.'],
+      ['constraints/discoveryengine.managed.allowedDataSources', 'Connectors permitted', 'Restricts data store attachment', 'Ensure required data sources (e.g. custom_mcp, Drive, GCS) are permitted by policy.'],
+      ['constraints/storage.uniformBucketLevelAccess', 'Uniform bucket-level access', 'Enforces bucket IAM over object ACLs', 'The migration tool defaults to standard IAM bucket permissions; avoid object-level ACLs.']
+    ],
+    [30, 20, 25, 25]
+  );
+
+  b.addHeading2('Live Organization Policy Inspection & 1-Click Remediation');
+  b.addParagraph(
+    'The web console provides built-in pre-flight inspection in the Auth & WiF Wizard (http://127.0.0.1:8080):'
+  );
+  b.addNumbered('Navigate to Auth & WiF Wizard -> Domain-Wide Delegation (DWD).', 1);
+  b.addNumbered('Enter your Target GCP Project ID and click Check Org Policies.', 2);
+  b.addNumbered('If iam.disableServiceAccountKeyCreation is active, click 1-Click Project Override to apply a project-scoped exemption without altering the parent organization.', 3);
 
   // Section 5
   b.addHeading1('5. Authentication Setup & Credential Provisioning');
@@ -687,6 +713,12 @@ gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
   b.addCodeBlock(`gcloud iam service-accounts keys create sa-dwd-key.json \\
     --iam-account="gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com"`);
 
+  b.addCallout({
+    title: 'Blocked by iam.disableServiceAccountKeyCreation?',
+    type: 'important',
+    text: 'If step 3 returns FAILED_PRECONDITION: Key creation is disabled by organization policy, you can: (1) In the web console Auth Wizard, click 1-Click Project Override (requires roles/orgpolicy.policyAdmin), or apply via gcloud org-policies set-policy; or (2) Switch to Pattern B (Workforce Identity Federation), which exchanges tokens with GCP STS dynamically and is 100% exempt from service account key policies.'
+  });
+
   b.addNumbered('Authorize the Client ID in Google Workspace Admin Console (`admin.google.com`):', 4);
   b.addBullet('Sign in to **admin.google.com** as a Super Administrator.');
   b.addBullet('Navigate to **Security** &rarr; **Access and data control** &rarr; **API controls**.');
@@ -703,6 +735,12 @@ gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
   b.addBullet('Place your Workforce Identity Federation pool configuration in `workforce-identity-config.json`.');
   b.addBullet('Provide RSA signing keys (`wif-migration-key.pem` and `wif-migration-jwks.json`) to sign user subject token assertions.');
   b.addBullet('When migrating from Entra ID to Google Cloud Identity, the tool mints WiF STS tokens for source discovery and switches to DWD tokens for target restoration.');
+
+  b.addCallout({
+    title: 'Keyless Architecture & Organization Policy Immunity',
+    type: 'tip',
+    text: 'Workforce Identity Federation does not require Service Account keys (sa-dwd-key.json). STS token exchanges are entirely immune to iam.disableServiceAccountKeyCreation and iam.disableServiceAccountKeyUpload organization policies.'
+  });
 
   b.addImage(
     'docs/images/13_auth_wif_wizard.png',
@@ -992,72 +1030,25 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addNumbered('Stage 7: Studio Artifacts Discovery, Office Generation & Compression — Synthesizes PPTX presentations, Word study guides, interactive HTML5 quiz/flashcard apps, and compresses Explainer Videos.', 7);
 
   // Section 7
-  b.addHeading1('7. Deep Dive: Asset Preservation & Studio Parity');
+  b.addHeading1('7. Migration Reports & Reconciliation Auditing');
   b.addParagraph(
-    'A central achievement of v1.4.0 is authentic fidelity and export parity for all Gemini Enterprise Studio outputs:'
+    'Upon pipeline completion, the platform generates comprehensive executive and machine-readable audit reports saved in `reports/`:'
   );
-
-  b.addHeading2('A. PowerPoint Presentations (.pptx)');
+  b.addBullet('**Markdown Report** (`reports/migration-report-<ID>-<TIMESTAMP>.md`): Human-readable executive summary with detailed asset breakdown.');
+  b.addHeading1('7. Migration Execution & Live Streaming Telemetry');
   b.addParagraph(
-    'Generated slide decks are exported directly into native Microsoft PowerPoint (`.pptx`) format with 16:9 widescreen layouts, card container geometry, bullet hierarchy, and presenter notes matching authentic Google Slides and PowerPoint standards.'
+    'Initiate migration from the web console or headless CLI. The console provides real-time Server-Sent Events (SSE) telemetry displaying live progress bars and itemized logs.'
   );
 
   b.addImage(
-    'docs/images/06_gemini_studio_slide_export.png',
-    'Figure 2.5: Gemini Enterprise Studio Presentation & Slide Deck Export Options',
-    560,
-    350
-  );
-
-  b.addHeading2('B. Restored Research Notebooks & Infographics');
-  b.addParagraph(
-    'Restored notebooks preserve all research grounding documents and display infographics directly inside the Studio view.'
-  );
-
-  b.addImage(
-    'docs/images/07_gemini_studio_notebook_infographic.png',
-    'Figure 2.6: Restored Gemini Enterprise Notebook with Studio Infographic',
-    560,
-    350
-  );
-
-  b.addHeading2('C. Studio Artifacts Hub & Offline Interactive Applications');
-  b.addParagraph(
-    'Studio artifacts (Audio Overviews, Slide Decks, Explainer Videos, Mind Maps, Quizzes, and Flashcards) are systematically cataloged. Quizzes and flashcards are synthesized into standalone HTML5 players with zero external dependencies and smooth 3D CSS animations.'
-  );
-
-  b.addImage(
-    'docs/images/08_gemini_studio_artifacts_hub.png',
-    'Figure 2.7: Gemini Enterprise Studio Artifacts Hub',
-    560,
-    350
-  );
-
-  b.addImage(
-    'docs/images/16_user_artifacts_gallery.png',
-    'Figure 2.8: User Artifacts Gallery & Media Inspection Console',
+    'docs/images/01_pipeline_configuration.png',
+    'Figure 2.6: Real-Time SSE Migration Telemetry and Asset Progress Tracker',
     560,
     350
   );
 
   // Section 8
-  b.addHeading1('8. Migration Reports & Reconciliation Auditing');
-  b.addParagraph(
-    'Upon pipeline completion, the platform generates comprehensive executive and machine-readable audit reports saved in `reports/`:'
-  );
-  b.addBullet('**Markdown Report** (`reports/migration-report-<ID>-<TIMESTAMP>.md`): Human-readable executive summary with detailed asset breakdown.');
-  b.addBullet('**JSON Report** (`reports/migration-report-<ID>-<TIMESTAMP>.json`): Full telemetry schema for SIEM or enterprise database logging.');
-  b.addBullet('**User Reconciliation Matrix**: Comprehensive table matching each source user identity with their target Google identity, listing restored vs. failed counts across all asset categories.');
-
-  b.addImage(
-    'docs/images/05_migration_report_reconciliation.png',
-    'Figure 2.9: Migration Report and User Reconciliation Matrix in Web Console',
-    560,
-    350
-  );
-
-  // Section 9
-  b.addHeading1('9. User Handover Delivery & Notification Engine');
+  b.addHeading1('8. User Handover Delivery & Notification Engine');
   b.addParagraph(
     'To deliver a seamless day-one onboarding experience, the platform packages each user\'s assets into a single consolidated `NotebookLM_Artifacts.zip` archive and dispatches an onboarding email.'
   );
@@ -1068,28 +1059,51 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
 
   b.addImage(
     'docs/images/09_gmail_user_handover_delivery.png',
-    'Figure 2.10: Migration Handover Notification Received in Gmail with Attachments',
+    'Figure 2.7: Migration Handover Notification Received in Gmail with Attachments',
     560,
     350
   );
 
   b.addImage(
     'docs/images/10_gmail_multipart_thread.png',
-    'Figure 2.11: Multi-Part Handover Thread with Partitioned Attachments in Gmail',
-    560,
-    350
-  );
-
-  b.addImage(
-    'docs/images/11_gmail_handover_followup_deck.png',
-    'Figure 2.12: Handover Follow-Up Message with High-Resolution Deck',
+    'Figure 2.8: Multi-Part Handover Thread with Partitioned Attachments in Gmail',
     560,
     350
   );
 
   b.addImage(
     'docs/images/14_user_handover_console.png',
-    'Figure 2.13: User Handover & Email Delivery Console Tab',
+    'Figure 2.9: User Handover & Email Delivery Console Tab',
+    560,
+    350
+  );
+
+  // Section 9
+  b.addHeading1('9. Auth & Identity Provider Configuration Wizard (DWD & WiF)');
+  b.addParagraph(
+    'The **Auth & WiF Wizard** provides an interactive, guided interface to configure and test authentication protocols across Google Workspace and external Identity Providers (Microsoft Entra ID, Okta, Ping).'
+  );
+
+  b.addHeading2('9.1 Domain-Wide Delegation (DWD) & Org Policy Inspection');
+  b.addBullet('**Check Org Policies**: Performs live inspection of target project organization policies (`iam.disableServiceAccountKeyCreation`, `iam.disableCrossProjectServiceAccountUsage`, and `iam.allowedPolicyMemberDomains`).');
+  b.addBullet('**Conflict Detection**: If `iam.disableServiceAccountKeyCreation` is active, an alert banner warns the operator before executing CLI commands that creating `sa-dwd-key.json` will fail.');
+  b.addBullet('**1-Click Project Override**: Operators holding `roles/orgpolicy.policyAdmin` can click the 1-Click Project Override button to automatically apply a project-scoped exemption (`enforce: false`) without modifying parent organizational policies.');
+  b.addBullet('**Live DWD Impersonation Test**: Validates that minted user-scoped OAuth2 tokens function against Discovery Engine APIs.');
+
+  b.addHeading2('9.2 Workforce Identity Federation (WiF) — Keyless Enterprise Path');
+  b.addBullet('**Keyless Architecture**: WiF exchanges external OIDC/SAML tokens with Google Cloud Security Token Service (`sts.googleapis.com`) to mint short-lived tokens and is **100% exempt from `iam.disableServiceAccountKeyCreation`** and key upload policies.');
+  b.addBullet('**Domain Sharing Validation**: Verifies that `iam.allowedPolicyMemberDomains` permits workforce pool principals (`is:principalSet://iam.googleapis.com/organizations/<org-id>`).');
+  b.addBullet('**Live GCP Verification**: The Verify Live in GCP button tests workforce pools and OIDC providers directly in Google Cloud.');
+
+  b.addHeading2('9.3 Permissions & Least-Privilege Auditor');
+  b.addBullet('Evaluates Discovery Engine read/write scopes, NotebookLM source access, and Gmail API dispatch scopes.');
+  b.addBullet('Flags over-provisioned permissions or destructive deletion privileges.');
+  b.addBullet('Runs automated organization policy compliance audits on the target project.');
+  b.addBullet('Offers 1-click IAM policy bindings auto-fixes for missing roles.');
+
+  b.addImage(
+    'docs/images/13_auth_wif_wizard.png',
+    'Figure 2.10: Auth & Identity Provider Configuration Wizard with Org Policy Pre-Flight',
     560,
     350
   );
@@ -1114,7 +1128,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
 
   b.addImage(
     'docs/images/15_target_maintenance.png',
-    'Figure 2.14: Target Maintenance Console & Selective Rollback Controls',
+    'Figure 2.11: Target Maintenance Console & Selective Rollback Controls',
     560,
     350
   );
@@ -1124,25 +1138,26 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addParagraph('Follow this recommended four-phase migration playbook for enterprise rollouts:');
 
   b.addHeading2('Phase 1: Pre-Flight Discovery & Parity Alignment');
-  b.addNumbered('Run Configuration Pre-Check & Gap Audit against Source and Target engines.', 1);
-  b.addNumbered('Execute generated CLI commands to align DataStores and feature flags.', 2);
-  b.addNumbered('Confirm that caller identity has `roles/serviceusage.serviceUsageConsumer` on both projects.', 3);
+  b.addNumbered('Open the Auth & WiF Wizard and run Check Org Policies to verify that target project policies permit credential provisioning or apply 1-click project overrides.', 1);
+  b.addNumbered('Run Configuration Pre-Check & Gap Audit against Source and Target engines.', 2);
+  b.addNumbered('Execute generated CLI commands to align DataStores and feature flags.', 3);
+  b.addNumbered('Confirm that caller identity has `roles/serviceusage.serviceUsageConsumer` on both projects.', 4);
 
   b.addHeading2('Phase 2: Pilot Wave Execution (5–10 VIP Users)');
-  b.addNumbered('Select 5–10 active power users with notebooks and agents.', 4);
-  b.addNumbered('Run a Dry Run simulation to verify identity mapping and asset discovery.', 5);
-  b.addNumbered('Execute Live Migration and review the resulting Markdown audit report.', 6);
-  b.addNumbered('Dispatch pilot handover emails and verify user receipt in Gmail.', 7);
+  b.addNumbered('Select 5–10 active power users with notebooks and agents.', 5);
+  b.addNumbered('Run a Dry Run simulation to verify identity mapping and asset discovery.', 6);
+  b.addNumbered('Execute Live Migration and review the resulting Markdown audit report.', 7);
+  b.addNumbered('Dispatch pilot handover emails and verify user receipt in Gmail.', 8);
 
   b.addHeading2('Phase 3: Production Bulk Migration Wave');
-  b.addNumbered('Execute migration for remaining organizational users.', 8);
-  b.addNumbered('Monitor streaming event logs for any network throttling or quota pauses.', 9);
-  b.addNumbered('Verify that 100% of discovered notebooks, sources, and agents migrated successfully.', 10);
+  b.addNumbered('Execute migration for remaining organizational users.', 9);
+  b.addNumbered('Monitor streaming event logs for any network throttling or quota pauses.', 10);
+  b.addNumbered('Verify that 100% of discovered notebooks, sources, and agents migrated successfully.', 11);
 
   b.addHeading2('Phase 4: Post-Migration Handover & Support');
-  b.addNumbered('Dispatch bulk handover email packages with `NotebookLM_Artifacts.zip`.', 11);
-  b.addNumbered('Direct users to `/checklist` for guided day-one onboarding steps.', 12);
-  b.addNumbered('Archive final migration reports for compliance records.', 13);
+  b.addNumbered('Dispatch bulk handover email packages with `NotebookLM_Artifacts.zip`.', 12);
+  b.addNumbered('Direct users to `/checklist` for guided day-one onboarding steps.', 13);
+  b.addNumbered('Archive final migration reports for compliance records.', 14);
 
   await b.save(outputPath);
 }

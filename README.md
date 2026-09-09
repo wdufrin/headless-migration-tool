@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.4.0-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.4.1-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -11,37 +11,36 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 > [!TIP]
 > **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
-> * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, DWD/WiF credentials provisioning, and local build walkthroughs.
-> * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
+> * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
+> * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 
 ---
 
-## 🚀 What's New in v1.4.0
+## 🚀 What's New in v1.4.1
 
-* **🧠 Standalone Zero-Dependency Interactive Quiz & Flashcards Applications**:
-  * **Zero-Dependency HTML5 Players**: Self-contained interactive apps (`.html`) that load instantly and run 100% offline in any web browser with zero external runtime dependencies.
-  * **Interactive Quiz Player**: Instant green/red answer feedback, detailed rationales, hint toggle, live score tracker, and quiz retake button.
-  * **3D Flashcards Player**: Smooth CSS 3D card flip animations, next/prev navigation, randomized card shuffle, study table view, and keyboard shortcuts (`Space`/`Enter`/`Arrows`).
-  * **No More Blank Screens**: Resolved the Angular runtime crash (`NotebookLMThemeProvider should not be used without a NotebookLM API`) by synthesizing native players from extracted `data-app-data` and polyfilling `window.notebookAppApi`.
-  * **Dual-Format Learning Export**: Every quiz and flashcard set is exported into both an interactive browser app (`.html`) and a formatted printable Microsoft Word document (`.docx`) and Markdown bank (`.md`).
-* **🎬 Explainer Video Media Compression (`ffmpeg`)**:
-  * **Automated Video Optimization**: Automatically detects `ffmpeg` and compresses high-bitrate Explainer Videos (`.mp4`) > 12 MB to 720p H.264 CRF 28 with 64k AAC audio.
-  * **70–75% Size Reduction**: Shrinks large videos (e.g. 24.2 MB &rarr; 6.7 MB) with zero perceptible quality degradation.
-  * **Handover Promotion**: Compressed videos fit comfortably under Gmail's 14.5 MB unencoded per-message threshold and are packaged directly inside active email attachments.
-* **📦 Single-Archive Handover ZIP (`NotebookLM_Artifacts.zip`)**:
-  * **All-in-One Delivery**: Packages all presentations (`.pptx`), infographics (`.jpg`), videos (`.mp4`), interactive apps (`.html`), and study guides (`.docx`) into a single `NotebookLM_Artifacts.zip` archive.
-  * **Smart Retention Deduplication**: Static HTML document viewers are excluded when authentic Word documents are attached, but interactive web apps (`quiz`, `flashcard`, `app`) are explicitly preserved alongside Word study guides.
-* **📝 Clean Notes Migration Policy**:
-  * **Workaround Removed**: Completely removed fallback ingestion of notes into notebook grounding sources.
-  * **Authentic Artifact Preservation**: Notes are strictly preserved as distinct artifacts (`Note - <Title>.docx`, `Note - <Title>.html`, and `Note - <Title>.md`).
-* **✅ Action-Oriented Interactive Checklists**:
-  * Replaced flat document summaries with clean, checkable action items (`[ ]`) guiding users step-by-step through first-time login, connector authorization (Outlook, OneDrive, Drive, Jira, ServiceNow), agent publishing, and artifact retrieval.
+* **🛡️ Organization Policy Pre-Flight Scanner & Matrix**:
+  * **Automated Target Project Policy Verification**: Live pre-flight scan (`POST /api/wizard/check-org-policies`) inspecting critical Google Cloud Organization Policies:
+    * `iam.disableServiceAccountKeyCreation`: Checks whether on-disk service account key creation (`gcloud iam service-accounts keys create`) is blocked by organization constraint.
+    * `iam.disableCrossProjectServiceAccountUsage`: Checks whether service accounts from external projects are restricted from accessing target Discovery Engine resources.
+    * `iam.allowedPolicyMemberDomains`: Audits domain-sharing restrictions to ensure workforce pool principal sets (`principalSet://iam.googleapis.com/...`) and external user identities are permitted in IAM bindings.
+    * `discoveryengine.managed.allowedDataSources`: Checks whether custom or third-party MCP and connector datastores are restricted by enterprise policy.
+  * **Real-Time Visual Alerts**: Color-coded banners in Step 1 (DWD) of the Auth Wizard immediately display enforcement status, policy inheritance levels, and operational recommendations.
+* **⚡ 1-Click Project-Level Organization Policy Override**:
+  * **Instant Project Exception**: Dedicated 1-click override button (`POST /api/wizard/override-key-creation-policy`) allowing authorized administrators (`roles/orgpolicy.policyAdmin`) to set `enforce: false` on `iam.disableServiceAccountKeyCreation` directly on the target project without leaving the web console.
+  * **Copyable CLI Remediation Command**: Generates ready-to-paste `gcloud org-policies set-policy` command with JSON policy definition for terminal administrators.
+* **🌐 Workforce Identity Federation (WiF) Keyless Architecture Assessment**:
+  * **Keyless Architecture Immunity**: Explains and validates that WiF token exchanges (`sts.googleapis.com`) mint ephemeral, short-lived tokens via Google Cloud STS and are **100% immune** to `iam.disableServiceAccountKeyCreation` or `iam.disableServiceAccountKeyUpload` constraints.
+  * **Zero Stored Secrets**: Eliminates high-risk on-disk `.json` private keys entirely for customers adopting federated identity (Entra ID, Okta, Ping).
+* **🛡️ Integrated Permissions & Least-Privilege Auditor**:
+  * Evaluates target project organization policies as part of the security audit suite alongside IAM roles and OAuth scopes.
+* **🧪 Test Suite Expansion & Typing Fixes (74/74 Tests Passing)**:
+  * Full 74-test automated suite across 10 test suites passing with 100% success rate, including type error fixes in `tests/skillMigrator.test.ts`.
 
 ---
 
 ## 📋 Table of Contents
 
-- [What's New in v1.4.0](#-whats-new-in-v140)
+- [What's New in v1.4.1](#-whats-new-in-v141)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
 - [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
@@ -157,6 +156,24 @@ gcloud iam service-accounts keys create sa-dwd-key.json \
     --iam-account="gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com"
 ```
 
+> [!IMPORTANT]
+> **Organization Policy Notice (`iam.disableServiceAccountKeyCreation`)**:
+> If key creation returns `FAILED_PRECONDITION: Precondition check failed` or `Constraint iam.disableServiceAccountKeyCreation violated`, your GCP organization restricts service account key downloads.
+> * **Automatic Verification**: Open the **Auth Wizard &rarr; Step 1** in the web console (`http://localhost:8080`) and click **🛡️ Check Org Policies** for an automated pre-flight scan.
+> * **1-Click Project Override**: If your GCP user account holds `roles/orgpolicy.policyAdmin`, click **⚡ 1-Click Project Override** in the web console, or apply the exemption via `gcloud`:
+>   ```bash
+>   cat << 'EOF' > /tmp/override-key-creation.json
+>   {
+>     "name": "projects/<TARGET_PROJECT_ID>/policies/iam.disableServiceAccountKeyCreation",
+>     "spec": {
+>       "rules": [{ "enforce": false }]
+>     }
+>   }
+>   EOF
+>   gcloud org-policies set-policy /tmp/override-key-creation.json --project=<TARGET_PROJECT_ID>
+>   ```
+> * **Recommended Keyless Alternative**: Switch to **Workforce Identity Federation (WiF)** in Step 2. WiF is **100% immune** to key creation restrictions because tokens are minted in-memory directly via Google Cloud STS (`sts.googleapis.com`) with zero on-disk private keys.
+
 #### B. Authorize DWD in Google Workspace Admin Console:
 1. Open the [Google Workspace Admin Console](https://admin.google.com/).
 2. Navigate to **Security** &rarr; **Access and data control** &rarr; **API controls** &rarr; **Manage Domain Wide Delegation**.
@@ -176,6 +193,10 @@ For organizations using Microsoft Entra ID or Okta:
 1. Open the local web console at `http://localhost:8080` and navigate to **"🔐 Auth & WiF Wizard" &rarr; "🌐 Workforce Identity Federation (WiF)"**.
 2. Select your IdP (Microsoft Entra ID, Okta, or Ping).
 3. The wizard will generate the exact `gcloud iam workforce-pools` commands for your organization and create the `workforce-identity-config.json` client configuration.
+
+> [!TIP]
+> **Keyless Architecture & Organization Policy Immunity**:
+> Workforce Identity Federation does NOT require Service Account keys (`sa-dwd-key.json`). STS exchanges are entirely immune to `iam.disableServiceAccountKeyCreation` and `iam.disableServiceAccountKeyUpload` organization policies. The only policy to ensure is `iam.allowedPolicyMemberDomains` if workforce pool principal sets (`principalSet://iam.googleapis.com/...`) are restricted.
 
 ---
 
@@ -323,9 +344,9 @@ The local Web Console provides 6 dedicated modules:
    - Step 1 First-Time Login and Connector Authorization (Google Workspace, M365, Jira, etc.) walkthroughs.
    - One-click handover dispatch via Gmail API or SMTP with optional staging recipient overrides.
 5. **🔐 Auth & Identity Provider Wizard**:
-   - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, and live impersonation test.
-   - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, and live token test.
-   - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
+   - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, live impersonation test, automated **🛡️ Org Policy Pre-Flight**, and **⚡ 1-Click Project-Level Policy Override** for `iam.disableServiceAccountKeyCreation`.
+   - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, live token test, and **Keyless Architecture Assessment** highlighting 100% immunity to key creation blocks.
+   - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, audits target organization policies, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
 6. **🧹 Target Destination Maintenance & Multi-User Cleanup**:
    - Automatically identifies all users in the target environment to clean user-scoped notebooks and agents.
    - Selective checkboxes to clean Chats, Custom Agents, Notebooks, Exported Artifacts, or Migration Reports prior to test runs.
@@ -438,10 +459,10 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
-The platform includes an extensive automated test suite with **60 tests across 10 test suites** covering authentication, Agent Registry skills discovery/filtering, configuration gap audits, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, and E2E execution flows:
+The platform includes an extensive automated test suite with **74 tests across 10 test suites** covering authentication, Agent Registry skills discovery/filtering, configuration gap audits, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, and E2E execution flows:
 
 ```bash
-# Run complete unit and integration test suite (60 tests across 10 suites)
+# Run complete unit and integration test suite (74 tests across 10 suites)
 npm test
 
 # Run End-to-End matrix permutations test (DWD/WiF permutations)

@@ -138,7 +138,33 @@ To deliver a seamless day-one onboarding experience, the platform packages each 
 
 ---
 
-## 9. Target Maintenance & Selective Rollback
+## 9. Auth & Identity Provider Configuration Wizard (DWD & WiF)
+
+The **Auth & WiF Wizard** provides an interactive, guided interface to configure and test authentication protocols across Google Workspace and external Identity Providers (Microsoft Entra ID, Okta, Ping).
+
+### 9.1 Domain-Wide Delegation (DWD) & Org Policy Inspection
+When configuring Google Workspace Domain-Wide Delegation in Step 1:
+* **`🛡️ Check Org Policies`**: Performs live inspection of target project organization policies (`iam.disableServiceAccountKeyCreation`, `iam.disableCrossProjectServiceAccountUsage`, and `iam.allowedPolicyMemberDomains`).
+* **Conflict Detection**: If `iam.disableServiceAccountKeyCreation` is active, an alert banner warns the operator before executing CLI commands that creating `sa-dwd-key.json` will fail.
+* **⚡ 1-Click Project Override**: Operators holding `roles/orgpolicy.policyAdmin` can click the 1-Click Project Override button to automatically apply a project-scoped exemption (`enforce: false`) without modifying parent organizational policies.
+* **Live DWD Impersonation Test**: Validates that minted user-scoped OAuth2 tokens function against Discovery Engine APIs.
+
+### 9.2 Workforce Identity Federation (WiF) — Keyless Enterprise Path
+For organizations operating under strict Zero-Trust or keyless security baselines:
+* **Keyless Architecture**: WiF exchanges external OIDC/SAML tokens with Google Cloud Security Token Service (`sts.googleapis.com`) to mint short-lived tokens and is **100% exempt from `iam.disableServiceAccountKeyCreation`** and key upload policies.
+* **Domain Sharing Validation**: Verifies that `iam.allowedPolicyMemberDomains` permits workforce pool principals (`is:principalSet://iam.googleapis.com/organizations/<org-id>`).
+* **Live GCP Verification**: The `🔍 Verify Live in GCP` button tests workforce pools and OIDC providers directly in Google Cloud.
+
+### 9.3 Permissions & Least-Privilege Auditor
+The Auditor evaluates target environments against Google SAIF and least-privilege standards:
+* Evaluates Discovery Engine read/write scopes, NotebookLM source access, and Gmail API dispatch scopes.
+* Flags over-provisioned permissions or destructive deletion privileges.
+* Runs automated organization policy compliance audits on the target project.
+* Offers 1-click IAM policy bindings auto-fixes for missing roles.
+
+---
+
+## 10. Target Maintenance & Selective Rollback
 
 During testing or staged rollouts, administrators can use the **Target Maintenance** tab to selectively clean migrated assets in the target environment prior to fresh migration runs.
 
@@ -155,14 +181,15 @@ During testing or staged rollouts, administrators can use the **Target Maintenan
 
 ---
 
-## 10. Enterprise Migration Playbook & Best Practices
+## 11. Enterprise Migration Playbook & Best Practices
 
 Follow this recommended four-phase migration playbook for enterprise rollouts:
 
 ### Phase 1: Pre-Flight Discovery & Parity Alignment
-1. Run Configuration Pre-Check & Gap Audit against Source and Target engines.
-2. Execute generated CLI commands to align DataStores and feature flags.
-3. Confirm that caller identity has `roles/serviceusage.serviceUsageConsumer` on both projects.
+1. Open the **Auth & WiF Wizard** and run **`🛡️ Check Org Policies`** to verify that target project policies (`iam.disableServiceAccountKeyCreation`, `iam.disableCrossProjectServiceAccountUsage`) permit credential provisioning or apply 1-click project overrides.
+2. Run Configuration Pre-Check & Gap Audit against Source and Target engines.
+3. Execute generated CLI commands to align DataStores and feature flags.
+4. Confirm that caller identity has `roles/serviceusage.serviceUsageConsumer` on both projects.
 
 ### Phase 2: Pilot Wave Execution (5–10 VIP Users)
 1. Select 5–10 active power users with notebooks and agents.
@@ -179,3 +206,4 @@ Follow this recommended four-phase migration playbook for enterprise rollouts:
 1. Dispatch bulk handover email packages with `NotebookLM_Artifacts.zip`.
 2. Direct users to `/checklist` for guided day-one onboarding steps.
 3. Archive final migration reports for compliance records.
+

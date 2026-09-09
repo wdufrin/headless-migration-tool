@@ -121,6 +121,26 @@ The migration administrator or execution identity requires distinct read and wri
 
 ---
 
+## 4.1 Google Cloud Organization Policies & Security Constraints
+
+Enterprise Google Cloud landing zones frequently enforce organizational constraints at the Organization or Folder hierarchy level. Before provisioning credentials, evaluate the following policies:
+
+| Organization Policy Constraint | Target Requirement | Impact on Migration Tool | Remediation / Alternative |
+| :--- | :--- | :--- | :--- |
+| **`constraints/iam.disableServiceAccountKeyCreation`** | Key creation permitted on target project | **Blocks Pattern A Step 3**: Prevents generating `sa-dwd-key.json` | Use 1-Click project override in Auth Wizard, or adopt **Pattern B (WiF)** which is keyless and exempt. |
+| **`constraints/iam.disableCrossProjectServiceAccountUsage`** | Target SA created within target project | **Blocks Cross-Project DWD**: A service account from the source project cannot access target Discovery Engine | Create and bind `gemini-dwd-migrator` directly within the Target GCP Project. |
+| **`constraints/iam.allowedPolicyMemberDomains`** | Workforce & user domains allowed in IAM | **Restricts Cross-Domain Sharing**: Agent and Skill IAM sync (`setAgentIamPolicy`) fails if users belong to unauthorized external domains | Map source identities to target domain via `identityMapping`, or verify workforce pool `principalSet` is permitted. |
+| **`constraints/discoveryengine.managed.allowedDataSources`** | Connectors permitted | Restricts data store attachment | Ensure required data sources (e.g. `custom_mcp`, Drive, GCS) are permitted by policy. |
+| **`constraints/storage.uniformBucketLevelAccess`** | Uniform bucket-level access | Enforces bucket IAM over object ACLs | The migration tool defaults to standard IAM bucket permissions; avoid object-level ACLs. |
+
+### Live Organization Policy Inspection & 1-Click Remediation:
+The web console provides built-in pre-flight inspection in the **Auth & WiF Wizard** (`http://127.0.0.1:8080`):
+1. Navigate to **Auth & WiF Wizard** &rarr; **Domain-Wide Delegation (DWD)**.
+2. Enter your **Target GCP Project ID** and click **`🛡️ Check Org Policies`**.
+3. If `iam.disableServiceAccountKeyCreation` is active, click **`⚡ 1-Click Project Override`** to apply a project-scoped exemption without altering the parent organization.
+
+---
+
 ## 5. Authentication Setup & Credential Provisioning
 
 The migration tool supports three flexible enterprise authentication patterns:
@@ -151,6 +171,21 @@ Domain-Wide Delegation (DWD) enables the migration tool to restore chat history 
    gcloud iam service-accounts keys create sa-dwd-key.json \
        --iam-account="gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com"
    ```
+
+   > [!IMPORTANT]
+   > **Blocked by `iam.disableServiceAccountKeyCreation`?**  
+   > If step 3 returns `FAILED_PRECONDITION: Key creation is disabled by organization policy`, choose one of two paths:
+   > 1. **Project Override (Requires `roles/orgpolicy.policyAdmin`)**: In the web console Auth Wizard, click **`⚡ 1-Click Project Override`**, or run:
+   >    ```bash
+   >    cat <<EOF > /tmp/override_sa_key.yaml
+   >    name: projects/<TARGET_PROJECT_ID>/policies/iam.disableServiceAccountKeyCreation
+   >    spec:
+   >      rules:
+   >      - enforce: false
+   >    EOF
+   >    gcloud org-policies set-policy /tmp/override_sa_key.yaml --project=<TARGET_PROJECT_ID>
+   >    ```
+   > 2. **Adopt Keyless Pattern B (WiF)**: Switch to **Workforce Identity Federation**. WiF exchanges tokens with GCP STS dynamically and is **100% exempt from service account key policies**.
 
 4. **Authorize the Client ID in Google Workspace Admin Console (`admin.google.com`):**
    * Sign in to **[admin.google.com](https://admin.google.com)** as a Super Administrator.
@@ -293,7 +328,11 @@ npm test
 | Symptom / Error Message | Root Cause | Actionable Resolution |
 | :--- | :--- | :--- |
 | **403 Forbidden: Caller does not have required permission to use project** | Service Usage API is disabled or caller lacks `roles/serviceusage.serviceUsageConsumer` | Run `gcloud services enable serviceusage.googleapis.com --project=<PROJECT_ID>` and grant `roles/serviceusage.serviceUsageConsumer` to caller. |
+| **FAILED_PRECONDITION: Key creation is disabled by organization policy** | Organization policy `constraints/iam.disableServiceAccountKeyCreation` is active on target project | Click `⚡ 1-Click Project Override` in the Auth Wizard web console, apply `gcloud org-policies set-policy`, or switch to keyless **Pattern B (WiF)**. |
+| **403 Forbidden on target resource (e.g. discoveryengine.sessions.create)** | Cross-project SA usage blocked by `constraints/iam.disableCrossProjectServiceAccountUsage` | Ensure the service account being used was created directly inside the Target GCP Project rather than referenced across projects. |
+| **Request contains an invalid argument (Domain-restricted sharing)** | User email outside allowed customer IDs in `constraints/iam.allowedPolicyMemberDomains` | Use `identityMapping` in `migration-config.json` to map external identities to target enterprise domain accounts. |
 | **invalid_grant: Invalid email or User ID** | DWD impersonation targeted a user email that does not exist in Google Workspace directory | Verify target user exists in Google Workspace Admin Console (`admin.google.com`) and DWD scopes are authorized. |
 | **ENOENT: idp-subject-token.jwt does not exist** | WiF auth selected but subject token file has not been minted or has expired | Generate a fresh subject token using `wif-migration-key.pem` or switch auth type to ADC / DWD. |
 | **EADDRINUSE: address already in use :::8080** | Another process is already bound to port 8080 on the workstation | Launch with custom port: `PORT=8085 npm start` or terminate the conflicting process (`lsof -i :8080`). |
 | **Puppeteer / Chrome launch failed** | Missing Chrome executable on Linux workstation | Install Google Chrome: `apt-get install -y google-chrome-stable` or use pre-captured artifact assets. |
+
