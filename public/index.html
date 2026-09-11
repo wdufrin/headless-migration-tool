@@ -1547,7 +1547,7 @@
             </div>
           </div>
           <div class="flex-1 bg-black p-2 flex items-center justify-center overflow-hidden">
-            <iframe id="artifactIframe" class="w-full h-full rounded-xl border border-gray-800 bg-slate-950" sandbox="allow-scripts allow-same-origin"></iframe>
+            <iframe id="artifactIframe" class="w-full h-full rounded-xl border border-gray-800 bg-slate-950" sandbox="allow-scripts allow-popups allow-forms"></iframe>
           </div>
         </div>
       </div>
@@ -1791,7 +1791,7 @@
             </div>
           </div>
           <div class="flex-1 bg-black p-2 flex items-center justify-center overflow-hidden">
-            <iframe id="checklistIframe" class="w-full h-full rounded-xl border border-gray-800 bg-white" sandbox="allow-scripts allow-same-origin"></iframe>
+            <iframe id="checklistIframe" class="w-full h-full rounded-xl border border-gray-800 bg-white" sandbox="allow-scripts allow-popups allow-forms"></iframe>
           </div>
         </div>
       </div>
@@ -1876,9 +1876,32 @@
                 </a>
               </div>
 
+              <!-- Detected Client ID from sa-dwd-key.json -->
+              <div id="dwdDetectedKeyBanner" class="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3.5 space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-indigo-300 font-semibold flex items-center gap-1.5">
+                    <span>🔑</span> Active Service Account Key Detected
+                  </span>
+                  <span id="dwdKeyStatusBadge" class="text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/50 text-indigo-300 font-mono">Checking key...</span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono">
+                  <div class="bg-gray-900/90 p-2.5 rounded-lg border border-gray-800">
+                    <span class="text-gray-400 block text-[10px] uppercase tracking-wider mb-1 font-sans font-bold">Client ID (Paste into Admin Console):</span>
+                    <div class="flex items-center justify-between gap-1">
+                      <span id="wizDetectedClientId" class="text-amber-300 font-bold select-all truncate">Loading...</span>
+                      <button type="button" onclick="copyToClipboard('wizDetectedClientId', 'btnCopyDetectedClientId')" id="btnCopyDetectedClientId" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[10px] font-sans shrink-0">Copy</button>
+                    </div>
+                  </div>
+                  <div class="bg-gray-900/90 p-2.5 rounded-lg border border-gray-800">
+                    <span class="text-gray-400 block text-[10px] uppercase tracking-wider mb-1 font-sans font-bold">Service Account Email:</span>
+                    <span id="wizDetectedSaEmail" class="text-gray-200 select-all truncate block">Loading...</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="text-xs text-gray-300 space-y-2">
                 <p>1. Open <a href="https://admin.google.com/ac/owl/domainwidedelegation" target="_blank" class="text-indigo-400 underline">Google Workspace Admin Console</a> &rarr; <strong>Security</strong> &rarr; <strong>Access and data control</strong> &rarr; <strong>API controls</strong> &rarr; <strong>Manage Domain Wide Delegation</strong>.</p>
-                <p>2. Click <strong>Add new</strong> and paste the Client ID (numeric <code>client_id</code> inside your <code>sa-dwd-key.json</code>).</p>
+                <p>2. Click <strong>Add new</strong> and paste the Client ID above (numeric <code>client_id</code> inside your <code>sa-dwd-key.json</code>).</p>
                 <p>3. In <strong>OAuth Scopes (comma-delimited)</strong>, paste the following exact API scopes:</p>
               </div>
 
@@ -2605,6 +2628,7 @@
         updateDwdScript();
         updateWifScript();
         generateAndSaveWifConfig(false);
+        loadDwdKeyInfo();
       } else if (tabId === 'maintenance') {
         const env = getActiveEnvParams();
         const projectEl = document.getElementById('maintTargetProject');
@@ -4008,12 +4032,34 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             <div class="font-mono text-[11px] text-emerald-400">Token: ${data.tokenPrefix}</div>
           `;
         } else {
-          resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300 space-y-1.5';
+          resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300 space-y-2.5';
+          const remediationHtml = Array.isArray(data.remediation) && data.remediation.length > 0 
+            ? `<div class="mt-2 space-y-1 bg-gray-900/80 p-2.5 rounded-lg border border-gray-800">
+                 <div class="font-semibold text-gray-200 text-[11px] mb-1">Recommended Resolution:</div>
+                 <ul class="list-disc list-inside space-y-1 text-gray-300 text-[11px]">
+                   ${data.remediation.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+                 </ul>
+               </div>`
+            : '';
+          const keyDetailsHtml = data.clientId
+            ? `<div class="flex items-center justify-between bg-gray-900/90 px-3 py-2 rounded-lg border border-gray-800 text-[11px] font-mono">
+                 <span>Client ID to authorize: <strong class="text-amber-300 select-all">${escapeHtml(data.clientId)}</strong></span>
+                 <button type="button" onclick="copyToClipboardText('${escapeHtml(data.clientId)}', this)" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[10px] font-sans">Copy ID</button>
+               </div>`
+            : '';
+
           resultBox.innerHTML = `
-            <div class="flex items-center gap-2 font-bold text-red-400">
-              <span>❌ DWD Verification Notice</span>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 font-bold text-red-400">
+                <span>❌ DWD Impersonation Authorization Failed</span>
+              </div>
+              <a href="https://admin.google.com/ac/owl/domainwidedelegation" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 underline font-semibold">
+                Open Admin Console &rarr;
+              </a>
             </div>
-            <p>${data.message}</p>
+            <p class="text-gray-300 text-xs">${escapeHtml(data.message)}</p>
+            ${keyDetailsHtml}
+            ${remediationHtml}
           `;
         }
       } catch (err) {
@@ -4021,6 +4067,44 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300';
         resultBox.innerHTML = `<span>Error: ${err.message}</span>`;
       }
+    }
+
+    async function loadDwdKeyInfo() {
+      try {
+        const res = await fetch('/api/wizard/dwd-info');
+        if (!res.ok) return;
+        const data = await res.json();
+        const badge = document.getElementById('dwdKeyStatusBadge');
+        const cidEl = document.getElementById('wizDetectedClientId');
+        const saEl = document.getElementById('wizDetectedSaEmail');
+
+        if (!badge || !cidEl || !saEl) return;
+
+        if (data.exists && data.clientId) {
+          badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-mono font-semibold';
+          badge.textContent = 'Active Key Found';
+          cidEl.textContent = data.clientId;
+          saEl.textContent = data.clientEmail || 'Service Account Key Loaded';
+        } else {
+          badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/40 font-mono font-semibold';
+          badge.textContent = 'sa-dwd-key.json Not Detected';
+          cidEl.textContent = 'Run Step 1 to generate or upload key';
+          saEl.textContent = 'None';
+        }
+      } catch (err) {
+        console.debug('Failed to load DWD key info:', err);
+      }
+    }
+
+    function copyToClipboardText(text, btn) {
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        if (btn) {
+          const orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = orig; }, 2000);
+        }
+      });
     }
 
     async function testWifConnection() {
@@ -4070,12 +4154,22 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             ${iamHelp}
           `;
         } else {
-          resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300 space-y-1.5';
+          resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300 space-y-2.5';
+          const remediationHtml = Array.isArray(data.remediation) && data.remediation.length > 0 
+            ? `<div class="mt-2 space-y-1 bg-gray-900/80 p-2.5 rounded-lg border border-gray-800">
+                 <div class="font-semibold text-gray-200 text-[11px] mb-1">Required Next Steps:</div>
+                 <ul class="list-disc list-inside space-y-1 text-gray-300 text-[11px]">
+                   ${data.remediation.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+                 </ul>
+               </div>`
+            : '';
+
           resultBox.innerHTML = `
             <div class="flex items-center gap-2 font-bold text-red-400">
-              <span>❌ WiF Verification Notice</span>
+              <span>❌ WiF STS Token Exchange Failed</span>
             </div>
-            <p>${data.message}</p>
+            <p class="text-gray-300 text-xs">${escapeHtml(data.message)}</p>
+            ${remediationHtml}
           `;
         }
       } catch (err) {
@@ -8128,6 +8222,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       renderUserSelectionTable();
       updateAppQuickLinks();
       onIdpSelectionChanged();
+      loadDwdKeyInfo();
 
       const params = new URLSearchParams(window.location.search);
       const targetTab = params.get('tab');

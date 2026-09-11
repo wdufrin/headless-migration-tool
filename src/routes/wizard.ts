@@ -131,47 +131,102 @@ wizardRouter.post('/idp/auto-map', async (req, res) => {
   }
 });
 
+// Wizard: Inspect local DWD Service Account Key & Client ID
+wizardRouter.get('/wizard/dwd-info', async (_req, res) => {
+  try {
+    const keyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : null);
+    if (!keyPath || !fs.existsSync(keyPath)) {
+      return res.status(200).json({ exists: false });
+    }
+    const content = fs.readFileSync(keyPath, 'utf-8');
+    const parsed = JSON.parse(content);
+    return res.status(200).json({
+      exists: true,
+      filePath: keyPath,
+      clientEmail: parsed.client_email || '',
+      clientId: parsed.client_id || '',
+      projectId: parsed.project_id || ''
+    });
+  } catch (err: any) {
+    return res.status(200).json({ exists: false, error: err.message });
+  }
+});
+
 // Wizard: Test Domain-Wide Delegation (DWD)
 wizardRouter.post('/wizard/test-dwd', async (req, res) => {
   try {
     const { testUserEmail, keyPath, keyJson } = req.body || {};
     if (!testUserEmail) {
-      return res.status(400).json({ error: 'MissingEmail', message: 'testUserEmail is required to verify DWD impersonation.' });
+      return res.status(200).json({ 
+        success: false, 
+        error: 'MissingEmail', 
+        message: 'testUserEmail is required to verify DWD impersonation.' 
+      });
     }
 
+    const effectiveKeyPath = keyPath || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
     const authService = new GcpAuthService({
-      serviceAccountKeyPath: keyPath || './sa-dwd-key.json',
+      serviceAccountKeyPath: effectiveKeyPath,
       serviceAccountKeyJson: keyJson
     });
 
     if (!authService.hasDwdConfigured()) {
-      return res.status(400).json({
+      return res.status(200).json({
         success: false,
         error: 'KeyNotFound',
         message: 'No Service Account Key found. Please upload or specify a valid sa-dwd-key.json path.'
       });
     }
 
+    let clientId = '';
+    let clientEmail = '';
     try {
-      const token = await authService.mintDwdToken(testUserEmail, [
-        'https://www.googleapis.com/auth/discoveryengine.readwrite',
-        'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
-      ]);
+      if (keyJson) {
+        const k = typeof keyJson === 'string' ? JSON.parse(keyJson) : keyJson;
+        clientId = k.client_id || '';
+        clientEmail = k.client_email || '';
+      } else if (effectiveKeyPath && fs.existsSync(effectiveKeyPath)) {
+        const k = JSON.parse(fs.readFileSync(effectiveKeyPath, 'utf-8'));
+        clientId = k.client_id || '';
+        clientEmail = k.client_email || '';
+      }
+    } catch {}
+
+    const scopes = [
+      'https://www.googleapis.com/auth/discoveryengine.readwrite',
+      'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+    ];
+
+    try {
+      const token = await authService.mintDwdToken(testUserEmail, scopes);
 
       return res.status(200).json({
         success: true,
         message: `DWD impersonation successful for "${testUserEmail}". Minted valid user-scoped OAuth2 token.`,
         tokenPrefix: token ? `${token.substring(0, 15)}...` : 'None',
-        scopesVerified: [
-          'https://www.googleapis.com/auth/discoveryengine.readwrite',
-          'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
-        ]
+        clientId,
+        clientEmail,
+        scopesVerified: scopes
       });
     } catch (dwdErr: any) {
-      return res.status(400).json({
+      const isAccessDenied = dwdErr.message?.includes('access_denied') || dwdErr.message?.includes('Requested client not authorized');
+      return res.status(200).json({
         success: false,
         error: 'DwdImpersonationFailed',
-        message: `DWD impersonation failed: ${dwdErr.message}. Ensure the Client ID is authorized in Google Workspace Admin Console (admin.google.com).`
+        clientId,
+        clientEmail,
+        testUserEmail,
+        isAccessDenied,
+        message: `DWD impersonation failed: ${dwdErr.message}`,
+        remediation: isAccessDenied ? [
+          `Authorize Client ID "${clientId || 'from sa-dwd-key.json'}" in Google Workspace Admin Console (admin.google.com/ac/owl/domainwidedelegation).`,
+          `Ensure the user email "${testUserEmail}" belongs to the Google Workspace domain where the Client ID was authorized.`,
+          `Ensure the exact OAuth scopes (${scopes.join(', ')}) are configured.`,
+          `If you just added the Client ID to Google Admin Console, please allow 5-15 minutes for global Google Workspace propagation.`
+        ] : [
+          `Verify network connectivity to oauth2.googleapis.com.`,
+          `Ensure the service account key has not been revoked or expired.`
+        ]
       });
     }
   } catch (err: any) {
@@ -536,7 +591,7 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       try {
         resolvedConfig = JSON.parse(fs.readFileSync(wifConfigPath, 'utf-8'));
       } catch (err: any) {
-        return res.status(400).json({
+        return res.status(200).json({
           success: false,
           error: 'InvalidConfigFile',
           message: `Failed to read ${wifConfigPath}: ${err.message}`
@@ -545,7 +600,7 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
     }
 
     if (!resolvedConfig) {
-      return res.status(400).json({
+      return res.status(200).json({
         success: false,
         error: 'ConfigNotFound',
         message: 'No Workforce Identity Federation config found. Please generate or save workforce-identity-config.json first.'
@@ -555,50 +610,89 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
     const audience = resolvedConfig.audience || '';
     const tokenUrl = resolvedConfig.token_url || 'https://sts.googleapis.com/v1/token';
     const isWorkforce = audience.includes('/workforcePools/');
-
-    const authService = new GcpAuthService({
-      wifConfigPath,
-      wifConfigJson: resolvedConfig,
-      authType: 'WORKFORCE_IDENTITY_FEDERATION'
-    });
-
     const targetUser = testUserEmail || process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'user@example.com';
 
+    // 1. Check if using Pattern 1 (Migration DWD Impersonation Provider via wif-migration-key.pem)
+    const keyPath = 'wif-migration-key.pem';
+    if (fs.existsSync(keyPath)) {
+      const authService = new GcpAuthService({
+        wifConfigPath,
+        wifConfigJson: resolvedConfig,
+        authType: 'WORKFORCE_IDENTITY_FEDERATION'
+      });
+
+      try {
+        const token = await authService.mintWorkforceToken(targetUser);
+        if (token) {
+          return res.status(200).json({
+            success: true,
+            message: `Successfully minted and exchanged token with GCP Security Token Service (STS) for workforce user "${targetUser}".`,
+            audience,
+            tokenUrl,
+            isWorkforcePool: isWorkforce,
+            tokenPrefix: `${token.substring(0, 18)}...`,
+            impersonatedPrincipal: `principal://${audience.replace(/^\/\//, '')}/subject/${targetUser}`,
+            impersonatedServiceAccount: serviceAccountToImpersonate || 'Direct Workforce Principal',
+            impersonatedUser: targetUser
+          });
+        }
+      } catch (mintErr: any) {
+        return res.status(200).json({
+          success: false,
+          error: 'WorkforceTokenMintFailed',
+          message: `Workforce STS token exchange failed: ${mintErr.message}`,
+          audience,
+          tokenUrl
+        });
+      }
+    }
+
+    // 2. Strict external IdP token exchange test via GoogleAuth fromJSON (NO fallback to local gcloud ADC)
     try {
-      const token = await authService.mintWorkforceToken(targetUser);
-      if (token) {
+      const { GoogleAuth } = await import('google-auth-library');
+      const auth = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform']
+      });
+      const client = auth.fromJSON(resolvedConfig);
+      const tokenRes = await client.getAccessToken();
+
+      if (tokenRes && tokenRes.token) {
         return res.status(200).json({
           success: true,
-          message: `Successfully minted and exchanged token with GCP Security Token Service (STS) for workforce user "${targetUser}".`,
+          message: 'Successfully exchanged subject token with GCP Security Token Service (STS) via Workforce Identity Federation.',
           audience,
           tokenUrl,
           isWorkforcePool: isWorkforce,
-          tokenPrefix: `${token.substring(0, 18)}...`,
-          impersonatedPrincipal: `principal://${audience.replace(/^\/\//, '')}/subject/${targetUser}`,
+          tokenPrefix: `${tokenRes.token.substring(0, 18)}...`,
           impersonatedServiceAccount: serviceAccountToImpersonate || 'Direct Workforce Principal',
           impersonatedUser: targetUser
         });
       }
 
-      // If key is missing, attempt standard fromJSON WiF client
-      const standardToken = await authService.getAccessToken();
+      throw new Error('No access token returned from GCP Security Token Service (STS).');
+    } catch (stsErr: any) {
+      const subTokenFile = resolvedConfig.credential_source?.file;
+      const fileExists = subTokenFile ? fs.existsSync(subTokenFile) : false;
+      const fileContent = fileExists ? fs.readFileSync(subTokenFile, 'utf-8').trim() : '';
+      const isDummyToken = !fileContent || fileContent.includes('mock-idp-subject-token') || fileContent.length < 50;
+
+      const remediation = [];
+      if (!fs.existsSync(keyPath)) {
+        remediation.push('For Pattern 1 (Migration DWD Key): Run Step 1 commands to generate "wif-migration-key.pem" and register the JWKS provider.');
+      }
+      if (isDummyToken) {
+        remediation.push(`For Pattern 2 (External IdP OIDC/SAML): Place a genuine signed OIDC ID token or SAML assertion from your IdP into "${subTokenFile || './idp-subject-token.jwt'}".`);
+      }
+      remediation.push(`Ensure the Workforce Pool and Provider exist: ${audience}`);
+
       return res.status(200).json({
-        success: true,
-        message: 'Successfully exchanged token with GCP Security Token Service (STS) via Workforce Identity Federation config.',
+        success: false,
+        error: 'WifExchangeFailed',
+        message: `WiF Token Exchange failed against STS: ${stsErr.message}. Ambient local gcloud workstation credentials were NOT used for this test.`,
         audience,
         tokenUrl,
         isWorkforcePool: isWorkforce,
-        tokenPrefix: standardToken ? `${standardToken.substring(0, 15)}...` : 'Active',
-        impersonatedServiceAccount: serviceAccountToImpersonate || 'Direct Workforce Principal',
-        impersonatedUser: targetUser
-      });
-    } catch (wifErr: any) {
-      return res.status(400).json({
-        success: false,
-        error: 'WifExchangeFailed',
-        message: `WiF Token Exchange failed: ${wifErr.message}`,
-        audience,
-        tokenUrl
+        remediation
       });
     }
   } catch (err: any) {
