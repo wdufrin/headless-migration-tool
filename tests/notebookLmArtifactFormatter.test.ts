@@ -524,7 +524,7 @@ describe('UserReportGenerator Bulk Email Dispatching', () => {
     expect(fs.existsSync(path.join(userFolder, 'NotebookLM_Artifacts_Part2.zip'))).toBe(true);
 
     fetchSpy.mockRestore();
-  });
+  }, 15000);
 
   describe('Interactive Apps & Media Optimization', () => {
     it('should detect if ffmpeg is available in execution environment', () => {

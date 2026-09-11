@@ -883,6 +883,37 @@ npx tsx src/cli.ts --config migration-config.json`);
     [30, 30, 40]
   );
 
+  // Section 9
+  b.addHeading1('9. Application Decommissioning & Cleanup (Full Teardown)');
+  b.addParagraph(
+    'When migration waves are completed or during environment reset, the tool provides two distinct cleanup mechanisms in Tab 6 (Target Maintenance & Platform Decommission):'
+  );
+
+  b.addHeading2('Button 1: Reset Target Project Assets (Test Iterations)');
+  b.addParagraph(
+    'Resets migrated assets (notebooks, custom agents, chat history, user memories, reports, and local artifacts) between test iterations without modifying credentials or GCP IAM roles.'
+  );
+
+  b.addHeading2('Button 2: Clean Up Install & Decommission Migration App (Full Teardown)');
+  b.addParagraph(
+    'Completely uninstalls the migration application and restores both Google Cloud and your local workstation to their pre-setup baseline state:'
+  );
+  b.addBullet('Reset Overwritten Org Policies: Resets iam.disableServiceAccountKeyCreation back to inherit from parent organization via gcloud org-policies reset.');
+  b.addBullet('Revoke IAM Roles: Strips roles/discoveryengine.admin, roles/serviceusage.serviceUsageConsumer, and roles/iam.serviceAccountTokenCreator.');
+  b.addBullet('Delete Service Account: Deletes gemini-dwd-migrator in Google Cloud IAM.');
+  b.addBullet('Invalidate DWD: Permanently revokes token creation in Google Cloud IAM; manual console deletion in admin.google.com required due to Google Workspace API boundaries.');
+  b.addBullet('Delete Local Credentials: Removes sa-dwd-key.json, workforce-identity-config.json, *.pem, *.jwt, and migration-config.json.');
+  b.addBullet('Purge Output Directories: Empties reports/, exports/, and user_handover_reports/.');
+  b.addBullet('Headless CLI Support: Supports "gemini-migrate decommission --project <ID> --confirm <ID> [--wipe-target-assets]".');
+
+  b.addHeading2('Automated Rollback State Verification Engine');
+  b.addParagraph(
+    'Provides an automated 7-dimension audit engine verifying that organization policies inherit parent defaults, service accounts are permanently deleted, IAM role bindings are removed, DWD tokens are invalidated, local private keys are deleted, output folders are empty, and state caches are cleared.'
+  );
+  b.addBullet('Web Console: Click "Verify Rollback State" in Tab 6 (Card 2).');
+  b.addBullet('Headless CLI: gemini-migrate verify-rollback --project <TARGET_PROJECT_ID>');
+  b.addBullet('REST API: GET /api/maintenance/verify-rollback?targetProject=<PROJECT_ID>');
+
   await b.save(outputPath);
 }
 
@@ -896,7 +927,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     'Gemini Enterprise Admin Migration Platform',
     'Administrator Operations, Asset Restoration, Parity Audit & User Handover Guide',
     {
-      'Document Version': 'v1.4.0 (Enterprise Release)',
+      'Document Version': 'v1.4.1 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Audience': 'Cloud Architects, Migration Operators & IT Administrators',
       'Supported Assets': 'Notebooks, Sources, Custom Agents, Chat Sessions, Memories & Artifacts',
@@ -1111,7 +1142,12 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   // Section 10
   b.addHeading1('10. Target Maintenance & Selective Rollback');
   b.addParagraph(
-    'During testing or staged rollouts, administrators can use the **Target Maintenance** tab to selectively clean migrated assets in the target environment prior to fresh migration runs.'
+    'The Target Maintenance console provides two distinct operational flows: resetting assets between test iterations, or performing a complete teardown of the migration app:'
+  );
+
+  b.addHeading2('Button 1: Reset Target Project Assets (Test Iterations)');
+  b.addParagraph(
+    'Selectively cleans migrated assets in the target environment prior to fresh migration runs without disturbing authentication or GCP infrastructure:'
   );
 
   b.addTable(
@@ -1120,15 +1156,35 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
       ['Clean Target Chats', 'Deletes migrated chat sessions for selected users', 'Low', 'Safe to run between test iterations to avoid duplicate session history'],
       ['Clean Target Agents', 'Removes custom agents created by migration pipeline', 'Medium', 'Use when iterating on system prompt translations or tool bindings'],
       ['Clean Target Notebooks', 'Deletes migrated research notebooks in target', 'Medium', 'Use when re-testing source ingestion or PDF uploads'],
+      ['Clean User Memories', 'Purges personalized user facts & memory profiles', 'Low', 'Cleans personalization state across all target user scopes'],
       ['Clean Exported Artifacts', 'Clears `exports/artifacts/` folder on local disk', 'Low', 'Frees local disk space without modifying cloud environments'],
-      ['Clean Migration Reports', 'Clears `reports/` folder on local disk', 'Low', 'Archives old run logs']
+      ['Clean Migration Reports', 'Clears `reports/` folder on local disk', 'Low', 'Archives old run logs and handover bundles']
     ],
     [25, 30, 15, 30]
   );
 
+  b.addHeading2('Button 2: Clean Up Install & Decommission Migration App (Full Teardown)');
+  b.addParagraph(
+    'Performs a complete application uninstall and restores your Google Cloud project and workstation to their pre-setup baseline state:'
+  );
+  b.addBullet('Reset Overwritten Org Policies: Resets iam.disableServiceAccountKeyCreation back to inherited parent default.');
+  b.addBullet('Delete Service Account & Strip IAM Roles: Revokes discoveryengine.admin, serviceUsageConsumer, and deletes the service account.');
+  b.addBullet('Invalidate Domain-Wide Delegation (DWD): Permanently revokes token minting in GCP IAM; manual console deletion in admin.google.com required due to Google Workspace API boundaries.');
+  b.addBullet('Delete Local Credentials: Removes sa-dwd-key.json, workforce-identity-config.json, *.pem, *.jwt, and migration-config.json.');
+  b.addBullet('Purge Local Folders: Empties reports/, exports/, and user_handover_reports/.');
+  b.addBullet('Headless CLI Execution: gemini-migrate decommission --project <TARGET_PROJECT_ID> --confirm <TARGET_PROJECT_ID>');
+
+  b.addHeading2('Automated Rollback State Verification Engine');
+  b.addParagraph(
+    'Audits cloud and local baseline state across 7 security dimensions. Automatically runs after decommissioning or can be triggered on demand via Web Console ("Verify Rollback State"), Headless CLI (gemini-migrate verify-rollback --project <ID>), or REST API.'
+  );
+  b.addBullet('Web Console: Tab 6 (Card 2) "Verify Rollback State" button with live audit checklist.');
+  b.addBullet('Headless CLI: gemini-migrate verify-rollback --project <TARGET_PROJECT_ID>');
+  b.addBullet('REST API: GET /api/maintenance/verify-rollback?targetProject=<PROJECT_ID>');
+
   b.addImage(
     'docs/images/15_target_maintenance.png',
-    'Figure 2.11: Target Maintenance Console & Selective Rollback Controls',
+    'Figure 2.11: Target Maintenance & Platform Decommissioning Console',
     560,
     350
   );

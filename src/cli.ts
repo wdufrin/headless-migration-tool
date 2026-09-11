@@ -27,7 +27,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.4.0')
+  .version('1.4.1')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
@@ -168,6 +168,240 @@ program
       }
     } catch (err: any) {
       logger.error(`Fatal Migration Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('decommission')
+  .alias('cleanup-install')
+  .description('Clean up install & decommission migration app: reset org policies, delete service account & IAM bindings, invalidate DWD, and wipe local credentials')
+  .requiredOption('-p, --project <projectId>', 'Target Google Cloud project ID')
+  .option('--confirm <projectId>', 'Confirmation target project ID (must match --project or be "DECOMMISSION")')
+  .option('--wipe-target-assets', 'Also wipe migrated target Discovery Engine assets (notebooks, agents, chats, memories)')
+  .action(async (cmdOptions) => {
+    try {
+      const targetProject = (cmdOptions.project || '').trim();
+      const confirmProject = (cmdOptions.confirm || '').trim();
+
+      if (!confirmProject || (confirmProject !== targetProject && confirmProject !== 'DECOMMISSION')) {
+        console.error(`\n❌ Error: For safety, you must pass --confirm ${targetProject} to verify decommissioning.`);
+        process.exit(1);
+      }
+
+      console.log(`\n======================================================`);
+      console.log(`  CLEAN UP INSTALL & DECOMMISSION MIGRATION APP       `);
+      console.log(`======================================================`);
+      console.log(`Target Project:       ${targetProject}`);
+      console.log(`Wipe Target Assets:   ${cmdOptions.wipeTargetAssets ? 'YES' : 'NO'}`);
+      console.log(`======================================================\n`);
+
+      const { executeTargetAssetCleanup } = await import('./routes/maintenance.js');
+      const { AppStateTracker } = await import('./services/appStateTracker.js');
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const fs = await import('fs');
+      const path = await import('path');
+
+      // 0. Target assets
+      if (cmdOptions.wipeTargetAssets) {
+        console.log('• Wiping target Discovery Engine assets (notebooks, agents, chats, memories)...');
+        try {
+          const res = await executeTargetAssetCleanup({
+            targetProject,
+            cleanNotebooks: true,
+            cleanAgents: true,
+            cleanSessions: true,
+            cleanMemories: true,
+            cleanArtifacts: true,
+            cleanReports: true
+          });
+          console.log(`  ✓ Assets wiped: ${res.deletedNotebooks} notebooks, ${res.deletedAgents} agents, ${res.deletedSessions} chats, ${res.deletedMemories} memories.`);
+        } catch (e: any) {
+          console.warn(`  ⚠️ Asset wipe warning: ${e.message}`);
+        }
+      }
+
+      // 1. Service Account
+      let saEmail = '';
+      let clientId: string | undefined;
+      const saKeyPath = path.resolve(process.cwd(), 'sa-dwd-key.json');
+      if (fs.existsSync(saKeyPath)) {
+        try {
+          const saData = JSON.parse(fs.readFileSync(saKeyPath, 'utf-8'));
+          saEmail = saData.client_email;
+          clientId = saData.client_id;
+        } catch {}
+      }
+      const trackedState = AppStateTracker.loadState();
+      if (!saEmail) {
+        const trackedSa = trackedState.createdServiceAccounts.find(s => s.projectId === targetProject);
+        if (trackedSa) {
+          saEmail = trackedSa.email;
+          clientId = trackedSa.clientId;
+        }
+      }
+      if (!saEmail) {
+        saEmail = `gemini-dwd-migrator@${targetProject}.iam.gserviceaccount.com`;
+      }
+
+      // 2. Reset Org Policies
+      console.log('• Resetting overwritten organization policies...');
+      const constraintsToReset = new Set<string>();
+      trackedState.overriddenOrgPolicies
+        .filter(p => p.projectId === targetProject)
+        .forEach(p => constraintsToReset.add(p.constraint));
+      constraintsToReset.add('iam.disableServiceAccountKeyCreation');
+
+      for (const constraint of constraintsToReset) {
+        try {
+          await execFileAsync('gcloud', ['org-policies', 'reset', constraint, `--project=${targetProject}`]);
+          console.log(`  ✓ Reset org policy "${constraint}" to inherited default.`);
+        } catch (opErr: any) {
+          console.log(`  ℹ️ Org policy "${constraint}": ${opErr.message?.split('\n')[0] || 'Already default'}`);
+        }
+      }
+
+      // 3. Revoke IAM roles
+      console.log(`• Revoking IAM roles from ${saEmail}...`);
+      const roles = ['roles/discoveryengine.admin', 'roles/serviceusage.serviceUsageConsumer', 'roles/iam.serviceAccountTokenCreator'];
+      for (const role of roles) {
+        try {
+          await execFileAsync('gcloud', ['projects', 'remove-iam-policy-binding', targetProject, `--member=serviceAccount:${saEmail}`, `--role=${role}`, '--quiet']);
+          console.log(`  ✓ Revoked ${role}`);
+        } catch {}
+      }
+
+      // 4. Delete SA (which also permanently revokes DWD)
+      console.log(`• Deleting Service Account ${saEmail} (invalidating DWD)...`);
+      try {
+        await execFileAsync('gcloud', ['iam', 'service-accounts', 'delete', saEmail, `--project=${targetProject}`, '--quiet']);
+        console.log(`  ✓ Deleted ${saEmail}. Numeric client ID ${clientId || ''} permanently invalidated in Google Workspace.`);
+      } catch (saErr: any) {
+        console.log(`  ℹ️ Service account deletion notice: ${saErr.message?.split('\n')[0] || 'Not found'}`);
+      }
+
+      // 5. Delete local files & purge directories
+      console.log('• Wiping local credentials and output directories...');
+      const filesToDelete = [
+        'sa-dwd-key.json',
+        'workforce-identity-config.json',
+        'wif-migration-key.pem',
+        'wif-migration-jwks.json',
+        'idp-subject-token.jwt',
+        'migration-config.json',
+        '.migration-state.json'
+      ];
+      for (const f of filesToDelete) {
+        const fp = path.resolve(process.cwd(), f);
+        if (fs.existsSync(fp)) {
+          fs.unlinkSync(fp);
+          console.log(`  ✓ Deleted ${f}`);
+        }
+      }
+
+      const dirsToPurge = ['reports', 'exports/artifacts', 'exports/memories', 'exports', 'user_handover_reports', 'user_artifacts'];
+      for (const d of dirsToPurge) {
+        const dp = path.resolve(process.cwd(), d);
+        if (fs.existsSync(dp)) {
+          fs.rmSync(dp, { recursive: true, force: true });
+          fs.mkdirSync(dp, { recursive: true });
+          console.log(`  ✓ Purged ${d}/`);
+        }
+      }
+
+      AppStateTracker.clearTrackedState();
+
+      // 6. Automatically Validate Rollback Completeness
+      console.log('• Validating rollback completeness across cloud and workstation...');
+      const { validateRollbackCompleteness } = await import('./routes/maintenance.js');
+      const audit = await validateRollbackCompleteness({ targetProject, serviceAccountEmail: saEmail, clientId });
+
+      console.log('\nROLLBACK AUDIT CHECKLIST:');
+      for (const chk of audit.checks) {
+        const symbol = chk.passed ? '  ✅ [PASS]' : '  ❌ [FAIL]';
+        console.log(`${symbol} ${chk.name}: ${chk.statusText}`);
+        console.log(`             ${chk.details}`);
+      }
+
+      console.log('\n------------------------------------------------------');
+      console.log('📋 GOOGLE WORKSPACE DOMAIN-WIDE DELEGATION NOTICE:');
+      console.log('  Google Workspace does not offer an API to programmatically');
+      console.log('  delete DWD client authorizations.');
+      console.log(`  GCP Service Account ${saEmail} was permanently deleted,`);
+      console.log('  cryptographically neutralizing all token minting authority.');
+      console.log('  To remove the remaining registration row in Google Workspace:');
+      console.log('  1. Open: https://admin.google.com/ac/owl/domainwidedelegation');
+      if (clientId) {
+        console.log(`  2. Locate Client ID: ${clientId}`);
+      }
+      console.log('  3. Hover or click the client row and select "Delete"');
+      console.log('------------------------------------------------------');
+
+      console.log('\n======================================================');
+      if (audit.isFullyRolledBack) {
+        console.log('  🎉 100% VERIFIED: Environment Restored to Pre-Setup Baseline');
+      } else {
+        console.log(`  ⚠️ Notice: Rollback completed with ${audit.failedChecks} advisory item(s)`);
+      }
+      console.log(`  Passed Checks: ${audit.passedChecks} / ${audit.totalChecks}`);
+      console.log('======================================================\n');
+    } catch (err: any) {
+      console.error(`\n❌ Decommission failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('verify-rollback')
+  .description('Validate that all migration resources, service accounts, org policies, and local files have been completely rolled back')
+  .requiredOption('-p, --project <projectId>', 'Target Google Cloud project ID')
+  .option('--service-account <email>', 'Explicit service account email to verify')
+  .option('--client-id <clientId>', 'Explicit OAuth2 numeric client ID to verify')
+  .action(async (cmdOptions) => {
+    try {
+      const targetProject = (cmdOptions.project || '').trim();
+      const saEmail = cmdOptions.serviceAccount ? cmdOptions.serviceAccount.trim() : undefined;
+      const clientId = cmdOptions.clientId ? cmdOptions.clientId.trim() : undefined;
+
+      console.log(`\n======================================================`);
+      console.log(`  VALIDATING ROLLBACK & DECOMMISSION COMPLETENESS     `);
+      console.log(`======================================================`);
+      console.log(`Target Project:       ${targetProject}`);
+      console.log(`======================================================\n`);
+
+      const { validateRollbackCompleteness } = await import('./routes/maintenance.js');
+      const result = await validateRollbackCompleteness({ targetProject, serviceAccountEmail: saEmail, clientId });
+
+      console.log('AUDIT CHECKLIST:');
+      for (const chk of result.checks) {
+        const symbol = chk.passed ? '  ✅ [PASS]' : '  ❌ [FAIL]';
+        console.log(`${symbol} ${chk.name}: ${chk.statusText}`);
+        console.log(`             ${chk.details}`);
+      }
+
+      if (result.dwdActionRequired) {
+        console.log(`\n------------------------------------------------------`);
+        console.log(`📋 GOOGLE WORKSPACE ADMIN CONSOLE NOTE:`);
+        console.log(`  Google Workspace requires manual removal of DWD client rows.`);
+        console.log(`  Console URL: ${result.dwdActionRequired.consoleUrl}`);
+        if (result.clientId) {
+          console.log(`  Client ID:   ${result.clientId}`);
+        }
+        console.log(`------------------------------------------------------`);
+      }
+
+      console.log(`\n------------------------------------------------------`);
+      console.log(`Result:               ${result.overallStatus === 'VERIFIED_CLEAN' ? '✨ 100% VERIFIED CLEAN PRE-SETUP BASELINE' : '⚠️ ROLLBACK INCOMPLETE'}`);
+      console.log(`Checks Passed:        ${result.passedChecks} / ${result.totalChecks}`);
+      console.log(`------------------------------------------------------\n`);
+
+      if (!result.isFullyRolledBack) {
+        process.exit(1);
+      }
+    } catch (err: any) {
+      console.error(`\n❌ Rollback verification failed: ${err.message}`);
       process.exit(1);
     }
   });

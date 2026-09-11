@@ -31,10 +31,13 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 * **🌐 Workforce Identity Federation (WiF) Keyless Architecture Assessment**:
   * **Keyless Architecture Immunity**: Explains and validates that WiF token exchanges (`sts.googleapis.com`) mint ephemeral, short-lived tokens via Google Cloud STS and are **100% immune** to `iam.disableServiceAccountKeyCreation` or `iam.disableServiceAccountKeyUpload` constraints.
   * **Zero Stored Secrets**: Eliminates high-risk on-disk `.json` private keys entirely for customers adopting federated identity (Entra ID, Okta, Ping).
-* **🛡️ Integrated Permissions & Least-Privilege Auditor**:
-  * Evaluates target project organization policies as part of the security audit suite alongside IAM roles and OAuth scopes.
-* **🧪 Test Suite Expansion & Typing Fixes (74/74 Tests Passing)**:
-  * Full 74-test automated suite across 10 test suites passing with 100% success rate, including type error fixes in `tests/skillMigrator.test.ts`.
+* **🧹 Dual-Action Cleanup & Application Decommissioning Engine**:
+  * **Button 1 (Reset Target Project Assets)**: Resets migrated Discovery Engine notebooks, custom agents, chat history, user memories, and local artifacts for test iterations.
+  * **Button 2 (Clean Up Install & Decommission Migration App)**: Full teardown and uninstaller. Resets any overwritten organization policies (`iam.disableServiceAccountKeyCreation`) back to inherited defaults, strips IAM roles, deletes the migration service account (permanently neutralizing Google Workspace DWD token authority, with guided manual console deletion instructions), deletes local credential and config files (`*.json`, `*.pem`, `*.jwt`), purges output directories, and restores the workstation and cloud environment to their baseline state prior to app setup.
+  * **Automated Rollback Verification Engine**: Validates across 7 cloud and local security dimensions (project-level organization policy inheritance, permanent service account deletion, project IAM policy bindings revocation, Google Workspace DWD token invalidation, local private keys and config wipe, empty output directories, and cleared application state). Available via Web Console button ("Verify Rollback State"), headless CLI (`gemini-migrate verify-rollback --project <ID>`), and REST API (`GET`/`POST /api/maintenance/verify-rollback`). Automatically audits the environment after every decommission operation.
+  * **Headless CLI Decommissioning**: Supports `gemini-migrate decommission --project <ID> --confirm <ID> [--wipe-target-assets]`.
+* **🧪 Test Suite Expansion & Typing Fixes (88/88 Tests Passing)**:
+  * Full 88-test automated suite across 11 test suites passing with 100% success rate, including new dedicated unit tests for `AppStateTracker`, `validateRollbackCompleteness`, and the maintenance router in `tests/maintenance.test.ts`.
 
 ---
 
@@ -347,9 +350,9 @@ The local Web Console provides 6 dedicated modules:
    - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, live impersonation test, automated **🛡️ Org Policy Pre-Flight**, and **⚡ 1-Click Project-Level Policy Override** for `iam.disableServiceAccountKeyCreation`.
    - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, live token test, and **Keyless Architecture Assessment** highlighting 100% immunity to key creation blocks.
    - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, audits target organization policies, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
-6. **🧹 Target Destination Maintenance & Multi-User Cleanup**:
-   - Automatically identifies all users in the target environment to clean user-scoped notebooks and agents.
-   - Selective checkboxes to clean Chats, Custom Agents, Notebooks, Exported Artifacts, or Migration Reports prior to test runs.
+6. **🧹 Dual-Action Target Maintenance & Platform Decommissioning**:
+   - **Button 1: Reset Target Project Assets**: Purges migrated target project assets (notebooks, custom agents, chat history, user memories, reports, artifacts) for test iteration resets.
+   - **Button 2: Clean Up Install & Decommission Migration App**: Complete uninstaller that deletes the migration service account, removes GCP IAM roles, resets any overridden organization policies (`iam.disableServiceAccountKeyCreation`) back to inherited parent defaults, automatically invalidates Google Workspace DWD, wipes all local credential/JSON files, and purges output folders to restore the workstation and GCP project to their pre-setup baseline.
 
 ---
 

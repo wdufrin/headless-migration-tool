@@ -291,7 +291,7 @@ npx tsx src/cli.ts --config migration-config.json
 ### Option 3: Run Automated Test Suite
 ```bash
 npm test
-# Executes 74 unit tests across 10 test suites covering auth, parsing, and export
+# Executes 88 unit tests across 11 test suites covering auth, parsing, export, decommissioning, and rollback validation
 ```
 
 ### CLI Command-Line Flag Reference (`src/cli.ts`)
@@ -335,4 +335,48 @@ npm test
 | **ENOENT: idp-subject-token.jwt does not exist** | WiF auth selected but subject token file has not been minted or has expired | Generate a fresh subject token using `wif-migration-key.pem` or switch auth type to ADC / DWD. |
 | **EADDRINUSE: address already in use :::8080** | Another process is already bound to port 8080 on the workstation | Launch with custom port: `PORT=8085 npm start` or terminate the conflicting process (`lsof -i :8080`). |
 | **Puppeteer / Chrome launch failed** | Missing Chrome executable on Linux workstation | Install Google Chrome: `apt-get install -y google-chrome-stable` or use pre-captured artifact assets. |
+
+---
+
+## 9. Application Decommissioning & Cleanup (Full Teardown)
+
+When migration is complete or during environment reset, the tool provides **two distinct cleanup buttons** in Tab 6 (*Target Maintenance & Platform Decommission*):
+
+### Button 1: Reset Target Project Assets (Test Iterations)
+* **Purpose**: Reset migrated assets between test iterations without modifying credentials or IAM roles.
+* **Scope**: Cleans migrated notebooks, custom agents, chat history, user memories, reports, and local artifacts.
+* **Execution**: Click **Reset Target Project Assets (5 Categories)**. Requires typing target project ID to confirm.
+
+### Button 2: Clean Up Install & Decommission Migration App (Full Teardown)
+* **Purpose**: Completely uninstall the migration application and return both Google Cloud and your local workstation to their pre-setup baseline state.
+* **Actions Executed**:
+  1. **Reset Overwritten Org Policies**: Resets `iam.disableServiceAccountKeyCreation` back to inherit from the parent organization via `gcloud org-policies reset`.
+  2. **Revoke GCP IAM Roles**: Strips `roles/discoveryengine.admin`, `roles/serviceusage.serviceUsageConsumer`, and `roles/iam.serviceAccountTokenCreator`.
+  3. **Delete Service Account**: Deletes `gemini-dwd-migrator@<target-project>.iam.gserviceaccount.com` in Google Cloud IAM.
+  4. **Invalidate Google Workspace DWD**: Permanently revokes token minting authority by deleting the Service Account in Google Cloud IAM. Note: Google Workspace has no public API to delete DWD entries automatically; a Super Admin must manually delete the client row at [admin.google.com/ac/owl/domainwidedelegation](https://admin.google.com/ac/owl/domainwidedelegation) (the tool provides the Client ID).
+  5. **Delete Local Credentials & Configuration**: Removes `sa-dwd-key.json`, `workforce-identity-config.json`, `wif-migration-key.pem`, `wif-migration-jwks.json`, `idp-subject-token.jwt`, `migration-config.json`, and `.migration-state.json`.
+  6. **Purge Output Folders**: Empties `./reports/`, `./exports/`, and `./user_handover_reports/`.
+  7. **Optional Target Asset Wipe**: Checkbox to wipe all migrated Discovery Engine assets prior to credential removal.
+* **Web Execution**: In Tab 6, type target project ID into the confirmation box and click **Clean Up Install & Decommission App**.
+* **Headless CLI Execution**:
+  ```bash
+  npx tsx src/cli.ts decommission --project <TARGET_PROJECT_ID> --confirm <TARGET_PROJECT_ID> [--wipe-target-assets]
+  ```
+
+---
+
+### Automated Rollback State Verification Engine
+Following decommissioning (or at any audit interval), operators can run the verification engine to prove the environment is clean:
+* **Cloud Checks**: Validates that `iam.disableServiceAccountKeyCreation` has no project-level override and inherits parent org policy, the migrator Service Account is permanently deleted from GCP IAM, zero IAM bindings remain on the target project, and Google Workspace DWD tokens are neutralized (with manual console deletion instructions provided).
+* **Local Checks**: Validates that all private keys, JWT tokens, config files (`sa-dwd-key.json`, `workforce-identity-config.json`, etc.), and `.migration-state.json` are absent, and output directories (`reports/`, `exports/`, `user_handover_reports/`) are completely empty.
+* **Web Execution**: Click **🔍 Verify Rollback State** in Tab 6 (Card 2).
+* **Headless CLI Execution**:
+  ```bash
+  npx tsx src/cli.ts verify-rollback --project <TARGET_PROJECT_ID> [--service-account <SA_EMAIL>]
+  ```
+* **REST API**:
+  ```bash
+  curl -X GET "http://localhost:8080/api/maintenance/verify-rollback?targetProject=<TARGET_PROJECT_ID>"
+  ```
+
 

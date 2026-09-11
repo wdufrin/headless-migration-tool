@@ -166,18 +166,66 @@ The Auditor evaluates target environments against Google SAIF and least-privileg
 
 ## 10. Target Maintenance & Selective Rollback
 
-During testing or staged rollouts, administrators can use the **Target Maintenance** tab to selectively clean migrated assets in the target environment prior to fresh migration runs.
+The **Target Maintenance** console provides two distinct operational flows depending on whether you are resetting assets between test iterations or performing a complete teardown of the migration app:
+
+### Button 1: Reset Target Project Assets (Test Iterations)
+Use this button during testing or staged rollouts to selectively purge migrated assets in the target environment prior to a fresh migration wave without disturbing authentication or GCP infrastructure:
 
 | Maintenance Option | Scope of Action | Risk Level | Recommendation |
 | :--- | :--- | :--- | :--- |
 | **Clean Target Chats** | Deletes migrated chat sessions for selected users | Low | Safe to run between test iterations to avoid duplicate session history |
 | **Clean Target Agents** | Removes custom agents created by migration pipeline | Medium | Use when iterating on system prompt translations or tool bindings |
 | **Clean Target Notebooks** | Deletes migrated research notebooks in target | Medium | Use when re-testing source ingestion or PDF uploads |
+| **Clean User Memories** | Purges personalized user facts & memory profiles | Low | Cleans personalization state across all target user scopes |
 | **Clean Exported Artifacts** | Clears `exports/artifacts/` folder on local disk | Low | Frees local disk space without modifying cloud environments |
-| **Clean Migration Reports** | Clears `reports/` folder on local disk | Low | Archives old run logs |
+| **Clean Migration Reports** | Clears `reports/` folder on local disk | Low | Archives old run logs and handover bundles |
+
+* **Execution**: Click **Reset Target Project Assets (5 Categories)**.
+* **Safety Confirmation**: You must type the Target Project ID to confirm execution.
+
+---
+
+### Button 2: Clean Up Install & Decommission Migration App (Full Teardown)
+When all migration waves are complete, or when decommissioning the migration workstation, use this button to perform a complete application uninstall and restore your Google Cloud project and workstation to their pre-setup baseline:
+
+1. **🛡️ Reset Overwritten Organization Policies**: Automatically resets `iam.disableServiceAccountKeyCreation` (and any other tracked overrides) back to inherited defaults from parent organization using `gcloud org-policies reset`.
+2. **👤 Delete Migration Service Account & Strip IAM Roles**: Revokes `roles/discoveryengine.admin`, `roles/serviceusage.serviceUsageConsumer`, and `roles/iam.serviceAccountTokenCreator`, then permanently deletes `gemini-dwd-migrator@<target-project>.iam.gserviceaccount.com`.
+3. **🔑 Invalidate Google Workspace Domain-Wide Delegation (DWD)**: Deleting the service account from GCP IAM permanently neutralizes and invalidates its numeric OAuth2 Client ID (preventing token generation).
+   > [!NOTE]
+   > **Google Workspace API Boundary**: Google Workspace enforces an administrative security boundary and does not expose a public API to programmatically delete Domain-Wide Delegation authorizations. While the underlying GCP Service Account is permanently deleted in Google Cloud IAM (preventing any tokens from being minted), a Workspace Super Administrator must perform a 2-click deletion in the Google Admin Console ([admin.google.com/ac/owl/domainwidedelegation](https://admin.google.com/ac/owl/domainwidedelegation)) to prune the client entry. The tool provides the exact Client ID and direct console link.
+4. **📄 Delete Local Credential & JSON Configuration Files**: Deletes `sa-dwd-key.json`, `workforce-identity-config.json`, `wif-migration-key.pem`, `wif-migration-jwks.json`, `idp-subject-token.jwt`, `migration-config.json`, and `.migration-state.json`.
+5. **📦 Purge Local Reports & Artifact Exports**: Empties `./reports/`, `./exports/`, and `./user_handover_reports/`.
+6. **🧹 Optional Target Asset Wipe**: Checking *"Also wipe migrated Discovery Engine assets in target project"* cleans all migrated notebooks, agents, chat sessions, and memories before removing credentials.
+7. **✨ Pristine Baseline State**: Clears all local state caches so the workstation and cloud environment are returned to their pre-setup state.
+
+* **Execution via Web Console**: In Tab 6, type the Target Project ID in the confirmation box and click **Clean Up Install & Decommission App**.
+* **Execution via Headless CLI**:
+  ```bash
+  npx tsx src/cli.ts decommission --project <TARGET_PROJECT_ID> --confirm <TARGET_PROJECT_ID> [--wipe-target-assets]
+  ```
+
+---
+
+### Automated Rollback State Verification Engine
+To guarantee enterprise security and satisfy compliance audits, the tool includes a comprehensive verification engine that inspects both cloud and local dimensions to prove that all changes have been completely rolled back:
+
+1. **🛡️ Organization Policy Override (`iam.disableServiceAccountKeyCreation`)**: Queries Google Cloud Resource Manager / Org Policies to verify that no project-level override exists (`enforce: false` removed) and policies inherit from the parent organization default.
+2. **👤 Service Account Existence (`gemini-dwd-migrator`)**: Queries GCP IAM to confirm the service account returns `NOT_FOUND` / 404.
+3. **🔐 Target Project IAM Policy Bindings**: Inspects target project IAM policies to prove zero role bindings remain attached to the migration service account.
+4. **🔑 Google Workspace Domain-Wide Delegation (DWD)**: Validates that permanent deletion of the service account has permanently invalidated its OAuth2 numeric Client ID (preventing token generation) and provides instructions to prune the client row from the Workspace Admin Console.
+5. **📄 Local Credential & Configuration Files**: Verifies that `sa-dwd-key.json`, `workforce-identity-config.json`, `wif-migration-key.pem`, `wif-migration-jwks.json`, `idp-subject-token.jwt`, and `migration-config.json` are absent from disk.
+6. **📁 Local Output & Artifact Directories**: Scans `./reports/`, `./exports/`, and `./user_handover_reports/` to verify zero residual files remain.
+7. **💾 Application State Cache & History**: Inspects `.migration-state.json` to ensure all tracked state is cleared.
+
+* **Web Console Verification**: In Tab 6 (Card 2), click **🔍 Verify Rollback State** to run a live audit at any time, or let it trigger automatically upon decommissioning completion. An interactive status container displays green checkmarks for all clean resources or actionable warnings if residuals are detected.
+* **Headless CLI Verification**:
+  ```bash
+  npx tsx src/cli.ts verify-rollback --project <TARGET_PROJECT_ID> [--service-account <SA_EMAIL>]
+  ```
+* **REST API Endpoints**: `GET /api/maintenance/verify-rollback?targetProject=<PROJECT_ID>` and `POST /api/maintenance/verify-rollback`.
 
 ![Figure 2.14: Target Maintenance Console](images/15_target_maintenance.png)
-*Figure 2.14: Target Maintenance Console & Selective Rollback Controls*
+*Figure 2.14: Target Maintenance & Platform Decommissioning Console*
 
 ---
 

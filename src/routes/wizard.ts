@@ -23,6 +23,7 @@ import { logger } from '../utils/logger.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
 import { extractUserIdentity } from './discovery.js';
+import { AppStateTracker } from '../services/appStateTracker.js';
 
 export const wizardRouter = express.Router();
 
@@ -401,6 +402,7 @@ spec:
         tmpPath,
         `--project=${safeProj}`
       ]);
+      AppStateTracker.recordOrgPolicyOverride(safeProj, 'iam.disableServiceAccountKeyCreation', { enforce: false });
       return res.status(200).json({
         success: true,
         message: `Successfully applied project override on "${safeProj}": Service Account Key creation is now permitted (enforce: false).`,

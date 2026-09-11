@@ -2262,7 +2262,7 @@
         </div>
       </section>
 
-      <!-- TAB 6: DESTINATION MAINTENANCE -->
+      <!-- TAB 6: DESTINATION MAINTENANCE & PLATFORM DECOMMISSION -->
       <section id="tab-maintenance" class="tab-content space-y-6 hidden">
         <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
           <div class="border-b border-gray-800 pb-4">
@@ -2270,16 +2270,27 @@
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              Target Destination Cleanup Utility
+              Target Maintenance & Platform Decommission
             </h2>
-            <p class="text-xs text-gray-400 mt-1">Safely reset or clear all target destination notebooks, custom agents, chat history sessions, and local artifacts prior to running a fresh migration.</p>
+            <p class="text-xs text-gray-400 mt-1">Manage target environment asset resets and complete migration app decommissioning to return Google Cloud and your local workstation to their pre-setup states.</p>
           </div>
 
-          <div class="bg-red-950/20 border border-red-500/30 rounded-xl p-5 space-y-5">
+          <!-- CARD 1: RESET TARGET PROJECT (WHAT WE HAVE TODAY) -->
+          <div class="bg-gray-950/60 border border-red-500/20 rounded-xl p-5 space-y-5">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🔄</span>
+                <div>
+                  <h3 class="text-sm font-bold text-white">Reset Target Project Assets</h3>
+                  <p class="text-[11px] text-gray-400">Purges migrated discovery assets (notebooks, custom agents, chat history, memories, reports, and local artifacts) from the target environment. Preserves GCP service accounts, IAM bindings, credentials, and organization policies.</p>
+                </div>
+              </div>
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Test Iterations</span>
+            </div>
+
             <div class="flex items-center justify-between">
-              <div class="text-sm font-semibold text-red-300 flex items-center gap-2">
-                <span>⚠️ Selective Target Cleanup</span>
-                <span class="text-xs font-mono text-gray-400 font-normal">Project: <code id="maintTargetProject" class="text-red-300">Target Project</code></span>
+              <div class="text-xs font-mono text-gray-400 font-normal">
+                Target Project: <code id="maintTargetProject" class="text-red-300 font-bold">Target Project</code>
               </div>
               <div class="flex items-center gap-2 text-xs">
                 <button type="button" onclick="toggleAllMaintenanceCheckboxes(true)" class="text-indigo-400 hover:text-indigo-300 underline">Select All</button>
@@ -2287,10 +2298,6 @@
                 <button type="button" onclick="toggleAllMaintenanceCheckboxes(false)" class="text-gray-400 hover:text-gray-300 underline">Deselect All</button>
               </div>
             </div>
-
-            <p class="text-xs text-gray-400 leading-relaxed">
-              Choose the exact categories to purge from the target environment. System agents such as <code>deep_research</code> are always safely preserved.
-            </p>
 
             <!-- Checkbox Grid -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -2374,12 +2381,137 @@
             </div>
 
             <div class="flex items-center gap-3 pt-2">
-              <button onclick="clearTargetDestination()" id="btnClearTarget" class="px-5 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-red-600/30 transition flex items-center gap-2">
+              <button onclick="clearTargetDestination()" id="btnClearTarget" class="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-red-600/30 transition flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
-                <span id="btnClearTargetText">Clean Selected Target Assets (5 Categories)</span>
+                <span id="btnClearTargetText">Reset Target Project Assets (5 Categories)</span>
               </button>
+            </div>
+          </div>
+
+          <!-- CARD 2: CLEAN UP INSTALL & DECOMMISSION MIGRATION APP (NEW BUTTON) -->
+          <div class="bg-gradient-to-br from-red-950/30 via-gray-900 to-amber-950/20 border-2 border-red-500/40 rounded-xl p-5 space-y-5 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-red-500/30 pb-3">
+              <div class="flex items-center gap-2">
+                <span class="text-xl">🗑️</span>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-base font-bold text-red-200">Clean Up Install & Decommission Migration App</h3>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-red-600/40 text-red-200 border border-red-500/50">Full Rollback</span>
+                  </div>
+                  <p class="text-xs text-gray-300 mt-0.5">Completely uninstalls the migration app. Deletes the service account, revokes IAM roles, resets any overridden organization policies back to inherited defaults, and wipes all local configuration & key files.</p>
+                </div>
+              </div>
+              <button type="button" onclick="refreshDecommissionPreview()" class="px-2.5 py-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded border border-gray-700 flex items-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>Refresh Live Status</span>
+              </button>
+            </div>
+
+            <!-- Decommission Actions Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <!-- Item 1: Org Policy -->
+              <div class="p-3 bg-gray-900/90 border border-gray-800 rounded-xl space-y-1">
+                <span class="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                  <span>🛡️</span> Reset Overwritten Org Policies
+                </span>
+                <p class="text-[11px] text-gray-400">Resets <code>iam.disableServiceAccountKeyCreation</code> (and tracked policies) back to inherit from parent organization.</p>
+                <div id="decomOrgPoliciesBadge" class="text-[10px] font-mono text-gray-400 mt-1">Status: Tracking active overrides</div>
+              </div>
+
+              <!-- Item 2: Service Account & Roles -->
+              <div class="p-3 bg-gray-900/90 border border-gray-800 rounded-xl space-y-1">
+                <span class="text-xs font-semibold text-red-300 flex items-center gap-1.5">
+                  <span>👤</span> Delete Service Account & Roles
+                </span>
+                <p class="text-[11px] text-gray-400">Deletes <code>gemini-dwd-migrator</code> in target GCP project and strips <code>discoveryengine.admin</code> & <code>serviceUsageConsumer</code>.</p>
+                <div id="decomSaBadge" class="text-[10px] font-mono text-gray-400 mt-1 truncate">Detected SA: auto-detecting...</div>
+              </div>
+
+              <!-- Item 3: DWD Invalidation -->
+              <div class="p-3 bg-gray-900/90 border border-gray-800 rounded-xl space-y-1">
+                <span class="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                  <span>🔑</span> Invalidate Domain-Wide Delegation
+                </span>
+                <p class="text-[11px] text-gray-400">Deleting the Service Account from GCP permanently invalidates its numeric OAuth2 Client ID in Google Workspace.</p>
+                <div class="text-[10px] text-emerald-400 mt-1 font-semibold">Automatic GCP revocation</div>
+              </div>
+
+              <!-- Item 4: Delete Local Credentials & JSON -->
+              <div class="p-3 bg-gray-900/90 border border-gray-800 rounded-xl space-y-1">
+                <span class="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                  <span>📄</span> Delete Local Credential & JSON Files
+                </span>
+                <p class="text-[11px] text-gray-400">Removes <code>sa-dwd-key.json</code>, <code>workforce-identity-config.json</code>, <code>*.pem</code>, <code>*.jwt</code>, and <code>migration-config.json</code>.</p>
+                <div id="decomFilesBadge" class="text-[10px] font-mono text-gray-400 mt-1">Detected files: checking...</div>
+              </div>
+
+              <!-- Item 5: Purge Local Reports & Artifacts -->
+              <div class="p-3 bg-gray-900/90 border border-gray-800 rounded-xl space-y-1">
+                <span class="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                  <span>📦</span> Purge Local Reports & Artifacts
+                </span>
+                <p class="text-[11px] text-gray-400">Wipes all generated outputs from <code>./reports/</code>, <code>./exports/</code>, and <code>./user_handover_reports/</code>.</p>
+                <div id="decomReportsBadge" class="text-[10px] font-mono text-gray-400 mt-1">Folders: reports, exports, handover</div>
+              </div>
+
+              <!-- Item 6: Initial State Restored -->
+              <div class="p-3 bg-gray-900/90 border border-gray-800 rounded-xl space-y-1">
+                <span class="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <span>✨</span> Pristine Pre-Install State
+                </span>
+                <p class="text-[11px] text-gray-400">Clears app state caches so the workstation and cloud environment are returned to their pre-setup baseline.</p>
+                <div class="text-[10px] text-emerald-400 mt-1 font-semibold">Zero orphaned artifacts</div>
+              </div>
+            </div>
+
+            <!-- Optional: Also Wipe Target Project Discovery Assets Checkbox -->
+            <label class="flex items-center gap-3 p-3 bg-gray-900/80 border border-red-900/40 rounded-xl cursor-pointer hover:border-red-700/50 transition">
+              <input type="checkbox" id="chkDecomWipeTargetAssets" class="w-4 h-4 rounded text-red-600 focus:ring-red-500 bg-gray-950 border-gray-700">
+              <div>
+                <span class="text-xs font-semibold text-white">Also wipe migrated Discovery Engine assets in target project</span>
+                <span class="text-[11px] text-gray-400 block">If checked, deletes migrated notebooks, agents, chat sessions, and user memories before removing credentials.</span>
+              </div>
+            </label>
+
+            <!-- Decommission Action Controls -->
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+              <div class="flex-1 w-full sm:w-auto">
+                <label class="block text-[11px] font-semibold text-gray-300 mb-1">
+                  Type Target Project ID (<code id="decomTargetProjPrompt" class="text-red-300 font-mono">target-project</code>) to confirm teardown:
+                </label>
+                <input type="text" id="decomConfirmInput" placeholder="Type target project ID to confirm..." class="w-full sm:max-w-md bg-gray-950 border border-red-700/60 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-gray-600 focus:outline-none focus:border-red-500">
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button onclick="executeDecommissionInstall()" id="btnDecommissionApp" class="px-5 py-2.5 bg-red-700 hover:bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-700/50 transition flex items-center gap-2 whitespace-nowrap">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  <span id="btnDecommissionText">Clean Up Install & Decommission App</span>
+                </button>
+                <button type="button" onclick="verifyRollbackState()" id="btnVerifyRollback" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-xl text-xs font-semibold transition flex items-center gap-2 whitespace-nowrap">
+                  <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Verify Rollback State</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Rollback Audit Results Container -->
+            <div id="rollbackAuditContainer" class="hidden mt-4 p-4 bg-gray-950/90 border border-gray-800 rounded-xl space-y-3">
+              <div class="flex items-center justify-between border-b border-gray-800 pb-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-base" id="rollbackOverallIcon">✨</span>
+                  <h4 class="text-xs font-bold text-white uppercase tracking-wider" id="rollbackAuditHeader">Rollback Completeness Audit</h4>
+                  <span id="rollbackStatusPill" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-950 text-emerald-300 border border-emerald-800">100% Clean</span>
+                </div>
+                <button type="button" onclick="document.getElementById('rollbackAuditContainer').classList.add('hidden')" class="text-gray-400 hover:text-white text-xs">&times; Dismiss</button>
+              </div>
+              <div id="rollbackChecklistItems" class="space-y-2 text-xs">
+                <!-- Dynamically populated checklist items -->
+              </div>
             </div>
           </div>
         </div>
@@ -2485,6 +2617,9 @@
           if (candidateUsers.length > 0) {
             inputUsers.value = candidateUsers.join(', ');
           }
+        }
+        if (typeof refreshDecommissionPreview === 'function') {
+          refreshDecommissionPreview();
         }
       }
     }
@@ -5690,6 +5825,347 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           <span id="btnClearTargetText">Clean Selected Target Assets (${selectedNames.length} Categories)</span>
         `;
         updateMaintenanceButtonState();
+      }
+    }
+
+    async function refreshDecommissionPreview() {
+      const env = getActiveEnvParams();
+      const targetProject = (env.tgtProjectId || '').trim();
+
+      const promptEl = document.getElementById('decomTargetProjPrompt');
+      if (promptEl) promptEl.textContent = targetProject || 'target-project';
+
+      const saBadge = document.getElementById('decomSaBadge');
+      const orgBadge = document.getElementById('decomOrgPoliciesBadge');
+      const filesBadge = document.getElementById('decomFilesBadge');
+      const reportsBadge = document.getElementById('decomReportsBadge');
+
+      if (saBadge) saBadge.textContent = 'Detected SA: scanning...';
+      if (orgBadge) orgBadge.textContent = 'Status: checking tracked policies...';
+      if (filesBadge) filesBadge.textContent = 'Detected files: checking...';
+
+      try {
+        const res = await fetch(`/api/maintenance/status?targetProject=${encodeURIComponent(targetProject)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // 1. Service Account
+        if (saBadge) {
+          if (data.serviceAccount?.email) {
+            saBadge.innerHTML = `<span class="text-emerald-400 font-semibold font-mono">${escapeHtml(data.serviceAccount.email)}</span>`;
+          } else if (targetProject) {
+            saBadge.innerHTML = `<span class="text-amber-400 font-semibold font-mono">gemini-dwd-migrator@${escapeHtml(targetProject)}.iam.gserviceaccount.com (auto)</span>`;
+          } else {
+            saBadge.innerHTML = `<span class="text-gray-400">Specify target project to resolve SA</span>`;
+          }
+        }
+
+        // 2. Org policies
+        if (orgBadge) {
+          const tracked = data.trackedState?.overriddenOrgPolicies || [];
+          const matchingPolicies = targetProject 
+            ? tracked.filter(p => p.projectId === targetProject)
+            : tracked;
+          if (matchingPolicies.length > 0) {
+            const names = matchingPolicies.map(p => p.constraint.replace(/^constraints\//, '')).join(', ');
+            orgBadge.innerHTML = `<span class="text-amber-300 font-semibold">${matchingPolicies.length} tracked override(s): ${escapeHtml(names)}</span>`;
+          } else {
+            orgBadge.innerHTML = `<span class="text-emerald-400 font-semibold">Standard: iam.disableServiceAccountKeyCreation will be reset</span>`;
+          }
+        }
+
+        // 3. Local credential & JSON files
+        if (filesBadge) {
+          const files = data.detectedLocalFiles || [];
+          if (files.length > 0) {
+            filesBadge.innerHTML = `<span class="text-purple-300 font-semibold">${files.length} file(s) found:</span> <span class="text-gray-400">${escapeHtml(files.join(', '))}</span>`;
+          } else {
+            filesBadge.innerHTML = `<span class="text-emerald-400 font-semibold">No credential files detected on disk</span>`;
+          }
+        }
+
+        // 4. Reports & Artifacts
+        if (reportsBadge) {
+          reportsBadge.innerHTML = `<span class="text-cyan-300 font-semibold">${data.reportCount || 0} reports, ${data.artifactCount || 0} artifacts, ${data.handoverCount || 0} handover bundles</span>`;
+        }
+      } catch (err) {
+        if (saBadge) saBadge.textContent = 'Error querying SA status';
+        if (orgBadge) orgBadge.textContent = 'Error querying org policies';
+        if (filesBadge) filesBadge.textContent = 'Error querying local files';
+      }
+    }
+
+    async function executeDecommissionInstall() {
+      const env = getActiveEnvParams();
+      const targetProject = (env.tgtProjectId || '').trim();
+      const confirmInput = document.getElementById('decomConfirmInput');
+      const typedConfirmation = (confirmInput?.value || '').trim();
+
+      if (!targetProject) {
+        alert('Please configure a valid Target Project ID before decommissioning.');
+        return;
+      }
+
+      if (!typedConfirmation) {
+        alert(`⚠️ Action Required: Please type the Target Project ID ("${targetProject}") in the confirmation box below to verify teardown.`);
+        if (confirmInput) confirmInput.focus();
+        return;
+      }
+
+      if (typedConfirmation !== targetProject && typedConfirmation !== 'DECOMMISSION') {
+        alert(`❌ Confirmation failed: You typed "${typedConfirmation}", but expected "${targetProject}". Operation aborted for safety.`);
+        if (confirmInput) confirmInput.focus();
+        return;
+      }
+
+      const wipeTargetAssets = document.getElementById('chkDecomWipeTargetAssets')?.checked ?? false;
+
+      const proceed = confirm(
+        `🚨 WARNING: COMPLETE APPLICATION DECOMMISSION & UNINSTALL 🚨\n\n` +
+        `You are about to permanently decommission the Gemini Enterprise Migration App for project "${targetProject}".\n\n` +
+        `This will:\n` +
+        `• Reset overridden Organization Policies (iam.disableServiceAccountKeyCreation) back to inherit\n` +
+        `• Strip GCP IAM roles and delete the migrator Service Account\n` +
+        `• Permanently invalidate Google Workspace Domain-Wide Delegation (DWD)\n` +
+        `• Delete all local credential & config files (*.json, *.pem, *.jwt)\n` +
+        `• Purge local report and artifact folders (reports/, exports/, user_handover_reports/)\n` +
+        (wipeTargetAssets ? `• Wipe migrated Discovery Engine assets in target project\n` : '') +
+        `\nAre you absolutely sure you want to proceed? This cannot be undone.`
+      );
+
+      if (!proceed) return;
+
+      const btn = document.getElementById('btnDecommissionApp');
+      const textEl = document.getElementById('btnDecommissionText');
+      if (btn) btn.disabled = true;
+      if (btn) btn.classList.add('opacity-75', 'cursor-not-allowed');
+      if (textEl) textEl.textContent = 'Decommissioning App & Restoring State...';
+
+      try {
+        const payload = {
+          targetProjectId: targetProject,
+          confirmProjectId: typedConfirmation,
+          wipeTargetAssets: wipeTargetAssets,
+          ...env.payload
+        };
+
+        const res = await fetch('/api/maintenance/decommission', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.message || `HTTP ${res.status}`);
+        }
+
+        const lines = [
+          `🎉 Decommission & State Restoration Complete!`,
+          ``,
+          `Cloud & Local Environment Restored to Baseline:`,
+          `• Target Project: ${data.targetProject}`,
+          `• Service Account: ${data.serviceAccountDeleted?.deleted ? `Deleted (${data.serviceAccountDeleted.email})` : 'Skipped/None'}`,
+          `• Workspace DWD: Inactive & Permanently Invalidated in Google Cloud IAM`,
+          `• IAM Roles Removed: ${(data.iamBindingsRemoved || []).map(r => r.role).join(', ') || 'None'}`,
+          `• Org Policies Reset: ${(data.orgPoliciesReset || []).map(p => p.constraint).join(', ') || 'iam.disableServiceAccountKeyCreation'}`,
+          `• Local Files Deleted: ${(data.localFilesDeleted || []).join(', ') || 'None'}`,
+          `• Folders Purged: ${(data.foldersPurged || []).join(', ') || 'reports, exports, handover'}`
+        ];
+
+        if (data.targetAssetsWiped) {
+          if (data.targetAssetsWiped.error) {
+            lines.push(`• Target Assets Wipe Notice: ${data.targetAssetsWiped.error}`);
+          } else {
+            lines.push(`• Target Discovery Assets Wiped: ${data.targetAssetsWiped.deletedNotebooks || 0} notebooks, ${data.targetAssetsWiped.deletedAgents || 0} agents, ${data.targetAssetsWiped.deletedSessions || 0} chats, ${data.targetAssetsWiped.deletedMemories || 0} memories`);
+          }
+        }
+
+        lines.push(``);
+        if (data.dwdActionRequired) {
+          lines.push(`📋 Google Workspace Admin Action Required:`);
+          lines.push(`Google Workspace does not offer an API to automatically remove Domain-Wide Delegation authorizations.`);
+          lines.push(`The GCP Service Account is permanently deleted (preventing all token generation).`);
+          lines.push(`To remove the client row from your Workspace Admin Console:`);
+          lines.push(`1. Open https://admin.google.com/ac/owl/domainwidedelegation`);
+          if (data.clientId || data.dwdActionRequired?.clientId) {
+            lines.push(`2. Locate Client ID: ${data.clientId || data.dwdActionRequired?.clientId}`);
+          }
+          lines.push(`3. Select "Delete"`);
+          lines.push(``);
+        }
+        lines.push(`Your workstation and target Google Cloud project are now clean and back in their pre-setup baseline.`);
+
+        alert(lines.join('\n'));
+
+        if (confirmInput) confirmInput.value = '';
+        await refreshDecommissionPreview();
+        await verifyRollbackState(true, data.clientId || data.dwdActionRequired?.clientId || '');
+
+        // Refresh other UI views if applicable
+        if (typeof loadHistoricalRuns === 'function') loadHistoricalRuns();
+        if (typeof loadUserReports === 'function') loadUserReports();
+        if (typeof loadTargetSessions === 'function') loadTargetSessions();
+        if (typeof loadTargetMemories === 'function') loadTargetMemories();
+        if (typeof loadDiscoveredArtifacts === 'function') loadDiscoveredArtifacts();
+      } catch (err) {
+        alert(`❌ Decommissioning failed: ${err.message}`);
+      } finally {
+        if (btn) btn.disabled = false;
+        if (btn) btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        if (textEl) textEl.textContent = 'Clean Up Install & Decommission App';
+      }
+    }
+
+    async function verifyRollbackState(silent = false, explicitClientId = '') {
+      const env = getActiveEnvParams();
+      let targetProject = (env.tgtProjectId || '').trim();
+      if (!targetProject) {
+        const decomInput = document.getElementById('decomConfirmInput');
+        if (decomInput && decomInput.value && decomInput.value.trim() && decomInput.value.trim() !== 'DECOMMISSION') {
+          targetProject = decomInput.value.trim();
+        }
+      }
+      if (!targetProject) {
+        const maintInput = document.getElementById('maintenanceConfirmInput');
+        if (maintInput && maintInput.value && maintInput.value.trim()) {
+          targetProject = maintInput.value.trim();
+        }
+      }
+
+      const container = document.getElementById('rollbackAuditContainer');
+      const listEl = document.getElementById('rollbackChecklistItems');
+      const statusPill = document.getElementById('rollbackStatusPill');
+      const headerEl = document.getElementById('rollbackAuditHeader');
+      const overallIcon = document.getElementById('rollbackOverallIcon');
+      const btn = document.getElementById('btnVerifyRollback');
+
+      if (!targetProject) {
+        if (!silent) alert('Please enter or select a Target Project ID before validating rollback.');
+        return;
+      }
+
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-70', 'cursor-not-allowed');
+      }
+
+      if (container) container.classList.remove('hidden');
+      if (listEl) {
+        listEl.innerHTML = `
+          <div class="flex items-center gap-2 py-4 text-gray-400">
+            <svg class="animate-spin w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+            <span>Auditing Google Cloud IAM, Organization Policies, and local disk on ${escapeHtml(targetProject)}...</span>
+          </div>
+        `;
+      }
+
+      try {
+        let fetchUrl = `/api/maintenance/verify-rollback?targetProject=${encodeURIComponent(targetProject)}`;
+        if (explicitClientId) {
+          fetchUrl += `&clientId=${encodeURIComponent(explicitClientId)}`;
+        }
+        const res = await fetch(fetchUrl);
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (parseErr) {
+          throw new Error(
+            res.status === 404
+              ? 'Endpoint /api/maintenance/verify-rollback not found. Please restart the backend server to load the latest routes.'
+              : `Server returned non-JSON response (HTTP ${res.status}): ${text.slice(0, 100)}`
+          );
+        }
+        if (!res.ok || data.error) throw new Error(data.message || `HTTP ${res.status}`);
+
+        if (headerEl) {
+          headerEl.textContent = `Rollback Verification Audit (${data.passedChecks}/${data.totalChecks} Checks Passed)`;
+        }
+
+        if (statusPill) {
+          if (data.isFullyRolledBack) {
+            statusPill.className = 'px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-950 text-emerald-300 border border-emerald-800';
+            statusPill.textContent = '100% Clean Baseline';
+            if (overallIcon) overallIcon.textContent = '✨';
+          } else {
+            statusPill.className = 'px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-950 text-amber-300 border border-amber-800';
+            statusPill.textContent = `${data.failedChecks} Item(s) Need Attention`;
+            if (overallIcon) overallIcon.textContent = '⚠️';
+          }
+        }
+
+        if (listEl) {
+          const itemsHtml = data.checks.map(chk => {
+            const icon = chk.passed ? '✅' : '❌';
+            const badgeClass = chk.passed 
+              ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60' 
+              : 'bg-red-950/60 text-red-300 border border-red-800/60';
+            return `
+              <div class="p-2.5 rounded-lg bg-gray-900 border ${chk.passed ? 'border-gray-800' : 'border-red-900/50'} flex items-start gap-2.5">
+                <span class="text-sm mt-0.5">${icon}</span>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-semibold text-white truncate">${escapeHtml(chk.name)}</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold whitespace-nowrap ${badgeClass}">${escapeHtml(chk.statusText)}</span>
+                  </div>
+                  <p class="text-[11px] text-gray-400 mt-0.5">${escapeHtml(chk.details)}</p>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          let dwdBanner = '';
+          if (data.dwdActionRequired) {
+            const cid = data.dwdActionRequired.clientId || data.clientId;
+            dwdBanner = `
+              <div class="mt-3 p-3.5 rounded-xl bg-amber-950/40 border border-amber-700/50 text-amber-200">
+                <div class="flex items-start gap-2.5">
+                  <span class="text-base mt-0.5">ℹ️</span>
+                  <div class="flex-1 min-w-0 text-xs leading-relaxed">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-bold text-amber-100 text-xs">Manual Workspace Step: Remove DWD Client Entry</span>
+                      <a href="${data.dwdActionRequired.consoleUrl}" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-400 hover:text-blue-300 underline font-semibold flex items-center gap-1">
+                        <span>Open Admin Console</span>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                      </a>
+                    </div>
+                    <p class="text-[11px] text-gray-300 mt-1">
+                      Google Workspace enforces an enterprise security boundary and <strong>does not provide a public API</strong> to delete Domain-Wide Delegation authorizations. While the underlying GCP Service Account is permanently deleted (cryptographically disabling all token generation), the static authorization record remains in your Workspace table.
+                    </p>
+                    <div class="mt-2 p-2 rounded bg-black/60 border border-gray-800 font-mono text-[11px] text-gray-200 space-y-1">
+                      <div>1. In Google Admin Console, go to: <strong class="text-amber-300">Security &gt; API Controls &gt; Domain-wide Delegation</strong></div>
+                      <div>2. Locate Client ID: <span class="text-emerald-400 font-bold select-all">${escapeHtml(cid || 'test / migrator')}</span></div>
+                      <div>3. Hover or click the client and click <span class="text-red-400 font-bold">Delete</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `;
+          }
+
+          listEl.innerHTML = itemsHtml + dwdBanner;
+        }
+
+        if (!silent) {
+          const passMsg = data.isFullyRolledBack 
+            ? `🎉 Rollback 100% Verified!\n\nAll ${data.totalChecks} checks passed. Your workstation and GCP project "${targetProject}" are completely restored to their pre-setup baseline state.`
+            : `⚠️ Rollback Verification Notice:\n\n${data.failedChecks} of ${data.totalChecks} checks did not pass. Check the Rollback Completeness Audit panel for details.`;
+          alert(passMsg);
+        }
+      } catch (err) {
+        if (listEl) {
+          listEl.innerHTML = `<div class="p-3 text-red-400 bg-red-950/40 border border-red-900/60 rounded-lg">Rollback verification error: ${escapeHtml(err.message)}</div>`;
+        }
+        if (!silent) alert(`Rollback verification failed: ${err.message}`);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-70', 'cursor-not-allowed');
+        }
       }
     }
 

@@ -102,6 +102,23 @@ app.use('/api', sandboxRouter);
 app.use('/api', maintenanceRouter);
 app.use('/api', configAuditRouter);
 
+// Fallback 404 handler for all unmatched /api routes to prevent HTML error pages
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    error: 'NotFound',
+    message: `API endpoint not found: ${req.method} ${req.originalUrl}`
+  });
+});
+
+// Global JSON error handler for /api routes
+app.use('/api', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error(`API Error: ${err.message || err}`);
+  res.status(err.status || 500).json({
+    error: err.name || 'InternalServerError',
+    message: err.message || 'An unexpected error occurred processing your request.'
+  });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   const server = app.listen(port, host, () => {
     logger.info(`Gemini Enterprise Admin Migration Console running locally on http://${host}:${port}`);
