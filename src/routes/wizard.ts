@@ -474,6 +474,223 @@ spec:
   }
 });
 
+// Wizard: Auto-Discover Organizations, Workforce Pools, Providers, and Identities
+wizardRouter.get('/wizard/wif-discovery', async (_req, res) => {
+  try {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    // 1. Caller identity
+    let callerEmail = '';
+    try {
+      const { stdout } = await execFileAsync('gcloud', ['config', 'get-value', 'account']);
+      callerEmail = stdout.trim();
+    } catch {}
+
+    // 2. Organization Discovery
+    let organization: { id: string; displayName: string; name: string } | null = null;
+    try {
+      const { stdout: orgsOut } = await execFileAsync('gcloud', ['organizations', 'list', '--format=json']);
+      const orgs = JSON.parse(orgsOut || '[]');
+      if (orgs.length > 0) {
+        organization = {
+          id: orgs[0].name?.replace('organizations/', '') || '',
+          displayName: orgs[0].displayName || '',
+          name: orgs[0].name || ''
+        };
+      }
+    } catch (orgErr: any) {
+      logger.debug(`Could not list organizations: ${orgErr.message}`);
+    }
+
+    // 3. Workforce Pools Discovery
+    const pools: Array<{ id: string; name: string; displayName?: string; description?: string; state?: string }> = [];
+    if (organization?.id) {
+      try {
+        const { stdout: poolsOut } = await execFileAsync('gcloud', [
+          'iam',
+          'workforce-pools',
+          'list',
+          `--organization=${organization.id}`,
+          '--location=global',
+          '--format=json'
+        ]);
+        const parsedPools = JSON.parse(poolsOut || '[]');
+        for (const p of parsedPools) {
+          const poolId = p.name?.split('/').pop() || '';
+          pools.push({
+            id: poolId,
+            name: p.name,
+            displayName: p.displayName,
+            description: p.description,
+            state: p.state
+          });
+        }
+      } catch (poolErr: any) {
+        logger.debug(`Could not list workforce pools: ${poolErr.message}`);
+      }
+    }
+
+    // 4. Detected Local Service Account
+    let detectedSaEmail = '';
+    let detectedClientId = '';
+    if (fs.existsSync('./sa-dwd-key.json')) {
+      try {
+        const saData = JSON.parse(fs.readFileSync('./sa-dwd-key.json', 'utf-8'));
+        detectedSaEmail = saData.client_email || '';
+        detectedClientId = saData.client_id || '';
+      } catch {}
+    }
+
+    // 5. Local WIF Key Status
+    const hasKey = fs.existsSync('wif-migration-key.pem');
+    const hasJwks = fs.existsSync('wif-migration-jwks.json');
+
+    // 6. Current workforce-identity-config.json status
+    let currentConfig: any = null;
+    if (fs.existsSync('workforce-identity-config.json')) {
+      try {
+        currentConfig = JSON.parse(fs.readFileSync('workforce-identity-config.json', 'utf-8'));
+      } catch {}
+    }
+
+    return res.status(200).json({
+      success: true,
+      organization,
+      pools,
+      callerEmail,
+      detectedSaEmail,
+      detectedClientId,
+      localKeys: {
+        hasKey,
+        hasJwks,
+        ready: hasKey && hasJwks
+      },
+      currentConfig
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'WifDiscoveryFailed', message: err.message });
+  }
+});
+
+// Wizard: 1-Click Generate WIF Migration RSA Keys & Public JWKS
+wizardRouter.post('/wizard/generate-wif-keys', async (_req, res) => {
+  try {
+    const crypto = await import('crypto');
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+
+    const jwk: any = crypto.createPublicKey(publicKey).export({ format: 'jwk' });
+    jwk.kid = 'wif-migration-key-1';
+    jwk.use = 'sig';
+    jwk.alg = 'RS256';
+
+    const jwks = { keys: [jwk] };
+
+    fs.writeFileSync('wif-migration-key.pem', privateKey, { mode: 0o600 });
+    fs.writeFileSync('wif-migration-jwks.json', JSON.stringify(jwks, null, 2), 'utf-8');
+
+    logger.info('Generated WIF Migration RSA Key Pair & JWKS');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Successfully generated wif-migration-key.pem and wif-migration-jwks.json.',
+      hasKey: true,
+      hasJwks: true
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'KeyGenFailed', message: err.message });
+  }
+});
+
+// Wizard: 1-Click Register Migration Provider in GCP Workforce Pool
+wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
+  try {
+    const {
+      workforcePoolId = 'wdufrin-okta',
+      providerId = 'migration-dwd-provider',
+      location = 'global',
+      issuerUri = 'https://gemini-migration.internal'
+    } = req.body || {};
+
+    const safePool = workforcePoolId.replace(/[^a-zA-Z0-9\-_]/g, '');
+    const safeProvider = providerId.replace(/[^a-zA-Z0-9\-_]/g, '');
+    const safeLoc = location.replace(/[^a-zA-Z0-9\-_]/g, '');
+
+    // Ensure JWKS exists
+    if (!fs.existsSync('wif-migration-jwks.json') || !fs.existsSync('wif-migration-key.pem')) {
+      const crypto = await import('crypto');
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+      });
+      const jwk: any = crypto.createPublicKey(publicKey).export({ format: 'jwk' });
+      jwk.kid = 'wif-migration-key-1';
+      jwk.use = 'sig';
+      jwk.alg = 'RS256';
+      fs.writeFileSync('wif-migration-key.pem', privateKey, { mode: 0o600 });
+      fs.writeFileSync('wif-migration-jwks.json', JSON.stringify({ keys: [jwk] }, null, 2), 'utf-8');
+    }
+
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    // Check if provider already exists
+    try {
+      const { stdout: provDescribe } = await execFileAsync('gcloud', [
+        'iam',
+        'workforce-pools',
+        'providers',
+        'describe',
+        safeProvider,
+        `--workforce-pool=${safePool}`,
+        `--location=${safeLoc}`,
+        '--format=json'
+      ]);
+      const existing = JSON.parse(provDescribe || '{}');
+      if (existing.name) {
+        return res.status(200).json({
+          success: true,
+          alreadyExists: true,
+          message: `Provider "${safeProvider}" is already registered in pool "${safePool}".`,
+          provider: existing
+        });
+      }
+    } catch {}
+
+    const { stdout } = await execFileAsync('gcloud', [
+      'iam',
+      'workforce-pools',
+      'providers',
+      'create-oidc',
+      safeProvider,
+      `--workforce-pool=${safePool}`,
+      `--location=${safeLoc}`,
+      '--display-name=Migration DWD Impersonator',
+      `--issuer-uri=${issuerUri}`,
+      '--client-id=gemini-migration-tool',
+      '--web-sso-response-type=id-token',
+      '--web-sso-assertion-claims-behavior=only-id-token-claims',
+      '--jwk-json-path=./wif-migration-jwks.json',
+      '--attribute-mapping=google.subject=assertion.sub,attribute.user_email=assertion.email'
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully created workforce pool provider "${safeProvider}" in pool "${safePool}".`,
+      stdout
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'RegisterProviderFailed', message: err.message });
+  }
+});
+
 // Wizard: Verify Workforce Identity Pool & Providers in GCP
 wizardRouter.post('/wizard/verify-wif-pool', async (req, res) => {
   try {

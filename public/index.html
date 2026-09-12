@@ -1935,24 +1935,45 @@
           <div id="wiz-panel-wif" class="space-y-6 hidden">
             <!-- Step 1: Select IdP Provider -->
             <div class="bg-gray-950 border border-gray-800 rounded-xl p-5 space-y-4">
-              <div class="flex items-center gap-2.5">
-                <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                <h3 class="text-sm font-bold text-white">Select External Identity Provider (IdP)</h3>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                  <h3 class="text-sm font-bold text-white">Select External Identity Provider (IdP) Architecture</h3>
+                </div>
+                <span class="text-xs text-purple-400 font-mono font-semibold">Workforce Identity Federation</span>
               </div>
 
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <button type="button" onclick="selectWifPreset('ENTRA')" id="wif-preset-ENTRA" class="wif-preset-btn p-3 rounded-xl border border-purple-500/50 bg-purple-950/20 text-left transition hover:border-purple-400">
-                  <div class="text-xs font-bold text-white">Microsoft Entra ID</div>
-                  <div class="text-[11px] text-gray-400 mt-0.5">Azure Active Directory OIDC</div>
+              <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <button type="button" onclick="selectWifPreset('DWD_MIGRATOR')" id="wif-preset-DWD_MIGRATOR" class="wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition hover:border-purple-400">
+                  <div class="flex items-center justify-between">
+                    <div class="text-xs font-bold text-white">Migration DWD</div>
+                    <span class="text-[9px] bg-purple-500/30 text-purple-300 font-bold px-1.5 py-0.5 rounded">RECOMMENDED</span>
+                  </div>
+                  <div class="text-[11px] text-gray-400 mt-0.5">Universal Keyless User Backup/Restore</div>
                 </button>
                 <button type="button" onclick="selectWifPreset('OKTA')" id="wif-preset-OKTA" class="wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400">
                   <div class="text-xs font-bold text-white">Okta Universal Directory</div>
                   <div class="text-[11px] text-gray-400 mt-0.5">Okta Cloud OIDC / SAML</div>
                 </button>
+                <button type="button" onclick="selectWifPreset('ENTRA')" id="wif-preset-ENTRA" class="wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400">
+                  <div class="text-xs font-bold text-white">Microsoft Entra ID</div>
+                  <div class="text-[11px] text-gray-400 mt-0.5">Azure Active Directory OIDC</div>
+                </button>
                 <button type="button" onclick="selectWifPreset('PING')" id="wif-preset-PING" class="wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400">
                   <div class="text-xs font-bold text-white">Ping Identity</div>
                   <div class="text-[11px] text-gray-400 mt-0.5">PingOne / PingFederate</div>
                 </button>
+              </div>
+
+              <!-- Architectural Note on Migration vs Interactive SSO -->
+              <div class="p-3 bg-purple-950/30 border border-purple-500/30 rounded-xl text-[11px] text-gray-300 flex items-start gap-2.5">
+                <span class="text-sm">💡</span>
+                <div class="space-y-1">
+                  <div class="font-semibold text-purple-300">Why Headless Migration uses "Migration DWD" instead of existing Okta SSO providers:</div>
+                  <p class="leading-relaxed">
+                    Existing Okta providers (like <code class="text-purple-300">oidc-okta</code> or <code class="text-purple-300">okta-saml</code>) require each individual end-user to enter their password & 2FA in a browser. For an automated migration tool to back up and restore <em>all</em> users' private notebooks, datastores, and custom agents headlessly, GCP Workforce Identity Federation uses a federated <strong>Domain-Wide Delegation provider</strong> (<code class="text-emerald-400">migration-dwd-provider</code>) with local RSA keys.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -1963,10 +1984,18 @@
                   <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">2</span>
                   <h3 class="text-sm font-bold text-white">Workforce Identity Pool Parameters</h3>
                 </div>
-                <button type="button" onclick="verifyWifPoolInGcp(this)" id="btnVerifyWifPool" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
-                  <span>🔍</span> Verify Live in GCP
-                </button>
+                <div class="flex items-center gap-2">
+                  <button type="button" onclick="autoDiscoverWif(this)" id="btnAutoDiscoverWif" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+                    <span>⚡</span> Auto-Discover Environment
+                  </button>
+                  <button type="button" onclick="verifyWifPoolInGcp(this)" id="btnVerifyWifPool" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+                    <span>🔍</span> Verify Live in GCP
+                  </button>
+                </div>
               </div>
+
+              <!-- Dynamic Environment Discovery Status Card -->
+              <div id="wifDiscoveryBanner" class="hidden p-4 rounded-xl border border-purple-500/40 bg-purple-950/20 text-xs space-y-3"></div>
 
               <!-- Dynamic Live Verification Status Banner -->
               <div id="wifPoolStatusCard" class="hidden p-4 rounded-xl border text-xs space-y-2"></div>
@@ -1994,12 +2023,19 @@
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div>
-                  <label class="block text-gray-400 mb-1 font-medium">GCP Organization ID (numeric)</label>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-gray-400 font-medium">GCP Organization ID (numeric)</label>
+                    <span id="badgeWifOrgFound" class="hidden text-[10px] text-emerald-400 font-mono"></span>
+                  </div>
                   <input type="text" id="wizWifOrgId" value="" placeholder="e.g. 123456789012" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
                 </div>
                 <div>
-                  <label class="block text-gray-400 mb-1 font-medium">Workforce Pool ID</label>
-                  <input type="text" id="wizWifPoolId" value="" placeholder="e.g. enterprise-workforce-pool" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-gray-400 font-medium">Workforce Pool ID</label>
+                    <span id="badgeWifPoolCount" class="hidden text-[10px] text-purple-400 font-mono"></span>
+                  </div>
+                  <input type="text" id="wizWifPoolId" list="dlWifPools" value="" placeholder="e.g. enterprise-workforce-pool" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                  <datalist id="dlWifPools"></datalist>
                 </div>
                 <div>
                   <label class="block text-gray-400 mb-1 font-medium">Provider ID</label>
@@ -2629,6 +2665,7 @@
         updateWifScript();
         generateAndSaveWifConfig(false);
         loadDwdKeyInfo();
+        autoDiscoverWif();
       } else if (tabId === 'maintenance') {
         const env = getActiveEnvParams();
         const projectEl = document.getElementById('maintTargetProject');
@@ -3097,6 +3134,7 @@
         panelAudit.classList.add('hidden');
         updateWifScript();
         generateAndSaveWifConfig(false);
+        autoDiscoverWif();
       } else if (type === 'audit') {
         btnAudit.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white shadow-sm transition flex items-center gap-1';
         btnDwd.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition';
@@ -3814,25 +3852,36 @@ gcloud iam service-accounts keys create sa-dwd-key.json \\
       const provId = document.getElementById('wizWifProviderId')?.value?.trim() || 'migration-dwd-provider';
       const issuer = document.getElementById('wizWifIssuer')?.value?.trim() || 'https://gemini-migration.internal';
 
-      const script = `# 1. Create the Workforce Identity Pool
+      const script = `# 1. Create Workforce Pool (Skip if "${poolId}" already exists)
+gcloud iam workforce-pools describe "${poolId}" --location="global" >/dev/null 2>&1 || \\
 gcloud iam workforce-pools create "${poolId}" \\
     --organization="${orgId}" \\
     --location="global" \\
     --display-name="Enterprise Workforce IdP Pool"
 
-# 2. Add External IdP OIDC Provider (For User Single Sign-On)
-gcloud iam workforce-pools providers create-oidc "ge-entraid" \\
-    --workforce-pool="${poolId}" \\
-    --location="global" \\
-    --display-name="Enterprise IdP Provider" \\
-    --issuer-uri="https://login.microsoftonline.com/<TENANT_ID>/v2.0" \\
-    --attribute-mapping="google.subject=assertion.sub,attribute.email=assertion.preferred_username,attribute.display_name=assertion.name,attribute.groups=assertion.groups"
+# 2. Generate Migration RSA Signing Key & Public JWKS (if not already present)
+test -f ./wif-migration-jwks.json || node -e "
+const crypto = require('crypto');
+const fs = require('fs');
+const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+});
+const jwk = crypto.createPublicKey(publicKey).export({ format: 'jwk' });
+jwk.kid = 'wif-migration-key-1';
+jwk.use = 'sig';
+jwk.alg = 'RS256';
+fs.writeFileSync('wif-migration-key.pem', privateKey, { mode: 0o600 });
+fs.writeFileSync('wif-migration-jwks.json', JSON.stringify({ keys: [jwk] }, null, 2));
+console.log('Generated wif-migration-key.pem and wif-migration-jwks.json');
+"
 
-# 3. Add Migration DWD Impersonation Provider (Pattern 1: Enables 1-to-1 User Asset Backup & Restore)
+# 3. Register Migration Impersonation Provider in Workforce Pool "${poolId}"
 gcloud iam workforce-pools providers create-oidc "${provId}" \\
     --workforce-pool="${poolId}" \\
     --location="global" \\
-    --display-name="Migration DWD Provider" \\
+    --display-name="Migration DWD Impersonator" \\
     --issuer-uri="${issuer}" \\
     --client-id="gemini-migration-tool" \\
     --web-sso-response-type="id-token" \\
@@ -3842,6 +3891,290 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
       const el = document.getElementById('wizWifScript');
       if (el) el.textContent = script;
+    }
+
+    let discoveredWifData = null;
+
+    async function autoDiscoverWif(btnEl = null) {
+      let origText = '';
+      if (btnEl) {
+        origText = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="animate-spin">⚡</span> Scanning...';
+      }
+
+      const banner = document.getElementById('wifDiscoveryBanner');
+      if (banner) {
+        banner.classList.remove('hidden');
+        banner.className = 'p-4 rounded-xl border border-purple-500/40 bg-purple-950/30 text-xs space-y-3';
+        banner.innerHTML = '<div class="flex items-center gap-2 text-purple-300"><span>⏳</span><span>Auto-discovering Google Cloud organization, workforce pools, and local credentials...</span></div>';
+      }
+
+      try {
+        const res = await fetch('/api/wizard/wif-discovery');
+        const data = await res.json();
+        discoveredWifData = data;
+
+        if (!data.success) {
+          if (banner) {
+            banner.className = 'p-4 rounded-xl border border-amber-500/40 bg-amber-950/20 text-xs text-amber-200';
+            banner.innerHTML = `<span>⚠️ Discovery warning: ${escapeHtml(data.message || 'Could not query GCP SDK')}</span>`;
+          }
+          return;
+        }
+
+        // 1. Auto-fill Organization ID
+        const orgInput = document.getElementById('wizWifOrgId');
+        if (orgInput && data.organization?.id) {
+          if (!orgInput.value.trim() || orgInput.value.includes('<') || orgInput.value === '123456789012') {
+            orgInput.value = data.organization.id;
+          }
+          const badgeOrg = document.getElementById('badgeWifOrgFound');
+          if (badgeOrg) {
+            badgeOrg.textContent = `Found: ${data.organization.displayName || data.organization.id}`;
+            badgeOrg.classList.remove('hidden');
+          }
+        }
+
+        // 2. Populate Datalist with Discovered Pools
+        const dlPools = document.getElementById('dlWifPools');
+        if (dlPools && Array.isArray(data.pools)) {
+          dlPools.innerHTML = data.pools.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.displayName ? `${p.displayName} (${p.id})` : p.id)}</option>`).join('');
+          const badgeCount = document.getElementById('badgeWifPoolCount');
+          if (badgeCount) {
+            badgeCount.textContent = `${data.pools.length} pool${data.pools.length === 1 ? '' : 's'} found`;
+            badgeCount.classList.remove('hidden');
+          }
+        }
+
+        // 3. Auto-select Pool ID if empty or default
+        const poolInput = document.getElementById('wizWifPoolId');
+        if (poolInput && Array.isArray(data.pools) && data.pools.length > 0) {
+          if (!poolInput.value.trim() || poolInput.value.includes('<') || poolInput.value === 'enterprise-workforce-pool') {
+            const preferred = data.pools.find(p => p.id.includes('okta')) || data.pools[0];
+            poolInput.value = preferred.id;
+          }
+        }
+
+        // 4. Auto-fill Service Account Email
+        const saInput = document.getElementById('wizWifSaEmail');
+        if (saInput && data.detectedSaEmail) {
+          if (!saInput.value.trim() || saInput.value.includes('<')) {
+            saInput.value = data.detectedSaEmail;
+          }
+        }
+
+        // 5. Auto-fill Caller Email for test inputs
+        if (data.callerEmail) {
+          const testEmailWif = document.getElementById('wizWifTestEmail');
+          if (testEmailWif && (!testEmailWif.value.trim() || testEmailWif.value.includes('<'))) {
+            testEmailWif.value = data.callerEmail;
+          }
+          const testEmailDwd = document.getElementById('wizTestEmail');
+          if (testEmailDwd && (!testEmailDwd.value.trim() || testEmailDwd.value.includes('<'))) {
+            testEmailDwd.value = data.callerEmail;
+          }
+        }
+
+        // 6. Render Rich Discovery Status Banner
+        if (banner) {
+          renderWifDiscoveryBanner(data);
+        }
+
+        // 7. Update scripts, config and verify live in GCP
+        updateWifScript();
+        generateAndSaveWifConfig(false);
+        verifyWifPoolInGcp();
+
+      } catch (err) {
+        if (banner) {
+          banner.className = 'p-4 rounded-xl border border-red-500/40 bg-red-950/20 text-xs text-red-300';
+          banner.innerHTML = `<span>❌ Discovery error: ${escapeHtml(err.message)}</span>`;
+        }
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = origText;
+        }
+      }
+    }
+
+    function renderWifDiscoveryBanner(data) {
+      const banner = document.getElementById('wifDiscoveryBanner');
+      if (!banner) return;
+
+      const currentPool = document.getElementById('wizWifPoolId')?.value?.trim() || '';
+      const currentProv = document.getElementById('wizWifProviderId')?.value?.trim() || 'migration-dwd-provider';
+
+      // Discovered Pool badges
+      const poolPills = (data.pools || []).map(p => {
+        const isSelected = p.id === currentPool;
+        return `
+          <button type="button" onclick="selectDiscoveredPool('${escapeHtml(p.id)}')" 
+            class="px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition border flex items-center gap-1.5 ${
+              isSelected 
+                ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-600/30' 
+                : 'bg-gray-900/80 text-gray-300 border-gray-700 hover:border-purple-500/60 hover:text-white'
+            }">
+            <span>${isSelected ? '●' : '○'}</span>
+            <span>${escapeHtml(p.id)}</span>
+            <span class="text-[9px] px-1 py-0.2 rounded bg-black/40 text-emerald-300">${escapeHtml(p.state || 'ACTIVE')}</span>
+          </button>
+        `;
+      }).join('');
+
+      // Local keys status
+      const keysReady = data.localKeys?.ready;
+      const keyStatusBadge = keysReady
+        ? `<div class="flex items-center justify-between p-2 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-[11px]">
+             <div class="flex items-center gap-2">
+               <span>✅</span>
+               <span><strong>Local RSA Keys & JWKS:</strong> Present on disk (<code>wif-migration-key.pem</code> & <code>wif-migration-jwks.json</code>)</span>
+             </div>
+             <span class="text-[10px] font-mono bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded border border-emerald-700">RS256 2048-bit</span>
+           </div>`
+        : `<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/50 text-amber-200 text-[11px]">
+             <div class="flex items-center gap-2">
+               <span>⚠️</span>
+               <span><strong>Local RSA Key Pair:</strong> Missing (Required for signing migration STS tokens)</span>
+             </div>
+             <button type="button" onclick="generateLocalWifKeys(this)" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-[10px] font-bold shrink-0 transition shadow">
+               🔑 Generate RSA Keys & JWKS
+             </button>
+           </div>`;
+
+      // 1-Click Provider Register Action
+      const registerAction = `
+        <button type="button" onclick="registerMigrationProviderInGcp(this)" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-semibold transition flex items-center gap-1 shrink-0 shadow">
+          <span>🚀</span> 1-Click Register "${escapeHtml(currentProv)}" in GCP
+        </button>
+      `;
+
+      banner.className = 'p-4 rounded-xl border border-purple-500/40 bg-purple-950/20 text-xs space-y-3';
+      banner.innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-500/20 pb-2.5">
+          <div class="flex items-center gap-2">
+            <span class="text-base">⚡</span>
+            <div>
+              <div class="font-bold text-white text-xs">Auto-Discovered Google Cloud Environment</div>
+              <div class="text-[11px] text-gray-400">Authenticated Caller: <code class="text-purple-300 font-mono">${escapeHtml(data.callerEmail || 'Unknown')}</code></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-900/50 text-purple-300 border border-purple-600/40">
+              Org: ${escapeHtml(data.organization?.id || 'None')} (${escapeHtml(data.organization?.displayName || 'Unknown')})
+            </span>
+            <button type="button" onclick="autoDiscoverWif(this)" class="text-purple-400 hover:text-purple-200 text-[11px] flex items-center gap-1 font-medium transition" title="Re-scan Cloud Shell environment">
+              <span>🔄</span> Re-scan
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-[11px] font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+            <span>Discovered Workforce Pools in Organization:</span>
+            <span class="text-[10px] text-gray-400">Click a pool to select</span>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            ${poolPills || '<span class="text-gray-400 italic text-[11px]">No workforce pools found in organization. Run terminal command below to create one.</span>'}
+          </div>
+        </div>
+
+        ${keyStatusBadge}
+
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-purple-500/20 text-[11px] text-gray-300">
+          <div class="flex items-center gap-1.5">
+            <span>Target Provider:</span>
+            <code class="text-white font-mono font-semibold bg-gray-900 px-1.5 py-0.5 rounded border border-gray-800">${escapeHtml(currentProv)}</code>
+            <span>in pool</span>
+            <code class="text-purple-300 font-mono font-semibold bg-gray-900 px-1.5 py-0.5 rounded border border-gray-800">${escapeHtml(currentPool || 'None')}</code>
+          </div>
+          ${registerAction}
+        </div>
+      `;
+    }
+
+    function selectDiscoveredPool(poolId) {
+      const el = document.getElementById('wizWifPoolId');
+      if (el) el.value = poolId;
+      if (discoveredWifData) {
+        renderWifDiscoveryBanner(discoveredWifData);
+      }
+      updateWifScript();
+      generateAndSaveWifConfig(false);
+      verifyWifPoolInGcp();
+    }
+
+    async function generateLocalWifKeys(btnEl = null) {
+      let orig = '';
+      if (btnEl) {
+        orig = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="animate-spin">⏳</span> Generating...';
+      }
+
+      try {
+        const res = await fetch('/api/wizard/generate-wif-keys', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          alert('Successfully generated wif-migration-key.pem and wif-migration-jwks.json!');
+          await autoDiscoverWif();
+        } else {
+          alert('Failed to generate keys: ' + (data.message || data.error));
+        }
+      } catch (err) {
+        alert('Error generating keys: ' + err.message);
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = orig;
+        }
+      }
+    }
+
+    async function registerMigrationProviderInGcp(btnEl = null) {
+      const poolId = document.getElementById('wizWifPoolId')?.value?.trim();
+      const provId = document.getElementById('wizWifProviderId')?.value?.trim() || 'migration-dwd-provider';
+      const issuer = document.getElementById('wizWifIssuer')?.value?.trim() || 'https://gemini-migration.internal';
+
+      if (!poolId) {
+        alert('Please select or enter a Workforce Pool ID first.');
+        return;
+      }
+
+      let orig = '';
+      if (btnEl) {
+        orig = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<span class="animate-spin">⏳</span> Registering in GCP...';
+      }
+
+      try {
+        const res = await fetch('/api/wizard/register-migration-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workforcePoolId: poolId,
+            providerId: provId,
+            issuerUri: issuer,
+            location: 'global'
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`Successfully registered provider "${provId}" in workforce pool "${poolId}"!`);
+          await autoDiscoverWif();
+        } else {
+          alert('Failed to register provider in GCP: ' + (data.message || data.error));
+        }
+      } catch (err) {
+        alert('Error registering provider in GCP: ' + err.message);
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = orig;
+        }
+      }
     }
 
     async function verifyWifPoolInGcp(btnEl = null) {
@@ -3939,12 +4272,15 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         selectedBtn.className = 'wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition';
       }
 
-      if (type === 'ENTRA') {
+      if (type === 'DWD_MIGRATOR') {
         document.getElementById('wizWifProviderId').value = 'migration-dwd-provider';
         document.getElementById('wizWifIssuer').value = 'https://gemini-migration.internal';
       } else if (type === 'OKTA') {
-        document.getElementById('wizWifProviderId').value = 'okta-provider';
-        document.getElementById('wizWifIssuer').value = 'https://<TENANT>.okta.com';
+        document.getElementById('wizWifProviderId').value = 'oidc-okta';
+        document.getElementById('wizWifIssuer').value = 'https://googlenasc.okta.com';
+      } else if (type === 'ENTRA') {
+        document.getElementById('wizWifProviderId').value = 'entra-id-provider';
+        document.getElementById('wizWifIssuer').value = 'https://login.microsoftonline.com/<TENANT_ID>/v2.0';
       } else if (type === 'PING') {
         document.getElementById('wizWifProviderId').value = 'ping-provider';
         document.getElementById('wizWifIssuer').value = 'https://auth.pingone.com/<ENV_ID>/as';
@@ -4164,11 +4500,26 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
                </div>`
             : '';
 
+          let fixBtnHtml = '';
+          if (data.message && (data.message.includes('The issuer in ID Token') || data.message.includes('invalid_target') || data.message.includes('invalid_grant'))) {
+            fixBtnHtml = `
+              <div class="mt-2.5 p-3 rounded-lg bg-indigo-950/60 border border-indigo-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div class="text-[11px] text-indigo-200">
+                  <span>💡 <strong>Quick Fix:</strong> Existing Okta providers (<code>oidc-okta</code>, <code>okta-saml</code>) require interactive login and reject headless tokens. Switch to <code>migration-dwd-provider</code> to enable automated user impersonation.</span>
+                </div>
+                <button type="button" onclick="fixWifToMigrationDwd()" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold shrink-0 shadow transition flex items-center gap-1.5">
+                  <span>⚡</span> Switch & Re-Test
+                </button>
+              </div>
+            `;
+          }
+
           resultBox.innerHTML = `
             <div class="flex items-center gap-2 font-bold text-red-400">
               <span>❌ WiF STS Token Exchange Failed</span>
             </div>
             <p class="text-gray-300 text-xs">${escapeHtml(data.message)}</p>
+            ${fixBtnHtml}
             ${remediationHtml}
           `;
         }
@@ -4177,6 +4528,17 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300';
         resultBox.innerHTML = `<span>Error: ${err.message}</span>`;
       }
+    }
+
+    async function fixWifToMigrationDwd() {
+      const provEl = document.getElementById('wizWifProviderId');
+      const issuerEl = document.getElementById('wizWifIssuer');
+      if (provEl) provEl.value = 'migration-dwd-provider';
+      if (issuerEl) issuerEl.value = 'https://gemini-migration.internal';
+      updateWifScript();
+      await generateAndSaveWifConfig(true);
+      await verifyWifPoolInGcp();
+      await testWifConnection();
     }
 
     function copyToClipboard(elementId, btnId) {
@@ -8223,6 +8585,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       updateAppQuickLinks();
       onIdpSelectionChanged();
       loadDwdKeyInfo();
+      autoDiscoverWif();
 
       const params = new URLSearchParams(window.location.search);
       const targetTab = params.get('tab');
