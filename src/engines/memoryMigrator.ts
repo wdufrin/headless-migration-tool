@@ -96,6 +96,9 @@ export class MemoryMigrator {
 
     // 2. Scan per-user for impersonated/DWD domains
     for (const email of users) {
+      if (callerEmail && email.toLowerCase() === callerEmail.toLowerCase()) {
+        continue;
+      }
       try {
         const userMemories = await this.client.listMemories(env, email);
         for (const m of userMemories) {
@@ -116,7 +119,7 @@ export class MemoryMigrator {
           }
         }
       } catch (err: any) {
-        logger.debug(`Could not list memories for user ${email}: ${err.message}`);
+        logger.warn(`Could not list memories for user ${email} (${err.message}). Skipping user-scoped memory sync to prevent data bleed.`);
       }
     }
 

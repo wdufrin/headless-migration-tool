@@ -16,13 +16,16 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
+import { promisify } from 'util';
 import nodemailer from 'nodemailer';
 import JSZip from 'jszip';
 import { MigrationReport, MigrationItemResult } from '../types/migration.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { NotebookLmArtifactFormatter } from '../services/notebookLmArtifactFormatter.js';
 import { logger } from '../utils/logger.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface UserHandoverData {
   userEmail: string;
@@ -743,9 +746,10 @@ ${data.memories.length > 0 ? `
           const optVideoPath = path.join(outputDir, file.filename);
           try {
             logger.info(`Compressing oversized video "${file.filename}" (${(file.size / 1048576).toFixed(1)} MB) with ffmpeg...`);
-            execSync(
-              `ffmpeg -y -i "${file.path}" -vf "scale=-2:720" -c:v libx264 -crf 28 -preset fast -c:a aac -b:a 64k "${optVideoPath}"`,
-              { stdio: 'ignore', timeout: 180000 }
+            await execFileAsync(
+              'ffmpeg',
+              ['-y', '-i', file.path, '-vf', 'scale=-2:720', '-c:v', 'libx264', '-crf', '28', '-preset', 'fast', '-c:a', 'aac', '-b:a', '64k', optVideoPath],
+              { timeout: 180000 }
             );
             if (fs.existsSync(optVideoPath)) {
               const optStat = fs.statSync(optVideoPath);
@@ -787,7 +791,7 @@ ${data.memories.length > 0 ? `
             if (imgBuf.length > 150 * 1024) {
               fs.writeFileSync(tmpIn, imgBuf);
               try {
-                execSync(`convert "${tmpIn}" -quality 82 "jpg:${tmpOut}"`, { stdio: 'ignore' });
+                await execFileAsync('convert', [tmpIn, '-quality', '82', `jpg:${tmpOut}`], { timeout: 30000 });
                 if (fs.existsSync(tmpOut)) {
                   const optImgBuf = fs.readFileSync(tmpOut);
                   if (optImgBuf.length < imgBuf.length) {
@@ -826,7 +830,7 @@ ${data.memories.length > 0 ? `
         if (file.size > 400 * 1024) {
           const optImgPath = path.join(outputDir, file.filename);
           try {
-            execSync(`convert "${file.path}" -quality 82 "${optImgPath}"`, { stdio: 'ignore' });
+            await execFileAsync('convert', [file.path, '-quality', '82', optImgPath], { timeout: 30000 });
             if (fs.existsSync(optImgPath)) {
               const optStat = fs.statSync(optImgPath);
               if (optStat.size < file.size) {
@@ -1276,6 +1280,10 @@ ${data.memories.length > 0 ? `
     const userFolder = path.join(this.baseDir, sanitizedEmail);
     const localHtmlPath = path.join(userFolder, 'MIGRATION_CHECKLIST.html');
 
+    // Default to zipped attachments unless explicitly disabled
+    const isZipEnabled = options.zipAttachments !== false;
+    const shouldOptimize = options.optimizeMedia ?? isZipEnabled;
+
     // 1. Collect all candidate attachments from notebook_artifacts
     const nbArtFolder = path.join(userFolder, 'notebook_artifacts');
     const allFiles: Array<{ filename: string; path: string; size: number }> = [];
@@ -1340,8 +1348,12 @@ ${data.memories.length > 0 ? `
               !f.endsWith('MIGRATION_CHECKLIST.html'))
           ) {
             // Gmail API hard limit is 25 MB per MIME message.
-            // A file > 14.5 MB raw base64 encodes to > 19.3 MB, exceeding safe single-message limits.
-            if (stat.size > 14.5 * 1024 * 1024) {
+            // When zip attachments are enabled, files up to 35 MB can be included as candidates because
+            // document and media compression often achieves 60-80% size reduction.
+            // Final archive sizes are evaluated post-compression.
+            // When zip is disabled, files > 14.5 MB raw base64 encode to > 19.3 MB, exceeding safe limits.
+            const sizeLimit = isZipEnabled ? 35 * 1024 * 1024 : 14.5 * 1024 * 1024;
+            if (stat.size > sizeLimit) {
               oversizedFiles.push({ filename: f, size: stat.size, path: fullPath });
             } else {
               allFiles.push({ filename: f, path: fullPath, size: stat.size });
@@ -1372,9 +1384,6 @@ ${data.memories.length > 0 ? `
 
     allFiles.sort((a, b) => getPriority(a.filename) - getPriority(b.filename));
 
-    // Default to zipped attachments unless explicitly disabled
-    const isZipEnabled = options.zipAttachments !== false;
-    const shouldOptimize = options.optimizeMedia ?? isZipEnabled;
     let candidateFiles = [...allFiles];
 
     const hasOptimizer = UserReportGenerator.isImageMagickAvailable() || UserReportGenerator.isFfmpegAvailable();
@@ -1448,8 +1457,15 @@ ${data.memories.length > 0 ? `
             const partZipName = `NotebookLM_Artifacts_Part${bIdx + 1}.zip`;
             const partZipPath = path.join(userFolder, partZipName);
             const partZipSize = await this.createZipArchive(partZipPath, partFiles);
-            buckets.push([{ filename: partZipName, path: partZipPath, size: partZipSize }]);
-            zipContentsMap.set(partZipName, partFiles);
+            if (partZipSize <= MAX_PART_SIZE) {
+              buckets.push([{ filename: partZipName, path: partZipPath, size: partZipSize }]);
+              zipContentsMap.set(partZipName, partFiles);
+            } else {
+              logger.warn(`Partitioned zip archive ${partZipName} (${(partZipSize / 1048576).toFixed(2)} MB) exceeds single email limit (${(MAX_PART_SIZE / 1048576).toFixed(1)} MB). Designating contents for local handover retrieval.`);
+              for (const pf of partFiles) {
+                oversizedFiles.push({ filename: pf.filename, size: pf.size, path: pf.path });
+              }
+            }
           }
         }
       }
@@ -1746,22 +1762,44 @@ ${data.memories.length > 0 ? `
           postBody.threadId = sharedThreadId;
         }
 
-        const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(postBody)
-        });
+        const maxAttempts = 5;
+        let attempt = 0;
+        let gmailRes: any = null;
+        let gmailData: any = null;
 
-        const gmailData: any = await gmailRes.json();
+        while (attempt < maxAttempts) {
+          attempt++;
+          gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(postBody)
+          });
 
-        if (!gmailRes.ok) {
-          const errDetail = gmailData?.error?.message || gmailRes.statusText;
+          gmailData = await gmailRes.json();
+
+          if (gmailRes.status === 429 || (gmailRes.status >= 500 && gmailRes.status <= 504)) {
+            const retryAfterHeader = gmailRes.headers?.get ? gmailRes.headers.get('retry-after') : null;
+            let delayMs = Math.min(1000 * Math.pow(2, attempt), 30000);
+            if (retryAfterHeader) {
+              const seconds = parseInt(retryAfterHeader, 10);
+              if (!isNaN(seconds)) delayMs = Math.min(seconds * 1000, 120000);
+            }
+            logger.warn(`Gmail API returned HTTP ${gmailRes.status} (attempt ${attempt}/${maxAttempts}). Retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
+
+          break;
+        }
+
+        if (!gmailRes || !gmailRes.ok) {
+          const errDetail = gmailData?.error?.message || gmailRes?.statusText || 'Unknown error';
           logger.error(`Gmail API send failed for Part ${partNum}/${totalParts}: ${errDetail}`);
 
-          if (errDetail.toLowerCase().includes('insufficient authentication scopes') || gmailRes.status === 403) {
+          if (errDetail.toLowerCase().includes('insufficient authentication scopes') || (gmailRes && gmailRes.status === 403)) {
             throw new Error(
               `Gmail API returned HTTP 403: Request had insufficient authentication scopes. ` +
               `The active OAuth token lacks 'https://www.googleapis.com/auth/gmail.send'.\n\n` +
@@ -1773,7 +1811,7 @@ ${data.memories.length > 0 ? `
             );
           }
 
-          throw new Error(`Gmail API returned HTTP ${gmailRes.status}: ${errDetail}. (MIME bundle is saved locally at: ${partEmlPath})`);
+          throw new Error(`Gmail API returned HTTP ${gmailRes ? gmailRes.status : 'Error'}: ${errDetail}. (MIME bundle is saved locally at: ${partEmlPath})`);
         }
 
         if (partIndex === 0) {

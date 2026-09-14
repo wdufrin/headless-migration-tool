@@ -27,12 +27,14 @@ import { AppStateTracker } from '../services/appStateTracker.js';
 export const maintenanceRouter = express.Router();
 
 export interface TargetAssetCleanupParams {
+  sourceProject?: string;
   targetProject: string;
   targetEngine?: string;
   targetLocation?: string;
   targetCollection?: string;
   cleanNotebooks?: boolean;
   cleanAgents?: boolean;
+  forceAllAgents?: boolean;
   cleanSessions?: boolean;
   cleanMemories?: boolean;
   cleanArtifacts?: boolean;
@@ -80,6 +82,21 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
   const cleanArtifacts = params.cleanArtifacts !== false;
   const cleanReports = params.cleanReports !== false;
 
+  // Cross-project collision guard: never allow targetProject to wipe sourceProject
+  let effectiveSourceProject = params.sourceProject || process.env.SOURCE_PROJECT_ID;
+  if (!effectiveSourceProject) {
+    try {
+      const configPath = path.resolve(process.cwd(), 'migration-config.json');
+      if (fs.existsSync(configPath)) {
+        const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        effectiveSourceProject = cfg.source?.projectId;
+      }
+    } catch {}
+  }
+  if (effectiveSourceProject && targetProject && targetProject.trim().toLowerCase() === effectiveSourceProject.trim().toLowerCase()) {
+    throw new Error(`Target project "${targetProject}" matches source project "${effectiveSourceProject}". Destructive asset cleanup is blocked to prevent accidental deletion of production source assets.`);
+  }
+
   logger.info(`Starting maintenance cleanup for project ${targetProject} (Engine: ${targetEngine}, Region: ${targetLocation}) [Notebooks: ${cleanNotebooks}, Agents: ${cleanAgents}, Sessions: ${cleanSessions}, Memories: ${cleanMemories}, Artifacts: ${cleanArtifacts}, Reports: ${cleanReports}]...`);
 
   // Determine candidate user identities to clean in target
@@ -101,7 +118,8 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
   if (process.env.ADMIN_EMAIL) rawUsers.push(process.env.ADMIN_EMAIL);
   if (process.env.DEFAULT_USER_EMAIL) rawUsers.push(process.env.DEFAULT_USER_EMAIL);
 
-  // Auto-discover user identities from existing reports, handover bundles, and config before wiping
+  // Auto-discover user identities and migrated agent IDs from existing reports, handover bundles, and config before wiping
+  const knownMigratedAgentIds = new Set<string>();
   try {
     const handoverDir = path.resolve(process.cwd(), 'user_handover_reports');
     if (fs.existsSync(handoverDir)) {
@@ -126,6 +144,14 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
             for (const n of reportData.notebooks) {
               if (n?.owner) rawUsers.push(n.owner);
               if (n?.targetOwner) rawUsers.push(n.targetOwner);
+            }
+          }
+          if (Array.isArray(reportData.results)) {
+            for (const item of reportData.results) {
+              if (item.type === 'AGENT' || item.type === 'SKILL') {
+                if (item.targetId) knownMigratedAgentIds.add(item.targetId);
+                if (item.id) knownMigratedAgentIds.add(item.id);
+              }
             }
           }
         } catch {}
@@ -208,10 +234,20 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
         assistantId: 'default_assistant'
       });
       for (const ag of agents) {
-        const agentId = ag.name.split('/').pop();
-        if (agentId !== 'deep_research') {
+        const agentId = ag.name.split('/').pop() || '';
+        if (agentId === 'deep_research') continue;
+
+        const isMigrated = 
+          params.forceAllAgents === true ||
+          knownMigratedAgentIds.has(agentId) ||
+          (ag.displayName && (ag.displayName.includes('[Migrated]') || ag.displayName.includes('[Replace]'))) ||
+          (ag.description && (ag.description.includes('Migrated by Gemini Enterprise Tool') || ag.description.includes('[Migrated]')));
+
+        if (isMigrated) {
           await client.deleteAgent(ag.name, targetLocation, targetProject);
           deletedAgents++;
+        } else {
+          logger.info(`Skipping non-migrated agent "${ag.displayName}" (${agentId}) during maintenance cleanup (pass forceAllAgents=true to override).`);
         }
       }
     } catch (e: any) {
@@ -382,13 +418,18 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
       });
     }
 
+    const sourceProject = req.body?.srcProjectId || req.body?.source?.projectId || req.body?.sourceProjectId || process.env.SOURCE_PROJECT_ID;
+    const forceAllAgents = req.body?.forceAllAgents === true || req.body?.forceAllAgents === 'true';
+
     const result = await executeTargetAssetCleanup({
+      sourceProject,
       targetProject,
       targetEngine,
       targetLocation,
       targetCollection,
       cleanNotebooks: req.body?.cleanNotebooks !== false && req.body?.cleanNotebooks !== 'false',
       cleanAgents: req.body?.cleanAgents !== false && req.body?.cleanAgents !== 'false',
+      forceAllAgents,
       cleanSessions: req.body?.cleanSessions !== false && req.body?.cleanSessions !== 'false',
       cleanMemories: req.body?.cleanMemories !== false && req.body?.cleanMemories !== 'false',
       cleanArtifacts: req.body?.cleanArtifacts !== false && req.body?.cleanArtifacts !== 'false',
@@ -888,18 +929,23 @@ export async function validateRollbackCompleteness(options: {
         statusText: 'Reset to Inherited Default',
         details: `No project-level override exists on project "${safeProject}". Inherits from organization default.`
       });
-    } else {
-      const trackedState = AppStateTracker.loadState();
-      const hasTracked = trackedState.overriddenOrgPolicies.some(p => p.projectId === safeProject);
+    } else if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied') || msg.includes('403')) {
       checks.push({
         id: 'org_policy_key_creation',
         name: 'Organization Policy Override (iam.disableServiceAccountKeyCreation)',
         category: 'CLOUD',
-        passed: !hasTracked,
-        statusText: hasTracked ? 'Override Tracked in State' : 'Inherited Baseline',
-        details: hasTracked 
-          ? `Tracked state records active override on "${safeProject}".`
-          : `Verified no active overrides recorded in application state.`
+        passed: false,
+        statusText: 'Verification Inconclusive (Permission Denied)',
+        details: `Could not verify organization policy on project "${safeProject}": Insufficient permissions to describe org policies.`
+      });
+    } else {
+      checks.push({
+        id: 'org_policy_key_creation',
+        name: 'Organization Policy Override (iam.disableServiceAccountKeyCreation)',
+        category: 'CLOUD',
+        passed: false,
+        statusText: 'Verification Failed',
+        details: `Error querying organization policy on "${safeProject}": ${msg}`
       });
     }
   }
@@ -935,16 +981,26 @@ export async function validateRollbackCompleteness(options: {
         statusText: 'Permanently Deleted',
         details: `Service account ${saEmail} does not exist in Google Cloud IAM.`
       });
-    } else {
+    } else if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied') || msg.includes('403')) {
+      saDeleted = false;
       checks.push({
         id: 'service_account_existence',
         name: `Service Account Existence (${saEmail})`,
         category: 'CLOUD',
-        passed: true,
-        statusText: 'Verified via State',
-        details: `Service account verified deleted or inaccessible in project "${safeProject}".`
+        passed: false,
+        statusText: 'Verification Inconclusive (Permission Denied)',
+        details: `Could not verify existence of ${saEmail}: Insufficient permissions.`
       });
-      saDeleted = true;
+    } else {
+      saDeleted = false;
+      checks.push({
+        id: 'service_account_existence',
+        name: `Service Account Existence (${saEmail})`,
+        category: 'CLOUD',
+        passed: false,
+        statusText: 'Verification Failed',
+        details: `Could not verify service account status: ${msg}`
+      });
     }
   }
 
@@ -985,14 +1041,26 @@ export async function validateRollbackCompleteness(options: {
       });
     }
   } catch (err: any) {
-    checks.push({
-      id: 'iam_role_bindings',
-      name: `Target Project IAM Policy Bindings`,
-      category: 'CLOUD',
-      passed: true,
-      statusText: 'Zero Role Bindings',
-      details: `Project IAM bindings verified clear of migrator privileges.`
-    });
+    const msg = err.message || String(err);
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied') || msg.includes('403')) {
+      checks.push({
+        id: 'iam_role_bindings',
+        name: `Target Project IAM Policy Bindings`,
+        category: 'CLOUD',
+        passed: false,
+        statusText: 'Verification Inconclusive (Permission Denied)',
+        details: `Could not fetch IAM policy bindings for project "${safeProject}": Insufficient permissions to run projects.getIamPolicy.`
+      });
+    } else {
+      checks.push({
+        id: 'iam_role_bindings',
+        name: `Target Project IAM Policy Bindings`,
+        category: 'CLOUD',
+        passed: false,
+        statusText: 'Verification Failed',
+        details: `Error inspecting project IAM policy: ${msg}`
+      });
+    }
   }
 
   // 4. Cloud / Workspace Check: Domain-Wide Delegation (DWD)

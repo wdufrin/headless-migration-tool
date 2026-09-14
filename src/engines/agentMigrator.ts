@@ -52,6 +52,24 @@ export function mapIamMember(member: string, identityMapping: Record<string, str
 }
 
 /**
+ * Normalizes an IAM principal string for comparison against user filter criteria.
+ */
+function normalizePrincipal(principal: string): string {
+  let clean = principal
+    .replace(/^.*\/subject\//i, '')
+    .replace(/^.*_subject_/i, '')
+    .replace(/^principal(set)?:\/\/.*?\//i, '')
+    .replace(/^user:/i, '')
+    .replace(/^serviceAccount:/i, '')
+    .toLowerCase()
+    .trim();
+  try {
+    clean = decodeURIComponent(clean);
+  } catch {}
+  return clean;
+}
+
+/**
  * Evaluates if an agent matches the specified user filter by inspecting IAM policy bindings or creator metadata.
  */
 export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boolean {
@@ -61,57 +79,47 @@ export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boo
 
   const lowerFilters = userFilter.map(u => u.toLowerCase().trim().replace(/^user:/i, ''));
 
-  // 1. Resolve Primary Owner (prioritize agentOwner IAM binding, then agent.owner)
-  let primaryOwner = agent.owner;
+  // 1. Collect all explicit owner candidates (agentOwner IAM binding + agent.owner)
+  const ownerCandidates: string[] = [];
   if (agent.iamPolicy?.bindings) {
     const ownerBinding = agent.iamPolicy.bindings.find(b => b.role === 'roles/discoveryengine.agentOwner');
     if (ownerBinding && ownerBinding.members && ownerBinding.members.length > 0) {
-      primaryOwner = ownerBinding.members[0];
+      ownerCandidates.push(...ownerBinding.members);
     }
   }
-
-  if (primaryOwner) {
-    let cleanOwner = primaryOwner
-      .replace(/^.*\/subject\//i, '')
-      .replace(/^.*_subject_/i, '')
-      .replace(/^principal(set)?:\/\/.*?\//i, '')
-      .replace(/^user:/i, '')
-      .replace(/^serviceAccount:/i, '')
-      .toLowerCase().trim();
-
-    try {
-      cleanOwner = decodeURIComponent(cleanOwner);
-    } catch {}
-
-    return lowerFilters.some(filter => {
-      if (filter.startsWith('*@')) {
-        const domain = filter.substring(2);
-        return cleanOwner.endsWith(`@${domain}`);
-      }
-      return cleanOwner === filter;
-    });
+  if (agent.owner) {
+    ownerCandidates.push(agent.owner);
   }
 
-  // 2. Only if no explicit owner role is attached, check other IAM members
-  const members: string[] = [];
+  if (ownerCandidates.length > 0) {
+    const matchesOwner = ownerCandidates.some(member => {
+      const cleanOwner = normalizePrincipal(member);
+      return lowerFilters.some(filter => {
+        if (filter.startsWith('*@')) {
+          const domain = filter.substring(2);
+          return cleanOwner.endsWith(`@${domain}`);
+        }
+        return cleanOwner === filter;
+      });
+    });
+    if (matchesOwner) return true;
+  }
+
+  // 2. If no explicit owner matches, check all other IAM members across any binding
+  const otherMembers: string[] = [];
   if (agent.iamPolicy?.bindings) {
     for (const b of agent.iamPolicy.bindings) {
-      members.push(...b.members);
+      if (b.role !== 'roles/discoveryengine.agentOwner' && b.members) {
+        otherMembers.push(...b.members);
+      }
     }
   }
-  if (members.length === 0) {
+  if (otherMembers.length === 0) {
     return false;
   }
 
-  return members.some(member => {
-    let cleanMember = member
-      .replace(/^.*\/subject\//i, '')
-      .replace(/^.*_subject_/i, '')
-      .replace(/^principal(set)?:\/\/.*?\//i, '')
-      .replace(/^user:/i, '')
-      .replace(/^serviceAccount:/i, '')
-      .toLowerCase().trim();
-    
+  return otherMembers.some(member => {
+    const cleanMember = normalizePrincipal(member);
     return lowerFilters.some(filter => {
       if (filter.startsWith('*@')) {
         const domain = filter.substring(2);
@@ -152,13 +160,8 @@ export class AgentMigrator {
       .filter(Boolean)
       .map(text => ({ text }));
 
-    let restoredDisplayName = sourceAgent.displayName;
-    if (sourceAgent.dataStoreConnections && sourceAgent.dataStoreConnections.length > 0) {
-      restoredDisplayName = `[Replace] ${restoredDisplayName}`;
-    }
-
     const payload: any = {
-      displayName: restoredDisplayName,
+      displayName: sourceAgent.displayName,
       description: sourceAgent.description || '',
       icon: sourceAgent.icon || undefined,
       starterPrompts: finalStarterPrompts.length > 0 ? finalStarterPrompts : undefined,
@@ -320,26 +323,23 @@ export class AgentMigrator {
             defStr = defStr.split(`/collections/${oldCol}/`).join(`/collections/${newCol}/`);
           });
 
-        // DataStore remapping inside definitions
+        // DataStore remapping inside definitions: target URI paths and structured datastore properties
         Object.entries(datastoreMapping)
           .sort((a, b) => b[0].length - a[0].length)
           .forEach(([oldDs, newDs]) => {
             if (newDs) {
               defStr = defStr.split(`/dataStores/${oldDs}`).join(`/dataStores/${newDs}`);
-              defStr = defStr.split(oldDs).join(newDs);
+              defStr = defStr.replace(new RegExp(`"dataStore":\\s*"${oldDs}"`, 'g'), `"dataStore": "${newDs}"`);
+              defStr = defStr.replace(new RegExp(`"dataStoreId":\\s*"${oldDs}"`, 'g'), `"dataStoreId": "${newDs}"`);
             }
           });
 
-        // Common DataStore Connector pattern rewriting (e.g. outlook-federated -> outlook-cmek)
-        defStr = defStr.replace(/outlook-federated_[0-9]+/g, 'outlook-cmek_1787169366114');
-        defStr = defStr.replace(/onedrive-federated_[0-9]+/g, 'onedrive-cmek_1787169277352');
-        defStr = defStr.replace(/entraid-connector_[0-9]+/g, 'entraid-cmek_1787169408505');
-
-        // Tool remapping inside definition schemas
+        // Tool remapping inside definition schemas: target URI paths and structured tool properties
         Object.entries(toolMapping).forEach(([oldTool, newTool]) => {
           if (newTool) {
             defStr = defStr.split(`/tools/${oldTool}`).join(`/tools/${newTool}`);
-            defStr = defStr.split(oldTool).join(newTool);
+            defStr = defStr.replace(new RegExp(`"tool":\\s*"${oldTool}"`, 'g'), `"tool": "${newTool}"`);
+            defStr = defStr.replace(new RegExp(`"toolId":\\s*"${oldTool}"`, 'g'), `"toolId": "${newTool}"`);
           }
         });
 
@@ -598,9 +598,9 @@ export class AgentMigrator {
         result.targetId = newAgentId;
         logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
 
-        // 1. Replicate sharing configuration so the restored agent is visible in the UI
-        const effectiveSharing = agent.sharingConfig || { scope: 'ALL_USERS' };
-        if (options.preserveSharing !== false) {
+        // 1. Replicate sharing configuration if explicitly set; preserve private scope by default to protect employee data privacy
+        if (options.preserveSharing !== false && agent.sharingConfig?.scope) {
+          const effectiveSharing = agent.sharingConfig;
           try {
             await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, userOwner);
             logger.info(`Sharing configuration configured for agent "${result.displayName}" (Scope: ${effectiveSharing.scope})`);
@@ -612,6 +612,8 @@ export class AgentMigrator {
               logger.warn(`Could not set sharing config on agent "${result.displayName}": ${shareErr.message}`);
             }
           }
+        } else if (!agent.sharingConfig?.scope) {
+          logger.info(`Agent "${result.displayName}" has no public sharing scope; preserving private scope.`);
         }
 
         // 2. Replicate IAM policy ONLY if the agent is shared (Google rejects IAM on private agents)

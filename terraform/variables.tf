@@ -9,15 +9,15 @@ variable "project_id" {
 }
 
 variable "org_id" {
-  description = "The GCP Organization ID where the project will be created."
+  description = "The GCP Organization ID where the project will be created (leave empty if not using an organization)."
   type        = string
-  default     = "942977750288"
+  default     = ""
 }
 
 variable "billing_account_id" {
   description = "The Cloud Billing Account ID to link to the new project."
   type        = string
-  default     = "0124EE-048763-814962"
+  default     = ""
 }
 
 variable "location" {
@@ -47,29 +47,29 @@ variable "engine_display_name" {
 variable "dwd_sa_email" {
   description = "Service Account email used by the Gemini Enterprise Migration Tool for Domain-Wide Delegation."
   type        = string
-  default     = "gemini-dwd-migrator@ancient-sandbox-322523.iam.gserviceaccount.com"
+  default     = ""
 }
 
 variable "admin_user_email" {
   description = "Email of the administrative user to grant roles/owner."
   type        = string
-  default     = "admin@wdufrin.altostrat.com"
+  default     = ""
 }
 
 variable "editor_user_email" {
   description = "Email of the secondary user to grant roles/discoveryengine.editor."
   type        = string
-  default     = "bryankelly@wdufrin.altostrat.com"
+  default     = ""
 }
 
 variable "workforce_pool_id" {
   description = "Workforce Identity Pool ID for Microsoft Entra ID / IdP federation."
   type        = string
-  default     = "wdufrin-entra"
+  default     = ""
 }
 
 variable "entra_user_email" {
   description = "Specific external Entra ID user email to grant roles/discoveryengine.user."
   type        = string
-  default     = "wdufrin@wdufrin.onmicrosoft.com"
+  default     = ""
 }

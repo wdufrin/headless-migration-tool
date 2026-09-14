@@ -15,11 +15,15 @@
  * limitations under the License.
  */
 
+import fs from 'fs';
 import { Command } from 'commander';
 import { loadConfigFile, loadConfigFromEnv } from './config/loader.js';
 import { MigrationConfigSchema } from './config/configSchema.js';
 import { MigrationRunner } from './engines/migrationRunner.js';
 import { GcpAuthService } from './services/gcpAuth.js';
+import { DiscoveryEngineClient } from './services/discoveryEngine.js';
+import { AgentRegistryClient } from './services/agentRegistry.js';
+import { ConfigAuditEngine } from './engines/configAuditEngine.js';
 import { logger } from './utils/logger.js';
 
 const program = new Command();
@@ -41,7 +45,7 @@ program
   .option('--publish-agents', 'Publish migrated agents to the organization gallery/catalog')
   .option('--no-preserve-sharing', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED)')
   .option('--users <users...>', 'Filter migration to specific user email(s) or patterns (e.g. *@company.com)')
-  .option('--concurrency <number>', 'Maximum parallel worker concurrency (default: 10)', '10')
+  .option('--concurrency <number>', 'Maximum parallel worker concurrency (default: 10)')
   .option('--token <token>', 'Explicit Google OAuth Access Token (overrides ADC)')
   .option('--service-account-key <path>', 'Path to Google Cloud Service Account JSON key for Domain-Wide Delegation (DWD)')
   .option('--output-dir <dir>', 'Directory to output migration reports', './reports')
@@ -349,6 +353,85 @@ program
       console.log('======================================================\n');
     } catch (err: any) {
       console.error(`\n❌ Decommission failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('audit')
+  .description('Run configuration parity and readiness gap audit between source and target engines')
+  .option('-c, --config <path>', 'Path to migration config JSON file')
+  .option('--sync', 'Automatically synchronize missing engine settings to target')
+  .option('--format <format>', 'Output format: text, json, or markdown (default: text)', 'text')
+  .action(async (cmdOptions) => {
+    try {
+      let baseConfig: any = {};
+      if (cmdOptions.config) {
+        baseConfig = loadConfigFile(cmdOptions.config);
+      } else {
+        baseConfig = loadConfigFromEnv();
+      }
+
+      const validatedConfig = MigrationConfigSchema.parse(baseConfig);
+      const saKeyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
+      const authService = new GcpAuthService({ serviceAccountKeyPath: saKeyPath });
+      const client = new DiscoveryEngineClient(authService);
+      const registryClient = new AgentRegistryClient(authService);
+      const auditEngine = new ConfigAuditEngine(authService, client, registryClient);
+
+      const auditResult = await auditEngine.runAudit(validatedConfig);
+
+      if (cmdOptions.sync) {
+        console.log('\n[SYNC] Synchronizing engine settings to target...');
+        const syncResult = await auditEngine.syncEngineSettings(validatedConfig);
+        console.log(`[SYNC] ${syncResult.message}`);
+      }
+
+      if (cmdOptions.format === 'json') {
+        console.log(JSON.stringify(auditResult, null, 2));
+      } else if (cmdOptions.format === 'markdown') {
+        console.log(auditEngine.generateMarkdownReport(auditResult));
+      } else {
+        console.log('\n======================================================');
+        console.log('       GEMINI ENTERPRISE CONFIGURATION AUDIT         ');
+        console.log('======================================================');
+        console.log(`Source Project:       ${auditResult.sourceProject}`);
+        console.log(`Target Project:       ${auditResult.targetProject}`);
+        console.log(`Readiness Score:      ${auditResult.readinessScore}%`);
+        console.log(`Matching Settings:    ${auditResult.matchingCount} / ${auditResult.totalChecks}`);
+        console.log(`Missing in Target:    ${auditResult.missingInTargetCount}`);
+        console.log(`Differences:          ${auditResult.diffsCount}`);
+        console.log(`Warnings:             ${auditResult.warningsCount}`);
+        console.log('======================================================\n');
+
+        console.log('FINDINGS:');
+        for (const item of auditResult.items) {
+          const icon = item.status === 'MATCH' ? '✅' : item.status === 'WARNING' ? '⚠️' : '❌';
+          console.log(`  ${icon} [${item.status}] ${item.name}`);
+          if (item.sourceValue !== undefined || item.targetValue !== undefined) {
+            console.log(`      Source: ${JSON.stringify(item.sourceValue)} | Target: ${JSON.stringify(item.targetValue)}`);
+          }
+          if (item.details) {
+            console.log(`      ${item.details}`);
+          }
+        }
+
+        if (auditResult.remediationPlan.length > 0) {
+          console.log('\nREMEDIATION RECOMMENDATIONS:');
+          for (const plan of auditResult.remediationPlan) {
+            console.log(`  • ${plan.title}: ${plan.description}`);
+            if (plan.command) {
+              console.log(`    Command: ${plan.command}`);
+            }
+          }
+        }
+      }
+
+      if (auditResult.readinessScore < 50) {
+        process.exit(1);
+      }
+    } catch (err: any) {
+      console.error(`\n❌ Configuration audit failed: ${err.message}`);
       process.exit(1);
     }
   });

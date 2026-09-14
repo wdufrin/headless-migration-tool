@@ -20,7 +20,12 @@ import { getDynamicConfig } from './configHelper.js';
 
 export const sessionsRouter = express.Router();
 
-let cachedArtifacts: any[] | null = null;
+interface ArtifactCacheEntry {
+  artifacts: any[];
+  timestamp: number;
+}
+const projectArtifactCache = new Map<string, ArtifactCacheEntry>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Chat Sessions Endpoints
 sessionsRouter.get('/sessions/list-source', async (req, res) => {
@@ -99,10 +104,12 @@ sessionsRouter.get('/sessions/answer', async (req, res) => {
 sessionsRouter.get('/artifacts/list', async (req, res) => {
   try {
     const config = getDynamicConfig(req);
+    const cacheKey = `${config.source.projectId}:${config.source.appId}`;
     const { ArtifactExtractor } = await import('../engines/artifactExtractor.js');
     const extractor = new ArtifactExtractor(config);
-    cachedArtifacts = await extractor.scanAllArtifacts();
-    return res.status(200).json({ artifacts: cachedArtifacts, total: cachedArtifacts.length, sourceProject: config.source.projectId });
+    const artifacts = await extractor.scanAllArtifacts();
+    projectArtifactCache.set(cacheKey, { artifacts, timestamp: Date.now() });
+    return res.status(200).json({ artifacts, total: artifacts.length, sourceProject: config.source.projectId });
   } catch (err: any) {
     return res.status(500).json({ error: 'ArtifactScanFailed', message: err.message });
   }
@@ -123,13 +130,19 @@ sessionsRouter.post('/artifacts/export-all', async (req, res) => {
 sessionsRouter.get('/artifacts/render/:id', async (req, res) => {
   try {
     const artifactId = req.params.id;
-    if (!cachedArtifacts) {
-      const config = getDynamicConfig(req);
+    const config = getDynamicConfig(req);
+    const cacheKey = `${config.source.projectId}:${config.source.appId}`;
+    let entry = projectArtifactCache.get(cacheKey);
+
+    if (!entry || Date.now() - entry.timestamp > CACHE_TTL_MS) {
       const { ArtifactExtractor } = await import('../engines/artifactExtractor.js');
       const extractor = new ArtifactExtractor(config);
-      cachedArtifacts = await extractor.scanAllArtifacts();
+      const artifacts = await extractor.scanAllArtifacts();
+      entry = { artifacts, timestamp: Date.now() };
+      projectArtifactCache.set(cacheKey, entry);
     }
-    const art = cachedArtifacts.find(a => a.id === artifactId);
+
+    const art = entry.artifacts.find(a => a.id === artifactId);
     if (!art || !art.htmlContent) {
       return res.status(404).send('<h1>Artifact not found or has no HTML content</h1>');
     }

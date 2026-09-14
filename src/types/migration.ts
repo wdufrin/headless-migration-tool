@@ -62,7 +62,7 @@ export interface MigrationConfig {
 export interface MigrationItemResult {
   id: string;
   displayName: string;
-  type: 'AGENT' | 'NOTEBOOK' | 'SESSION' | 'MEMORY' | 'ARTIFACT' | 'SKILL';
+  type: 'AGENT' | 'NOTEBOOK' | 'SESSION' | 'MEMORY' | 'ARTIFACT' | 'SKILL' | 'SYSTEM';
   status: 'SUCCESS' | 'SKIPPED' | 'FAILED' | 'DRY_RUN' | 'ARCHIVED';
   originalOwner?: string;
   targetOwner?: string;
@@ -76,7 +76,7 @@ export interface MigratedSourceItem {
   title: string;
   sourceId?: string;
   type: string;
-  status: 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'DRY_RUN';
+  status: 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'DRY_RUN' | 'MANUAL_REUPLOAD_REQUIRED';
   error?: string;
 }
 

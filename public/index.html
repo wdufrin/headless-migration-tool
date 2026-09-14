@@ -89,78 +89,75 @@
     
     <!-- Sidebar Navigation -->
     <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-4 space-y-2 select-none shrink-0 overflow-y-auto min-h-0">
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-2">Navigation</div>
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-2">Migration Workflow</div>
       
-      <button onclick="switchTab('studio')" id="nav-studio" class="nav-btn active flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-        <span>Migration Studio</span>
-      </button>
-
-      <button onclick="switchTab('audit')" id="nav-audit" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-        </svg>
-        <span class="text-amber-300 font-semibold">🔍 Config Pre-Check & Gaps</span>
-      </button>
-
-      <button onclick="switchTab('report')" id="nav-report" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <span>Latest Report</span>
-      </button>
-
-      <button onclick="switchTab('history')" id="nav-history" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span>Historical Runs</span>
-      </button>
-
-      <button onclick="switchTab('single-user')" id="nav-single-user" class="nav-btn hidden items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-        </svg>
-        <span class="text-indigo-300 font-medium">👤 Single User Sandbox</span>
-      </button>
-
-      <button onclick="switchTab('sessions')" id="nav-sessions" class="nav-btn hidden items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-        <span class="text-cyan-300 font-medium">💬 Chat History Migrator</span>
-      </button>
-
-      <button onclick="switchTab('artifacts')" id="nav-artifacts" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-        <span class="text-pink-300 font-medium">🎨 User Artifacts Gallery</span>
-      </button>
-
-
-      <button onclick="switchTab('handover')" id="nav-handover" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
-        <span class="text-amber-300 font-medium">📬 User Handover & Email</span>
-      </button>
-
+      <!-- Step 1: Auth & Prerequisites -->
       <button onclick="switchTab('wizard')" id="nav-wizard" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-        </svg>
-        <span class="text-emerald-300 font-medium">🔐 Auth & WiF Wizard</span>
+        <span class="w-6 h-6 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-700/60 flex items-center justify-center text-xs font-bold shrink-0">1</span>
+        <div class="text-left">
+          <div class="text-xs text-gray-400 leading-tight">Step 1</div>
+          <div class="text-sm font-semibold text-white">Auth & Setup</div>
+        </div>
       </button>
 
-      <button onclick="switchTab('maintenance')" id="nav-maintenance" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
-        <span>Target Maintenance</span>
+      <!-- Step 2: Configuration & Parity Audit -->
+      <button onclick="switchTab('audit')" id="nav-audit" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <span class="w-6 h-6 rounded-full bg-amber-950 text-amber-400 border border-amber-700/60 flex items-center justify-center text-xs font-bold shrink-0">2</span>
+        <div class="text-left">
+          <div class="text-xs text-gray-400 leading-tight">Step 2</div>
+          <div class="text-sm font-semibold text-white">Config & Parity Audit</div>
+        </div>
       </button>
+
+      <!-- Step 3: Migration Execution Studio -->
+      <button onclick="switchTab('studio')" id="nav-studio" class="nav-btn active flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
+        <span class="w-6 h-6 rounded-full bg-indigo-900 text-indigo-200 border border-indigo-400/60 flex items-center justify-center text-xs font-bold shrink-0">3</span>
+        <div class="text-left">
+          <div class="text-xs text-indigo-200 leading-tight">Step 3</div>
+          <div class="text-sm font-semibold text-white">Migration Studio</div>
+        </div>
+      </button>
+
+      <!-- Step 4: Handover & Decommissioning -->
+      <button onclick="switchTab('handover')" id="nav-handover" class="nav-btn flex items-center space-x-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+        <span class="w-6 h-6 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-700/60 flex items-center justify-center text-xs font-bold shrink-0">4</span>
+        <div class="text-left">
+          <div class="text-xs text-gray-400 leading-tight">Step 4</div>
+          <div class="text-sm font-semibold text-white">Handover & Reports</div>
+        </div>
+      </button>
+
+      <div class="pt-4 border-t border-gray-800 space-y-1">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-2">Reports & Tools</div>
+        
+        <button onclick="switchTab('report')" id="nav-report" class="nav-btn flex items-center space-x-3 w-full px-3 py-2 rounded-lg text-xs font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span>Latest Report</span>
+        </button>
+
+        <button onclick="switchTab('history')" id="nav-history" class="nav-btn flex items-center space-x-3 w-full px-3 py-2 rounded-lg text-xs font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+          <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>Historical Runs</span>
+        </button>
+
+        <button onclick="switchTab('artifacts')" id="nav-artifacts" class="nav-btn flex items-center space-x-3 w-full px-3 py-2 rounded-lg text-xs font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+          <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span>Artifacts Gallery</span>
+        </button>
+
+        <button onclick="switchTab('maintenance')" id="nav-maintenance" class="nav-btn flex items-center space-x-3 w-full px-3 py-2 rounded-lg text-xs font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+          <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          <span>Target Maintenance</span>
+        </button>
+      </div>
 
       <div class="pt-6 border-t border-gray-800 mt-auto">
         <div class="bg-gray-800/60 p-3 rounded-lg border border-gray-700/60">
@@ -489,6 +486,9 @@
               </div>
 
               <div id="sec-user-selection" class="space-y-3">
+                <!-- Discovery Diagnostics & Warning Banner -->
+                <div id="userDiscoveryWarnings" class="hidden p-3 bg-amber-950/40 border border-amber-800/60 rounded-lg text-xs text-amber-300 space-y-1"></div>
+
                 <!-- Add Custom User Input Row -->
                 <div class="flex items-center gap-2">
                   <input type="email" id="customUserEmailInput" onkeydown="if(event.key === 'Enter'){event.preventDefault(); addCustomUserToSelection();}" placeholder="Enter specific user email to include (e.g. user@company.com) - Press Enter to add" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono">
@@ -4806,7 +4806,12 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           noEngOpt.value = '';
           noEngOpt.disabled = true;
           noEngOpt.selected = true;
-          noEngOpt.textContent = `⚠️ No engines found in ${location} region (select Custom to enter)`;
+          if (data.error) {
+            noEngOpt.textContent = `⚠️ Error: ${data.error.substring(0, 75)}... (select Custom)`;
+            noEngOpt.title = data.error;
+          } else {
+            noEngOpt.textContent = `⚠️ No engines found in ${location} region (select Custom to enter)`;
+          }
           engineSelect.appendChild(noEngOpt);
         }
 
@@ -5370,6 +5375,25 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         } else {
           targetedUsersList = [...manualUsers];
         }
+
+        const warnBox = document.getElementById('userDiscoveryWarnings');
+        if (warnBox) {
+          if (data.warnings && data.warnings.length > 0) {
+            warnBox.classList.remove('hidden');
+            warnBox.innerHTML = `
+              <div class="flex items-center gap-1.5 font-bold text-amber-200">
+                <span>⚠️</span><span>API Discovery Diagnostic Notice:</span>
+              </div>
+              <ul class="list-disc list-inside space-y-0.5 text-[11px] text-amber-300/90 pl-1">
+                ${data.warnings.map(w => `<li>${w}</li>`).join('')}
+              </ul>
+            `;
+          } else {
+            warnBox.classList.add('hidden');
+            warnBox.innerHTML = '';
+          }
+        }
+
         renderUserSelectionTable();
         if (typeof previewAutoMapping === 'function' && getActiveDomainRules().length > 0) {
           previewAutoMapping();
@@ -5492,6 +5516,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
         let finalReport = null;
+        let migrationCompletedNormally = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -5556,6 +5581,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
                 }
               } else if (eventType === 'stage') {
                 if (data.stage === 'complete') {
+                  migrationCompletedNormally = true;
                   updateStage('artifacts', 'done');
                   updateStage('reports', 'done');
                   document.getElementById('progressBar').style.width = '100%';
@@ -5574,35 +5600,63 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           }
         }
 
-        updateStage('preflight', 'done');
-        updateStage('skills', 'done');
-        updateStage('notebooks', 'done');
-        updateStage('agents', 'done');
-        updateStage('sessions', 'done');
-        updateStage('artifacts', 'done');
-        updateStage('reports', 'done');
+        if (migrationCompletedNormally || finalReport) {
+          updateStage('preflight', 'done');
+          updateStage('skills', 'done');
+          updateStage('notebooks', 'done');
+          updateStage('agents', 'done');
+          updateStage('sessions', 'done');
+          updateStage('artifacts', 'done');
+          updateStage('reports', 'done');
 
-        document.getElementById('progressBar').style.width = '100%';
-        document.getElementById('progressPercent').textContent = '100%';
-        document.getElementById('statusSpinner').classList.add('hidden');
-        document.getElementById('trackerTitle').textContent = isDryRun ? 'Dry Run Simulation Completed' : 'Migration Completed Successfully!';
+          document.getElementById('progressBar').style.width = '100%';
+          document.getElementById('progressPercent').textContent = '100%';
+          document.getElementById('statusSpinner').classList.add('hidden');
+          document.getElementById('trackerTitle').textContent = isDryRun ? 'Dry Run Simulation Completed' : 'Migration Completed Successfully!';
 
-        const compActions = document.getElementById('jobCompletionActions');
-        if (compActions) {
-          compActions.classList.remove('hidden');
-          const statusTxt = document.getElementById('jobCompletionStatusText');
-          if (statusTxt) {
-            statusTxt.textContent = isDryRun 
-              ? 'Dry Run Simulation Finished — Audit report is ready for inspection.' 
-              : 'Migration Finished Successfully — Certificate & Audit report is ready.';
+          const compActions = document.getElementById('jobCompletionActions');
+          if (compActions) {
+            compActions.classList.remove('hidden');
+            const statusTxt = document.getElementById('jobCompletionStatusText');
+            if (statusTxt) {
+              statusTxt.textContent = isDryRun 
+                ? 'Dry Run Simulation Finished — Audit report is ready for inspection.' 
+                : 'Migration Finished Successfully — Certificate & Audit report is ready.';
+            }
           }
+
+          if (finalReport) {
+            addLog(`Migration Job Completed in ${((finalReport.durationMs || 0) / 1000).toFixed(2)}s. Agents: ${finalReport.summary.totalMigratedAgents}, Notebooks: ${finalReport.summary.totalMigratedNotebooks}`, 'SUCCESS');
+          }
+        } else {
+          document.getElementById('statusSpinner').classList.add('hidden');
+          document.getElementById('trackerTitle').textContent = '⚠️ Migration Stream Disconnected Prematurely';
+          document.getElementById('trackerTitle').classList.remove('text-white');
+          document.getElementById('trackerTitle').classList.add('text-amber-400');
+          document.getElementById('trackerSubtitle').textContent = 'Connection to migration engine closed before completion event was received.';
+          addLog('Stream disconnected unexpectedly before receiving final completion event. Migration state uncertain; inspect reports or run with --resume to continue.', 'ERROR');
+
+          let alertBanner = document.getElementById('streamInterruptAlert');
+          if (!alertBanner) {
+            alertBanner = document.createElement('div');
+            alertBanner.id = 'streamInterruptAlert';
+            alertBanner.className = 'p-4 rounded-xl bg-amber-950/80 border border-amber-700 text-amber-200 text-xs space-y-1 my-4';
+            const trackerSec = document.getElementById('trackerSection');
+            const liveLogsElem = document.getElementById('liveLogs');
+            if (trackerSec && liveLogsElem && liveLogsElem.parentElement) {
+              trackerSec.insertBefore(alertBanner, liveLogsElem.parentElement);
+            }
+          }
+          alertBanner.innerHTML = `
+            <div class="flex items-center gap-2 font-bold text-amber-300">
+              <span>⚠️ Migration Stream Disconnected Prematurely</span>
+            </div>
+            <p>The network stream was closed before a final completion event was delivered. Some assets may have been partially migrated. Please inspect the audit reports or re-run with checkpoint resumption.</p>
+          `;
         }
 
-        if (finalReport) {
-          addLog(`Migration Job Completed in ${((finalReport.durationMs || 0) / 1000).toFixed(2)}s. Agents: ${finalReport.summary.totalMigratedAgents}, Notebooks: ${finalReport.summary.totalMigratedNotebooks}`, 'SUCCESS');
-
           // Auto-deploy Low-Code agents in Gemini Enterprise to clear Draft state
-          if (finalReport.results && !isDryRun) {
+          if (finalReport && finalReport.results && !isDryRun) {
             const agentsToDeploy = finalReport.results.filter(r => r.type === 'AGENT' && r.targetId && r.status === 'SUCCESS');
             if (agentsToDeploy.length > 0) {
               const apiKey = localStorage.getItem('gemini_api_key') || '';
@@ -5634,7 +5688,6 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
               }
             }
           }
-        }
       } catch (err) {
         addLog(err.message, 'ERROR');
         document.getElementById('trackerTitle').textContent = 'Migration Failed';

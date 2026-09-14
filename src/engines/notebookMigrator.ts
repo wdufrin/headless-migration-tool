@@ -213,13 +213,19 @@ export class NotebookMigrator {
       };
     }
 
-    // Default Fallback: Raw text content
-    return {
-      textContent: {
-        sourceName,
-        content: source.content || source.text || this.extractTextFromTailwindDoc(source.tailwindDoc) || `[Restored Source: ${sourceName}]`
-      }
-    };
+    // Fallback: Check for inline text or tailwindDoc text
+    const textContent = source.content || source.text || this.extractTextFromTailwindDoc(source.tailwindDoc);
+    if (textContent) {
+      return {
+        textContent: {
+          sourceName,
+          content: textContent
+        }
+      };
+    }
+
+    // Fail-safe: Never inject dummy 25-character string placeholders like "[Restored Source: ...]"
+    return null;
   }
 
   /**
@@ -374,8 +380,10 @@ export class NotebookMigrator {
 
         // Fetch detailed source data (tailwindDoc, document text) for each source
         if (fullNotebook.sources && fullNotebook.sources.length > 0) {
-          fullNotebook.sources = await Promise.all(
-            fullNotebook.sources.map(async (s) => {
+          fullNotebook.sources = await mapConcurrent(
+            fullNotebook.sources,
+            3,
+            async (s) => {
               const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
               if (!sourceId) return s;
               try {
@@ -385,7 +393,7 @@ export class NotebookMigrator {
                 logger.debug(`Could not fetch detailed source ${sourceId}: ${err.message}`);
                 return s;
               }
-            })
+            }
           );
         }
 
@@ -472,19 +480,42 @@ export class NotebookMigrator {
 
         // 2. Batch inject sources
         if (rawSources.length > 0) {
-          const mappedSources = rawSources.map(s => this.mapSourceToPayload(s));
+          const mappedSources: Array<{ raw: NotebookSource; payload: any | null }> = rawSources.map(s => ({
+            raw: s,
+            payload: this.mapSourceToPayload(s)
+          }));
+
+          const validItems = mappedSources.filter(item => item.payload !== null);
+          const unextractableItems = mappedSources.filter(item => item.payload === null);
+
+          // Record unextractable items with transparent MANUAL_REUPLOAD_REQUIRED status
+          for (const item of unextractableItems) {
+            const s = item.raw;
+            const sTitle = s.displayName || s.title || 'Source';
+            const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
+            sourceDetails.push({
+              title: sTitle,
+              sourceId: s.name?.split('/').pop() || s.sourceId?.id,
+              type: sType,
+              status: 'MANUAL_REUPLOAD_REQUIRED',
+              error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
+            });
+            sourcesFailed++;
+          }
+
           const createdSources: any[] = [];
           const BATCH_SIZE = 5;
-          for (let i = 0; i < mappedSources.length; i += BATCH_SIZE) {
-            const chunk = mappedSources.slice(i, i + BATCH_SIZE);
-            const rawChunk = rawSources.slice(i, i + BATCH_SIZE);
+          for (let i = 0; i < validItems.length; i += BATCH_SIZE) {
+            const chunkItems = validItems.slice(i, i + BATCH_SIZE);
+            const chunkPayloads = chunkItems.map(it => it.payload);
 
             try {
-              const createdBatch = await this.client.batchCreateNotebookSources(newNotebookId, chunk, targetEnv, userOwner);
+              const createdBatch = await this.client.batchCreateNotebookSources(newNotebookId, chunkPayloads, targetEnv, userOwner);
               if (createdBatch?.sources) {
                 createdSources.push(...createdBatch.sources);
               }
-              for (const s of rawChunk) {
+              for (const it of chunkItems) {
+                const s = it.raw;
                 const sTitle = s.displayName || s.title || 'Source';
                 const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
                 sourceDetails.push({
@@ -497,13 +528,13 @@ export class NotebookMigrator {
               }
             } catch (chunkErr: any) {
               logger.warn(`Batch source creation failed for Notebook ${newNotebookId} (${chunkErr.message}). Retrying individual sources in chunk...`);
-              for (let j = 0; j < chunk.length; j++) {
-                const singleSource = chunk[j];
-                const rawSingle = rawChunk[j];
+              for (let j = 0; j < chunkItems.length; j++) {
+                const singleItem = chunkItems[j];
+                const rawSingle = singleItem.raw;
                 const sTitle = rawSingle.displayName || rawSingle.title || 'Source';
                 const sType = rawSingle.metadata?.originalSourceContentType || (rawSingle.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : rawSingle.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
                 try {
-                  const singleBatch = await this.client.batchCreateNotebookSources(newNotebookId, [singleSource], targetEnv, userOwner);
+                  const singleBatch = await this.client.batchCreateNotebookSources(newNotebookId, [singleItem.payload], targetEnv, userOwner);
                   if (singleBatch?.sources) {
                     createdSources.push(...singleBatch.sources);
                   }
@@ -529,14 +560,14 @@ export class NotebookMigrator {
             }
           }
 
-          for (let i = 0; i < rawSources.length; i++) {
-            const oldSourceId = rawSources[i].name?.split('/').pop() || rawSources[i].sourceId?.id;
+          for (let i = 0; i < validItems.length; i++) {
+            const oldSourceId = validItems[i].raw.name?.split('/').pop() || validItems[i].raw.sourceId?.id;
             const newSourceId = createdSources[i]?.name?.split('/').pop() || createdSources[i]?.sourceId?.id;
             if (oldSourceId && newSourceId) {
               sourceIdMap[oldSourceId] = newSourceId;
             }
           }
-          logger.info(`Restored ${sourcesRestored} sources (${sourcesFailed} failed) to Notebook ${newNotebookId}`);
+          logger.info(`Restored ${sourcesRestored} sources (${sourcesFailed} failed/manual) to Notebook ${newNotebookId}`);
         }
 
         // 3. Recreate notes if available

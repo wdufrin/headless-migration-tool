@@ -167,8 +167,8 @@ export class DiscoveryEngineClient {
 
   async publishAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    const url = `${baseUrl}/v1alpha/${agentName}:publish`;
-    return this.request<any>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+    const url = `${baseUrl}/v1alpha/${agentName}?updateMask=state`;
+    return this.request<any>(url, 'PATCH', { state: 'ENABLED' }, env.projectId, undefined, forUserEmail);
   }
 
   async deleteAgent(agentName: string, location: string = 'global', projectId?: string): Promise<any> {
@@ -284,8 +284,9 @@ export class DiscoveryEngineClient {
         const fallbackUrl = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?pageSize=100`;
         const resFallback = await this.request<{ engines?: AppEngine[] }>(fallbackUrl, 'GET', undefined, env.projectId);
         return resFallback.engines || [];
-      } catch (e) {
-        return [];
+      } catch (e: any) {
+        logger.warn(`Failed to list engines for project ${env.projectId}: ${e.message}`);
+        throw e;
       }
     }
   }
@@ -300,7 +301,8 @@ export class DiscoveryEngineClient {
   async patchEngine(env: EnvironmentConfig, payload: any, updateMask: string): Promise<AppEngine> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
-    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}?updateMask=${encodeURIComponent(updateMask)}`;
+    const cleanMask = updateMask.split(',').map(s => encodeURIComponent(s.trim())).join(',');
+    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}?updateMask=${cleanMask}`;
     return this.request<AppEngine>(url, 'PATCH', payload, env.projectId);
   }
 

@@ -118,6 +118,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       serviceAccountKeyPath: saKeyPath
     });
 
+    const warnings: string[] = [];
+
     const userMap = new Map<string, {
       email: string;
       sessionsCount: number;
@@ -131,6 +133,54 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
     const baseUrl = getSafeDiscoveryEngineUrl(location);
 
     if (token) {
+      // 0. Discover users directly from Google Cloud Project IAM Policy
+      if (projectId) {
+        try {
+          const crmUrl = `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:getIamPolicy`;
+          const crmResp = await fetch(crmUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'X-Goog-User-Project': projectId
+            },
+            body: JSON.stringify({})
+          });
+
+          if (crmResp.ok) {
+            const crmData: any = await crmResp.json();
+            for (const binding of crmData.bindings || []) {
+              const roleName = (binding.role || '').replace(/^roles\//, '');
+              for (const member of binding.members || []) {
+                const cleanUser = extractUserIdentity(member);
+                if (cleanUser) {
+                  const existing = userMap.get(cleanUser) || {
+                    email: cleanUser,
+                    sessionsCount: 0,
+                    notebooksCount: 0,
+                    agentsCount: 0,
+                    sources: [] as string[]
+                  };
+                  const srcLabel = member.startsWith('principal://')
+                    ? 'Workforce Identity (IdP)'
+                    : `Project IAM (${roleName})`;
+                  if (!existing.sources.includes(srcLabel) && existing.sources.length < 3) {
+                    existing.sources.push(srcLabel);
+                  }
+                  userMap.set(cleanUser, existing);
+                }
+              }
+            }
+          } else if (crmResp.status === 403) {
+            const warnMsg = `Service account lacks 'resourcemanager.projects.getIamPolicy' or 'roles/iam.securityReviewer' on project '${projectId}'. Project IAM members could not be enumerated.`;
+            logger.warn(warnMsg);
+            warnings.push(warnMsg);
+          }
+        } catch (crmErr: any) {
+          logger.debug(`Project IAM discovery skipped for ${projectId}: ${crmErr.message}`);
+        }
+      }
+
       // Determine which engine(s) to scan
       const enginesToScan: string[] = [];
       if (appId && appId !== 'custom' && appId !== 'all' && scope !== 'all') {
@@ -221,6 +271,10 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
                 } catch {}
               }));
             }
+          } else if (agResp.status === 403) {
+            const warnMsg = `Service account lacks 'roles/discoveryengine.admin' on project '${projectId}'. Custom agents and agent IAM policies could not be enumerated for engine '${curAppId}'.`;
+            logger.warn(warnMsg);
+            if (!warnings.includes(warnMsg)) warnings.push(warnMsg);
           }
         } catch (agErr: any) {
           logger.debug(`Agents user discovery skipped for ${curAppId}: ${agErr.message}`);
@@ -351,7 +405,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
     return res.status(200).json({
       success: true,
       totalUsers: users.length,
-      users
+      users,
+      warnings
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'UserDiscoveryFailed', message: err.message });

@@ -159,17 +159,18 @@ export class SkillMigrator {
           }
 
           logger.info(`Creating Skill "${displayName}" (${resourceId}) in target Agent Registry...`);
-          await this.client.createSkill(resourceId, payload, targetEnv);
+          const createdSkill = await this.client.createSkill(resourceId, payload, targetEnv);
+          const targetSkillId = createdSkill?.name ? createdSkill.name.split('/').pop()! : resourceId;
 
           if (fullSkill.targetState === 'TARGET_STATE_ACTIVE') {
             try {
               for (let attempt = 0; attempt < 5; attempt++) {
                 await new Promise(r => setTimeout(r, 2000));
-                const targetRevs = await this.client.listSkillRevisions(resourceId, targetEnv);
+                const targetRevs = await this.client.listSkillRevisions(targetSkillId, targetEnv);
                 const activeTargetRev = targetRevs.find(r => r.state === 'ACTIVE');
                 if (activeTargetRev) {
                   await this.client.updateSkill(
-                    resourceId,
+                    targetSkillId,
                     {
                       targetState: 'TARGET_STATE_ACTIVE',
                       defaultRevision: activeTargetRev.name
@@ -177,7 +178,7 @@ export class SkillMigrator {
                     ['targetState', 'defaultRevision'],
                     targetEnv
                   );
-                  logger.info(`Activated Skill "${displayName}" (${resourceId}) in target Agent Registry.`);
+                  logger.info(`Activated Skill "${displayName}" (${targetSkillId}) in target Agent Registry.`);
                   break;
                 }
               }
@@ -281,12 +282,43 @@ export class SkillMigrator {
             }
 
             if (!existsInTarget) {
+              const remappedDataStoreConnections = (agent.dataStoreConnections || []).map((conn: any) => {
+                if (!conn.dataStore) return conn;
+                const oldDsId = conn.dataStore.split('/').pop() || '';
+                const targetLocation = targetEnv.appLocation || 'global';
+                const targetCollection = targetEnv.collectionId || 'default_collection';
+                return {
+                  ...conn,
+                  dataStore: `projects/${targetEnv.projectId}/locations/${targetLocation}/collections/${targetCollection}/dataStores/${oldDsId}`
+                };
+              });
+
+              const remappedTools = (agent.tools || []).map((t: any) => {
+                if (typeof t === 'string') {
+                  const cleanId = t.split('/').pop() || t;
+                  return `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || 'global'}/tools/${cleanId}`;
+                }
+                if (t && t.tool) {
+                  const cleanId = t.tool.split('/').pop() || t.tool;
+                  return {
+                    ...t,
+                    tool: `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || 'global'}/tools/${cleanId}`
+                  };
+                }
+                return t;
+              });
+
               const payload: any = {
                 displayName: agent.displayName,
                 description: agent.description || '',
                 icon: agent.icon || undefined,
                 state: agent.state || 'PRIVATE',
                 sharingConfig: agent.sharingConfig || undefined,
+                dataStoreConnections: remappedDataStoreConnections.length > 0 ? remappedDataStoreConnections : undefined,
+                tools: remappedTools.length > 0 ? remappedTools : undefined,
+                authorizationConfig: agent.authorizationConfig || undefined,
+                authorizations: !agent.authorizationConfig ? agent.authorizations : undefined,
+                starterPrompts: agent.starterPrompts || undefined,
                 skillAgentDefinition: {
                   instruction: agent.skillAgentDefinition?.instruction || '',
                   subfiles: agent.skillAgentDefinition?.subfiles || []

@@ -173,6 +173,7 @@ export class GcpAuthService {
   async getAccessToken(forUserEmail?: string, scopes?: string[]): Promise<string> {
     const cleanEmail = typeof forUserEmail === 'string' ? forUserEmail.replace(/^user:/i, '').trim() : undefined;
     const requestedScopes = scopes && scopes.length > 0 ? scopes : [
+      'https://www.googleapis.com/auth/cloud-platform',
       'https://www.googleapis.com/auth/discoveryengine.readwrite',
       'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
     ];
@@ -185,37 +186,36 @@ export class GcpAuthService {
 
     // 1. User Impersonation Flow
     if (cleanEmail) {
-      // 1.a Workforce Identity Federation Impersonation (active if WIF configured or external domain)
       const lower = cleanEmail.toLowerCase();
-      const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
-      if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' || isExternalDomain || fs.existsSync('wif-migration-key.pem')) {
-        try {
-          const wifToken = await this.mintWorkforceToken(cleanEmail);
-          if (wifToken) {
-            this.userTokenCache.set(cacheKey, {
-              token: wifToken,
-              expiresAt: Date.now() + 3000 * 1000
-            });
-            return wifToken;
+      const isServiceIdentity = (
+        lower.endsWith('.gserviceaccount.com') ||
+        lower.includes('serviceaccount') ||
+        lower.startsWith('service-') ||
+        lower === 'unknown' ||
+        lower === 'admin'
+      );
+
+      if (!isServiceIdentity) {
+        // 1.a Workforce Identity Federation Impersonation (active if WIF configured or external domain)
+        const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
+        if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' || isExternalDomain || fs.existsSync('wif-migration-key.pem')) {
+          try {
+            const wifToken = await this.mintWorkforceToken(cleanEmail);
+            if (wifToken) {
+              this.userTokenCache.set(cacheKey, {
+                token: wifToken,
+                expiresAt: Date.now() + 3000 * 1000
+              });
+              return wifToken;
+            }
+          } catch (wifErr: any) {
+            logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
           }
-        } catch (wifErr: any) {
-          logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
         }
-      }
 
-      // 1.b Domain-Wide Delegation Impersonation
-      if (this.serviceAccountKey && !isExternalDomain) {
-        const isEligible = (
-          lower.includes('@') &&
-          !lower.endsWith('.gserviceaccount.com') &&
-          !lower.includes('serviceaccount') &&
-          !lower.startsWith('service-') &&
-          !lower.endsWith('@example.com') &&
-          lower !== 'unknown' &&
-          lower !== 'admin'
-        );
-
-        if (isEligible) {
+        // 1.b Domain-Wide Delegation Impersonation
+        let lastDwdError: Error | null = null;
+        if (this.serviceAccountKey && !isExternalDomain) {
           try {
             logger.debug(`Minting DWD impersonated token for user: ${cleanEmail} with scopes: ${requestedScopes.join(', ')}`);
             const jwtClient = new JWT({
@@ -234,9 +234,10 @@ export class GcpAuthService {
               return tokenResponse.token;
             }
           } catch (err: any) {
+            lastDwdError = err;
             if (!this.failedDwdUsers.has(cleanEmail)) {
               this.failedDwdUsers.add(cleanEmail);
-              logger.warn(`DWD impersonation failed for ${cleanEmail} (${err.message}). Falling back to Workforce / Service Account token.`);
+              logger.warn(`DWD impersonation failed for ${cleanEmail} (${err.message}).`);
             }
             // Try WiF token minting as fallback before giving up
             try {
@@ -245,6 +246,14 @@ export class GcpAuthService {
             } catch {}
           }
         }
+
+        // Fail-closed: User impersonation was requested for a specific human user identity.
+        // Never silently fall back to ambient service account or admin static credentials,
+        // which causes cross-user data contamination and leaks admin personal memories/notebooks.
+        const failureReason = lastDwdError
+          ? lastDwdError.message
+          : (!this.serviceAccountKey ? 'No Service Account Key configured for Domain-Wide Delegation' : 'User impersonation failed');
+        throw new Error(`DWD Impersonation Failed for user "${cleanEmail}": ${failureReason}`);
       }
     }
 

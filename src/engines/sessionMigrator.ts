@@ -94,7 +94,7 @@ export class SessionMigrator {
           }
         }
       }
-      const combined = chunks.join('').replace(/\[\[section:[^\]]+\]\]/g, '').trim();
+      const combined = chunks.join('').trim();
       if (combined.length > 20) {
         return combined;
       }
@@ -106,8 +106,10 @@ export class SessionMigrator {
       for (const r of ansData.replies) {
         const content = r.groundedContent?.content;
         if (content) {
-          if (!content.thought && content.text) {
-            replyTexts.push(content.text.replace(/\[\[section:[^\]]+\]\]/g, '').trim());
+          if (content.thought && content.text) {
+            replyTexts.push(`> 💭 *Reasoning:* ${content.text.trim()}`);
+          } else if (content.text) {
+            replyTexts.push(content.text.trim());
           }
           if (content.inlineData?.data) {
             try {
@@ -314,23 +316,12 @@ export class SessionMigrator {
     }
 
     const hydratedTurns: any[] = [];
-    const srcProj = this.config.source?.projectId || 'source-workspace';
 
     for (let i = 0; i < pairedTurns.length; i++) {
       const p = pairedTurns[i];
-      const isLast = i === pairedTurns.length - 1;
-
-      let turnContent = `${p.queryText}`;
-      if (p.answerText) {
-        turnContent += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n🤖 **Gemini Response:**\n\n${p.answerText}`;
-      }
-
-      if (isLast) {
-        turnContent += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n🔒 **Conversation Closed** — *Archived from \`${srcProj}\` for historical auditing and reference.*`;
-      }
 
       hydratedTurns.push({
-        query: { text: turnContent },
+        query: { text: p.queryText },
         answer: p.answerText || undefined
       });
     }

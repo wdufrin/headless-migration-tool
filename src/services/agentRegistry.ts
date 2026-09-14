@@ -99,8 +99,7 @@ export class AgentRegistryClient {
   }
 
   async createSkill(skillId: string, payload: Partial<RegistrySkill>, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill> {
-    let cleanId = skillId.split('/').pop() || skillId;
-    cleanId = cleanId.replace(/^private-/, '');
+    const cleanId = skillId.split('/').pop() || skillId;
     const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills?skillId=${encodeURIComponent(cleanId)}`;
     return this.request<RegistrySkill>(url, 'POST', payload, env.projectId, forUserEmail);
   }

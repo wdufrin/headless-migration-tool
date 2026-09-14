@@ -157,4 +157,32 @@ describe('MigrationRunner Orchestrator', () => {
       fs.rmSync(testOutputDir, { recursive: true, force: true });
     }
   });
+
+  it('should record structured SYSTEM failure when a phase throws an unhandled error', async () => {
+    const runner = new MigrationRunner({
+      authService: dummyAuth,
+      outputDir: testOutputDir
+    });
+
+    (runner as any).client.getEngine = vi.fn().mockResolvedValue({ name: 'engines/prod_engine_1' });
+    (runner as any).client.listDataStores = vi.fn().mockResolvedValue([]);
+    // Force notebook migrator to throw an unexpected exception
+    (runner as any).notebookMigrator.migrateNotebooks = vi.fn().mockRejectedValue(new Error('FATAL_NOTEBOOK_API_ERROR'));
+    (runner as any).client.listAgents = vi.fn().mockResolvedValue([]);
+    (runner as any).client.listMemories = vi.fn().mockResolvedValue([]);
+
+    const report = await runner.run(sampleConfig);
+
+    expect(report).toBeDefined();
+    const systemFailure = report.results.find(r => r.id === 'phase-failure-notebooks');
+    expect(systemFailure).toBeDefined();
+    expect(systemFailure?.type).toBe('SYSTEM');
+    expect(systemFailure?.status).toBe('FAILED');
+    expect(systemFailure?.error).toContain('FATAL_NOTEBOOK_API_ERROR');
+    expect(report.summary.totalFailed).toBeGreaterThanOrEqual(1);
+
+    if (fs.existsSync(testOutputDir)) {
+      fs.rmSync(testOutputDir, { recursive: true, force: true });
+    }
+  });
 });

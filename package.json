@@ -41,7 +41,6 @@
     "jszip": "^3.10.1",
     "nodemailer": "^9.0.5",
     "pptxgenjs": "^4.0.1",
-    "puppeteer-core": "^25.7.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {

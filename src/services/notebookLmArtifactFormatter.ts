@@ -35,6 +35,52 @@ import {
 } from 'docx';
 import { logger } from '../utils/logger.js';
 
+/**
+ * Strips invalid XML 1.0 control characters to prevent Microsoft Word corruption dialogs.
+ * Valid XML 1.0 chars: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+ */
+export function sanitizeXmlString(input: string): string {
+  if (!input || typeof input !== 'string') return '';
+  return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g, '');
+}
+
+/**
+ * Dynamically extracts width and height from PNG and JPEG image buffers.
+ */
+export function getImageDimensions(buffer: Buffer): { width: number; height: number } {
+  const fallback = { width: 580, height: 380 };
+  if (!buffer || buffer.length < 24) return fallback;
+
+  // PNG
+  if (buffer.length >= 24 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    const width = buffer.readUInt32BE(16);
+    const height = buffer.readUInt32BE(20);
+    if (width > 0 && height > 0) return { width, height };
+  }
+
+  // JPEG
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+    while (offset < buffer.length - 8) {
+      if (buffer[offset] !== 0xff) {
+        offset++;
+        continue;
+      }
+      const marker = buffer[offset + 1];
+      if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+        const height = buffer.readUInt16BE(offset + 5);
+        const width = buffer.readUInt16BE(offset + 7);
+        if (width > 0 && height > 0) return { width, height };
+        break;
+      }
+      const len = buffer.readUInt16BE(offset + 2);
+      offset += 2 + len;
+    }
+  }
+
+  return fallback;
+}
+
 export interface DocxDocumentOptions {
   imageUrl?: string;
   imageBuffer?: Buffer;
@@ -201,8 +247,10 @@ export class NotebookLmArtifactFormatter {
    * Parses inline markdown tokens into an array of docx TextRun objects.
    * Handles bold, italic, bold-italic, inline code, and citations like [1], [Roshar: Surgebinding].
    */
-  public static parseInlineMarkdown(text: string): TextRun[] {
+  public static parseInlineMarkdown(rawText: string): TextRun[] {
     const runs: TextRun[] = [];
+    if (!rawText) return runs;
+    const text = sanitizeXmlString(rawText);
     if (!text) return runs;
 
     // Tokenize inline markdown: ***bold-italic***, **bold**, *italic*, `code`, and [citation]
@@ -330,6 +378,21 @@ export class NotebookLmArtifactFormatter {
         const isPng = imgBuffer.length >= 8 && imgBuffer[0] === 0x89 && imgBuffer[1] === 0x50;
         const imgType: 'png' | 'jpg' = isPng ? 'png' : 'jpg';
 
+        const dims = getImageDimensions(imgBuffer);
+        const maxDocWidth = 580;
+        const maxDocHeight = 650;
+        let finalWidth = dims.width;
+        let finalHeight = dims.height;
+
+        if (finalWidth > maxDocWidth) {
+          finalHeight = Math.round((finalHeight * maxDocWidth) / finalWidth);
+          finalWidth = maxDocWidth;
+        }
+        if (finalHeight > maxDocHeight) {
+          finalWidth = Math.round((finalWidth * maxDocHeight) / finalHeight);
+          finalHeight = maxDocHeight;
+        }
+
         children.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
@@ -338,8 +401,8 @@ export class NotebookLmArtifactFormatter {
                 data: imgBuffer,
                 type: imgType,
                 transformation: {
-                  width: 580,
-                  height: 380
+                  width: finalWidth,
+                  height: finalHeight
                 }
               })
             ],

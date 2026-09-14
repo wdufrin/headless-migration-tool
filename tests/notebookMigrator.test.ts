@@ -106,5 +106,17 @@ describe('NotebookMigrator Engine', () => {
       expect(mapped.textContent.sourceName).toBe('Yumi_and_the_Nightmare_Painter.pdf');
       expect(mapped.textContent.content).toBe('Chapter 1: The Nightmare Painter.\nNikaro walked down the neon-lit street.');
     });
+
+    it('should return null instead of a 25-character placeholder dummy string when content is missing (Fix 2.4)', () => {
+      const emptySource: NotebookSource = {
+        title: 'Opaque_Encrypted_Document.pdf',
+        metadata: {
+          originalSourceContentType: 'DOCUMENT'
+        }
+      };
+
+      const mapped = migrator.mapSourceToPayload(emptySource);
+      expect(mapped).toBeNull();
+    });
   });
 });

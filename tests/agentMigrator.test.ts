@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AgentMigrator } from '../src/engines/agentMigrator.js';
 import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
 import { GcpAuthService } from '../src/services/gcpAuth.js';
@@ -48,13 +48,13 @@ describe('AgentMigrator Engine', () => {
 
     const payload = migrator.buildAgentPayload(sourceAgent, sourceEnv, targetEnv, datastoreMapping);
 
-    expect(payload.displayName).toBe('[Replace] HR Benefits Assistant');
+    expect(payload.displayName).toBe('HR Benefits Assistant');
     expect(payload.dataStoreConnections[0].dataStore).toBe(
       'projects/fedex-prod-project/locations/global/collections/default_collection/dataStores/prod-benefits-ds'
     );
     expect(payload.adkAgentDefinition.enginePath).toContain('fedex-prod-project');
     expect(payload.adkAgentDefinition.enginePath).toContain('prod_engine_1');
-    expect(payload.adkAgentDefinition.instructions).toContain('prod-benefits-ds');
+    expect(payload.adkAgentDefinition.instructions).toBe('Use datastore test-benefits-ds for answers.');
   });
 
   it('should filter agents by user IAM policy bindings', () => {
@@ -74,6 +74,25 @@ describe('AgentMigrator Engine', () => {
     expect(migrator.isAgentOwnedByUser(agentWithIam, ['bob@fedex.com'])).toBe(true);
     expect(migrator.isAgentOwnedByUser(agentWithIam, ['*@fedex.com'])).toBe(true);
     expect(migrator.isAgentOwnedByUser(agentWithIam, ['alice@fedex.com'])).toBe(false);
+  });
+
+  it('should filter agents with multiple owners in agentOwner IAM binding (Fix 2.6)', () => {
+    const multiOwnerAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/agent-789',
+      displayName: 'Multi-Owner Analytics Agent',
+      iamPolicy: {
+        bindings: [
+          {
+            role: 'roles/discoveryengine.agentOwner',
+            members: ['user:primary@fedex.com', 'user:secondary@fedex.com']
+          }
+        ]
+      }
+    };
+
+    expect(migrator.isAgentOwnedByUser(multiOwnerAgent, ['primary@fedex.com'])).toBe(true);
+    expect(migrator.isAgentOwnedByUser(multiOwnerAgent, ['secondary@fedex.com'])).toBe(true);
+    expect(migrator.isAgentOwnedByUser(multiOwnerAgent, ['other@fedex.com'])).toBe(false);
   });
 
   it('should filter agents owned by Workforce Identity Federation (WiF) principals', () => {
@@ -120,5 +139,41 @@ describe('AgentMigrator Engine', () => {
     expect(extractUserIdentity('admin@wdufrin.altostrat.com')).toBe('admin@wdufrin.altostrat.com');
     expect(extractUserIdentity('serviceAccount:sa@project.iam.gserviceaccount.com')).toBeNull();
     expect(extractUserIdentity('allUsers')).toBeNull();
+  });
+
+  it('should preserve private scope by default for unshared agents (Fix 1.2)', async () => {
+    const patchSpy = vi.fn().mockResolvedValue({});
+    const unsharedAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/unshared-1',
+      displayName: 'Confidential Strategy Agent',
+      owner: 'alice@fedex.com'
+      // sharingConfig omitted / undefined
+    };
+
+    dummyClient.listAgents = vi.fn().mockResolvedValue([unsharedAgent]);
+    dummyClient.getAgentIamPolicy = vi.fn().mockResolvedValue({ bindings: [] });
+    dummyClient.createAgent = vi.fn().mockResolvedValue({
+      name: 'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/new-agent-1'
+    });
+    dummyClient.patchAgentSharing = patchSpy;
+
+    const options = {
+      dryRun: false,
+      preserveOwnership: true,
+      preserveSharing: false,
+      concurrency: 1
+    };
+
+    await migrator.migrateAgents(
+      sourceEnv,
+      targetEnv,
+      options,
+      {},
+      {},
+      { 'alice@fedex.com': 'alice@fedex.com' }
+    );
+
+    // Unshared agents MUST NOT be patched with scope: ALL_USERS
+    expect(patchSpy).not.toHaveBeenCalled();
   });
 });

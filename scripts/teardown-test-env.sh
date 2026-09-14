@@ -114,7 +114,7 @@ CONFIG_PATH="${PROJECT_ROOT}/migration-config.json"
 if [[ -f "${CONFIG_PATH}" ]]; then
   if grep -q "${PROJECT_ID}" "${CONFIG_PATH}"; then
     echo -e "Resetting reference to ${PROJECT_ID} in migration-config.json..."
-    sed -i "s/${PROJECT_ID}/target-project-id/g" "${CONFIG_PATH}" || true
+    sed -i.bak "s/${PROJECT_ID}/target-project-id/g" "${CONFIG_PATH}" && rm -f "${CONFIG_PATH}.bak" || true
     echo -e "${GREEN}✓ migration-config.json updated.${NC}"
   fi
 fi

@@ -28,6 +28,7 @@ import { SkillMigrator } from './skillMigrator.js';
 import { DryRunSimulator } from './dryRunSimulator.js';
 import { MigrationReporter } from '../services/reporter.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
+import { CheckpointManager } from '../services/checkpointManager.js';
 import { logger } from '../utils/logger.js';
 
 export interface MigrationRunnerOptions {
@@ -158,27 +159,15 @@ export class MigrationRunner {
     }
 
     // Step 2c: Checkpoint Resumption (Skip previously completed assets)
+    const checkpointManager = new CheckpointManager(this.outputDir, migrationId);
     const resumedItems = new Map<string, MigrationItemResult>();
     if (config.options?.resumeFrom) {
-      try {
-        const resumeFile = path.resolve(process.cwd(), config.options.resumeFrom);
-        if (fs.existsSync(resumeFile)) {
-          const prevReport: MigrationReport = JSON.parse(fs.readFileSync(resumeFile, 'utf8'));
-          logger.info(`[RESUME CHECKPOINT] Loaded previous migration report from: ${resumeFile} (Run ID: ${prevReport.migrationId})`);
-          if (Array.isArray(prevReport.results)) {
-            for (const item of prevReport.results) {
-              if (item.status === 'SUCCESS' || item.status === 'DRY_RUN') {
-                resumedItems.set(`${item.type}:${item.id}`, item);
-              }
-            }
-          }
-          logger.info(`[RESUME CHECKPOINT] Found ${resumedItems.size} previously completed item(s). These will be skipped.`);
-        } else {
-          logger.warn(`[RESUME CHECKPOINT] Resume report file not found at: ${resumeFile}. Running complete migration.`);
-        }
-      } catch (resumeErr: any) {
-        logger.warn(`[RESUME CHECKPOINT] Could not read resume file: ${resumeErr.message}`);
+      const loaded = CheckpointManager.load(config.options.resumeFrom);
+      for (const [k, v] of loaded.entries()) {
+        resumedItems.set(k, v);
       }
+      checkpointManager.seed(resumedItems);
+      logger.info(`[RESUME CHECKPOINT] Found ${resumedItems.size} previously completed item(s). These will be skipped.`);
     }
 
     const allResults: MigrationItemResult[] = [];
@@ -216,8 +205,18 @@ export class MigrationRunner {
           discoveredUsers
         );
         allResults.push(...notebookResults);
+        checkpointManager.recordBatch(notebookResults);
       } catch (err: any) {
         logger.error(`Notebook migration phase failed: ${err.message}`);
+        allResults.push({
+          id: 'phase-failure-notebooks',
+          displayName: 'Notebooks Migration Phase',
+          type: 'SYSTEM',
+          status: 'FAILED',
+          error: `Fatal Phase Exception: ${err.message}`,
+          originalOwner: 'system',
+          targetOwner: 'system'
+        });
       }
     }
 
@@ -231,6 +230,7 @@ export class MigrationRunner {
           config.identityMapping
         );
         allResults.push(...skillResults);
+        checkpointManager.recordBatch(skillResults);
 
         // Add migrated skills to activeSkipIds to prevent duplicate processing by agentMigrator
         for (const sr of skillResults) {
@@ -243,6 +243,15 @@ export class MigrationRunner {
         effectiveOptions.skipIds = Array.from(activeSkipIds);
       } catch (skillErr: any) {
         logger.error(`Skills migration phase failed: ${skillErr.message}`);
+        allResults.push({
+          id: 'phase-failure-skills',
+          displayName: 'Skills Migration Phase',
+          type: 'SYSTEM',
+          status: 'FAILED',
+          error: `Fatal Phase Exception: ${skillErr.message}`,
+          originalOwner: 'system',
+          targetOwner: 'system'
+        });
       }
     }
 
@@ -258,8 +267,18 @@ export class MigrationRunner {
           config.identityMapping
         );
         allResults.push(...agentResults);
+        checkpointManager.recordBatch(agentResults);
       } catch (err: any) {
         logger.error(`Agent migration phase failed: ${err.message}`);
+        allResults.push({
+          id: 'phase-failure-agents',
+          displayName: 'Agents Migration Phase',
+          type: 'SYSTEM',
+          status: 'FAILED',
+          error: `Fatal Phase Exception: ${err.message}`,
+          originalOwner: 'system',
+          targetOwner: 'system'
+        });
       }
     }
 
@@ -298,14 +317,16 @@ export class MigrationRunner {
             if (!config.options?.dryRun) {
               await sessionMigrator.migrateSession(s, tgtOwner);
             }
-            allResults.push({
+            const sessionItem: MigrationItemResult = {
               id: s.name.split('/').pop() || 'unknown',
               displayName: s.displayName || 'Untitled Chat',
               type: 'SESSION',
               status: config.options?.dryRun ? 'DRY_RUN' : 'SUCCESS',
               originalOwner: origOwner,
               targetOwner: tgtOwner
-            });
+            };
+            allResults.push(sessionItem);
+            checkpointManager.recordSuccess(sessionItem);
           } catch (sErr: any) {
             allResults.push({
               id: s.name.split('/').pop() || 'unknown',
@@ -320,6 +341,15 @@ export class MigrationRunner {
         }
       } catch (sessionErr: any) {
         logger.warn(`Chat session migration skipped or failed: ${sessionErr.message}`);
+        allResults.push({
+          id: 'phase-failure-sessions',
+          displayName: 'Chat Sessions Migration Phase',
+          type: 'SYSTEM',
+          status: 'FAILED',
+          error: `Fatal Phase Exception: ${sessionErr.message}`,
+          originalOwner: 'system',
+          targetOwner: 'system'
+        });
       }
     }
 
@@ -356,7 +386,7 @@ export class MigrationRunner {
             if (!config.options?.dryRun) {
               await memoryMigrator.migrateMemory(m, tgtOwner);
             }
-            allResults.push({
+            const memoryItem: MigrationItemResult = {
               id: m.name?.split('/').pop() || 'unknown',
               displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
               type: 'MEMORY',
@@ -367,7 +397,9 @@ export class MigrationRunner {
                 fact: m.fact,
                 originalResourcePath: m.originalResourcePath
               }
-            });
+            };
+            allResults.push(memoryItem);
+            checkpointManager.recordSuccess(memoryItem);
           } catch (mErr: any) {
             const isGoogleInternal = mErr.message?.includes('Method not found') || mErr.message?.includes('404');
             const errorReason = isGoogleInternal
@@ -392,6 +424,15 @@ export class MigrationRunner {
         }
       } catch (memErr: any) {
         logger.warn(`User memories migration skipped or failed: ${memErr.message}`);
+        allResults.push({
+          id: 'phase-failure-memories',
+          displayName: 'User Memories Migration Phase',
+          type: 'SYSTEM',
+          status: 'FAILED',
+          error: `Fatal Phase Exception: ${memErr.message}`,
+          originalOwner: 'system',
+          targetOwner: 'system'
+        });
       }
     }
 
@@ -478,6 +519,7 @@ export class MigrationRunner {
       logger.info(`Migration Report generated successfully:`);
       logger.info(`  - Markdown Report: ${mdPath}`);
       logger.info(`  - JSON Report:     ${jsonPath}`);
+      logger.info(`  - Live Checkpoint: ${checkpointManager.getFilePath()}`);
     } catch (reportErr: any) {
       logger.warn(`Could not save report files: ${reportErr.message}`);
     }

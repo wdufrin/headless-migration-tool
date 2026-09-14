@@ -284,6 +284,17 @@ wizardRouter.post('/wizard/audit-permissions', async (req, res) => {
   }
 });
 
+// Strict allowlist of approved IAM roles for automated migration provisioning
+export const ALLOWED_MIGRATION_ROLES = new Set([
+  'roles/discoveryengine.admin',
+  'roles/discoveryengine.viewer',
+  'roles/discoveryengine.editor',
+  'roles/serviceusage.serviceUsageConsumer',
+  'roles/iam.serviceAccountTokenCreator',
+  'roles/agentregistry.admin',
+  'roles/agentregistry.viewer'
+]);
+
 // Wizard: 1-Click Auto-Fix IAM Policy Binding
 wizardRouter.post('/wizard/auto-fix-iam', async (req, res) => {
   try {
@@ -295,6 +306,24 @@ wizardRouter.post('/wizard/auto-fix-iam', async (req, res) => {
     const safeProj = projectId.replace(/[^a-zA-Z0-9\-_]/g, '');
     const safeRole = role.replace(/[^a-zA-Z0-9\-_./]/g, '');
     const safeMember = member.replace(/[^a-zA-Z0-9\-_.@:/]/g, '');
+
+    // Security Gate: Restrict role to pre-approved least-privilege migration roles
+    if (!ALLOWED_MIGRATION_ROLES.has(safeRole)) {
+      logger.warn(`Rejected unauthorized IAM auto-fix attempt: Role "${safeRole}" is not in approved allowlist.`);
+      return res.status(403).json({
+        error: 'ForbiddenRole',
+        message: `Role "${safeRole}" is not approved for automated provisioning. Allowed migration roles: ${Array.from(ALLOWED_MIGRATION_ROLES).join(', ')}`
+      });
+    }
+
+    // Security Gate: Validate member format (must be serviceAccount, user, group, or workforce principal)
+    const validMemberPrefix = /^(serviceAccount|user|group|principal|principalSet):/i.test(safeMember);
+    if (!validMemberPrefix || safeMember.length < 5) {
+      return res.status(400).json({
+        error: 'InvalidMemberFormat',
+        message: `Member "${safeMember}" must include a valid GCP IAM principal prefix (e.g. serviceAccount:..., user:..., principal:...).`
+      });
+    }
 
     const { execFile } = await import('child_process');
     const { promisify } = await import('util');

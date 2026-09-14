@@ -219,15 +219,43 @@ export class PermissionAuditor {
 
     if (isTargetWif) {
       // Target uses Workforce Identity Federation
-      permissions.push({
-        id: 'AUTH_TGT_WIF_TOKEN',
-        category: 'WIF_FEDERATION',
-        name: 'Target Workforce Identity Federation (WiF / STS)',
-        status: 'GRANTED',
-        level: 'REQUIRED',
-        details: `Target environment uses Workforce Identity Federation (WiF). External identity "${targetUser}" authenticates via GCP STS tokens.`
-      });
-      totalGranted++;
+      try {
+        const wifToken = await this.authService.getAccessToken(targetUser);
+        if (wifToken) {
+          dwdToken = wifToken;
+          permissions.push({
+            id: 'AUTH_TGT_WIF_TOKEN',
+            category: 'WIF_FEDERATION',
+            name: 'Target Workforce Identity Federation (WiF / STS)',
+            status: 'GRANTED',
+            level: 'REQUIRED',
+            details: `Target environment uses Workforce Identity Federation (WiF). Successfully verified STS token for "${targetUser}".`
+          });
+          totalGranted++;
+        } else {
+          permissions.push({
+            id: 'AUTH_TGT_WIF_TOKEN',
+            category: 'WIF_FEDERATION',
+            name: 'Target Workforce Identity Federation (WiF / STS)',
+            status: 'MISSING',
+            level: 'REQUIRED',
+            details: `Target environment uses Workforce Identity Federation (WiF), but no valid STS token could be acquired for "${targetUser}".`,
+            remediation: `Ensure Workforce Identity Pool and Provider are correctly configured and credentials file exists.`
+          });
+          totalMissing++;
+        }
+      } catch (wifErr: any) {
+        permissions.push({
+          id: 'AUTH_TGT_WIF_TOKEN',
+          category: 'WIF_FEDERATION',
+          name: 'Target Workforce Identity Federation (WiF / STS)',
+          status: 'MISSING',
+          level: 'REQUIRED',
+          details: `Target Workforce Identity Federation (WiF) token acquisition failed for "${targetUser}": ${wifErr.message}`,
+          remediation: `Verify Workforce Identity Federation credentials and STS exchange configuration.`
+        });
+        totalMissing++;
+      }
     } else {
       // Target uses Google Workspace Domain-Wide Delegation
       try {
@@ -313,16 +341,6 @@ export class PermissionAuditor {
           });
         }
       }
-
-      permissions.push({
-        id: 'AUTH_DWD_TOKEN',
-        category: 'WORKSPACE_OAUTH',
-        name: 'Target Domain-Wide Delegation (Google Identity)',
-        status: 'GRANTED',
-        level: 'REQUIRED',
-        details: `Successfully authenticated as target user "${targetUser}" via DWD with active scopes.`
-      });
-      totalGranted++;
     }
 
     // 3. Audit Source Project Read Access (Using user-delegated DWD / WiF / Service Account token)
@@ -353,22 +371,24 @@ export class PermissionAuditor {
             id: 'SRC_SESSIONS_READ',
             category: 'SOURCE_DISCOVERY',
             name: 'Discovery Engine: Read Chat History Sessions',
-            status: 'GRANTED',
+            status: 'MISSING',
             level: 'REQUIRED',
-            details: `Discovery Engine session endpoint reachable in "${sourceProject}".`
+            details: `HTTP ${sessRes.status}: Cannot list chat sessions in source engine "${sourceAppId}".`,
+            remediation: `Grant roles/discoveryengine.viewer on project ${sourceProject} to read chat history sessions.`
           });
-          totalGranted++;
+          totalMissing++;
         }
       } catch (e: any) {
         permissions.push({
           id: 'SRC_SESSIONS_READ',
           category: 'SOURCE_DISCOVERY',
           name: 'Discovery Engine: Read Chat History Sessions',
-          status: 'GRANTED',
+          status: 'MISSING',
           level: 'REQUIRED',
-          details: `Discovery Engine endpoint accessible.`
+          details: `Cannot access Discovery Engine sessions in "${sourceProject}": ${e.message}`,
+          remediation: `Verify network connectivity and Discovery Engine permissions on project ${sourceProject}.`
         });
-        totalGranted++;
+        totalMissing++;
       }
 
       // 3b. Discovery Engine Custom Agents (Read)
@@ -411,6 +431,15 @@ export class PermissionAuditor {
           totalMissing++;
         }
       } catch (e: any) {
+        permissions.push({
+          id: 'SRC_AGENTS_READ',
+          category: 'SOURCE_DISCOVERY',
+          name: 'Discovery Engine: Read Custom Agents & Schemas',
+          status: 'MISSING',
+          level: 'REQUIRED',
+          details: `Error querying agents in "${sourceProject}": ${e.message}`,
+          remediation: `Grant roles/discoveryengine.viewer on ${sourceProject}.`
+        });
         totalMissing++;
       }
 
@@ -460,6 +489,15 @@ export class PermissionAuditor {
           totalMissing++;
         }
       } catch (e: any) {
+        permissions.push({
+          id: 'SRC_NOTEBOOKS_READ',
+          category: 'SOURCE_DISCOVERY',
+          name: 'NotebookLM: Read Research Notebooks & Sources',
+          status: 'MISSING',
+          level: 'RECOMMENDED',
+          details: `Error listing notebooks in "${sourceProject}": ${e.message}`,
+          remediation: `Ensure user exists in target domain or supply direct Notebook ID.`
+        });
         totalMissing++;
       }
     }
@@ -489,15 +527,24 @@ export class PermissionAuditor {
             id: 'TGT_ENGINE_VERIFY',
             category: 'TARGET_RESTORE',
             name: 'Target Engine & Collection Verification',
-            status: 'GRANTED',
+            status: 'MISSING',
             level: 'REQUIRED',
-            details: `Target project "${targetProject}" accessible for restoration.`
+            details: `HTTP ${tgtRes.status}: Target engine "${targetAppId}" could not be verified in "${targetProject}".`,
+            remediation: `Ensure target engine "${targetAppId}" exists and migration identity has roles/discoveryengine.editor or roles/discoveryengine.admin on project ${targetProject}.`
           });
-          totalGranted++;
+          totalMissing++;
         }
       } catch (e: any) {
-        // Fallback granted
-        totalGranted++;
+        permissions.push({
+          id: 'TGT_ENGINE_VERIFY',
+          category: 'TARGET_RESTORE',
+          name: 'Target Engine & Collection Verification',
+          status: 'MISSING',
+          level: 'REQUIRED',
+          details: `Error verifying target engine in "${targetProject}": ${e.message}`,
+          remediation: `Verify network connectivity and Discovery Engine permissions on target project ${targetProject}.`
+        });
+        totalMissing++;
       }
     }
 

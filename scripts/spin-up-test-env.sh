@@ -31,18 +31,18 @@ RED="\033[0;31m"
 CYAN="\033[0;36m"
 NC="\033[0m"
 
-# Default configuration mirroring testgebackupandrestorev2
-DEFAULT_ORG_ID="942977750288"
-DEFAULT_BILLING_ACCOUNT="0124EE-048763-814962"
+# Configuration defaults
+DEFAULT_ORG_ID="${GCP_ORG_ID:-}"
+DEFAULT_BILLING_ACCOUNT="${GCP_BILLING_ACCOUNT:-}"
 DEFAULT_LOCATION="global"
 DEFAULT_COLLECTION="default_collection"
 DEFAULT_ENGINE_ID="testnotebooks_$(date +%s)"
 DEFAULT_ENGINE_DISPLAY_NAME="testnotebooks"
-DEFAULT_DWD_SA="gemini-dwd-migrator@ancient-sandbox-322523.iam.gserviceaccount.com"
-DEFAULT_ADMIN_USER="admin@wdufrin.altostrat.com"
-DEFAULT_EDITOR_USER="bryankelly@wdufrin.altostrat.com"
-DEFAULT_WORKFORCE_POOL="wdufrin-entra"
-DEFAULT_ENTRA_USER="wdufrin@wdufrin.onmicrosoft.com"
+DEFAULT_DWD_SA="${MIGRATION_DWD_SA:-}"
+DEFAULT_ADMIN_USER="${GCP_ADMIN_USER:-}"
+DEFAULT_EDITOR_USER="${GCP_EDITOR_USER:-}"
+DEFAULT_WORKFORCE_POOL="${WORKFORCE_POOL_ID:-}"
+DEFAULT_ENTRA_USER="${ENTRA_USER_EMAIL:-}"
 
 # Variables with defaults
 PROJECT_ID=""
@@ -73,14 +73,13 @@ Options:
                                 Defaults to: ge-test-<timestamp>
   -e, --engine-id <ID>          Discovery Engine / App ID. Defaults to: testnotebooks_<timestamp>
   -n, --display-name <NAME>     Engine display name. Defaults to: testnotebooks
-  -o, --org-id <ORG_ID>         GCP Organization ID. Defaults to: 942977750288
-  -b, --billing <ACCOUNT_ID>    Cloud Billing Account ID. Defaults to: 0124EE-048763-814962
+  -o, --org-id <ORG_ID>         GCP Organization ID (or set $GCP_ORG_ID)
+  -b, --billing <ACCOUNT_ID>    Cloud Billing Account ID (or set $GCP_BILLING_ACCOUNT)
   -l, --location <LOCATION>     App location (global/us/eu). Defaults to: global
-  --dwd-sa <EMAIL>              Domain-Wide Delegation Service Account Email.
-                                Defaults to: gemini-dwd-migrator@ancient-sandbox-322523.iam.gserviceaccount.com
-  --admin-user <EMAIL>          Project Owner user email. Defaults to: admin@wdufrin.altostrat.com
-  --editor-user <EMAIL>         Discovery Engine Editor user email. Defaults to: bryankelly@wdufrin.altostrat.com
-  --workforce-pool <NAME>       Workforce Identity Pool ID. Defaults to: wdufrin-entra
+  --dwd-sa <EMAIL>              Domain-Wide Delegation Service Account Email
+  --admin-user <EMAIL>          Project Owner user email (defaults to active gcloud account)
+  --editor-user <EMAIL>         Discovery Engine Editor user email
+  --workforce-pool <NAME>       Workforce Identity Pool ID
   --update-config               Automatically update migration-config.json with the new project & engine.
   --as-source                   When updating config, set this project as "source" instead of "target".
   --seed-agents                 Clone sample test agents from testgebackupandrestorev2 into the new project.
@@ -243,27 +242,41 @@ if [[ "${PROJECT_EXISTS}" == "true" ]]; then
     fi
   fi
 else
-  echo -e "Creating project ${BOLD}${PROJECT_ID}${NC} in organization ${BOLD}${ORG_ID}${NC}..."
-  if [[ "${DRY_RUN}" == "false" ]]; then
-    gcloud projects create "${PROJECT_ID}" \
-      --organization="${ORG_ID}" \
-      --name="${PROJECT_ID}" \
-      --quiet
-    echo -e "${GREEN}✓ Project created successfully.${NC}"
+  if [[ -n "${ORG_ID}" ]]; then
+    echo -e "Creating project ${BOLD}${PROJECT_ID}${NC} in organization ${BOLD}${ORG_ID}${NC}..."
+    if [[ "${DRY_RUN}" == "false" ]]; then
+      gcloud projects create "${PROJECT_ID}" \
+        --organization="${ORG_ID}" \
+        --name="${PROJECT_ID}" \
+        --quiet
+      echo -e "${GREEN}✓ Project created successfully.${NC}"
+    fi
+  else
+    echo -e "Creating project ${BOLD}${PROJECT_ID}${NC}..."
+    if [[ "${DRY_RUN}" == "false" ]]; then
+      gcloud projects create "${PROJECT_ID}" \
+        --name="${PROJECT_ID}" \
+        --quiet
+      echo -e "${GREEN}✓ Project created successfully.${NC}"
+    fi
   fi
 fi
 
 # Step 3: Link Billing Account
-echo -e "\n${BOLD}[3/7] 💳 Linking Cloud Billing Account (${BILLING_ACCOUNT})...${NC}"
-if [[ "${DRY_RUN}" == "false" ]]; then
-  CURRENT_BILLING=$(gcloud billing projects describe "${PROJECT_ID}" --format="value(billingAccountName)" 2>/dev/null || echo "")
-  TARGET_BILLING_NAME="billingAccounts/${BILLING_ACCOUNT}"
-  if [[ "${CURRENT_BILLING}" == "${TARGET_BILLING_NAME}" ]]; then
-    echo -e "${GREEN}✓ Billing account already linked.${NC}"
-  else
-    gcloud billing projects link "${PROJECT_ID}" --billing-account="${BILLING_ACCOUNT}" --quiet
-    echo -e "${GREEN}✓ Billing linked successfully.${NC}"
+if [[ -n "${BILLING_ACCOUNT}" ]]; then
+  echo -e "\n${BOLD}[3/7] 💳 Linking Cloud Billing Account (${BILLING_ACCOUNT})...${NC}"
+  if [[ "${DRY_RUN}" == "false" ]]; then
+    CURRENT_BILLING=$(gcloud billing projects describe "${PROJECT_ID}" --format="value(billingAccountName)" 2>/dev/null || echo "")
+    TARGET_BILLING_NAME="billingAccounts/${BILLING_ACCOUNT}"
+    if [[ "${CURRENT_BILLING}" == "${TARGET_BILLING_NAME}" ]]; then
+      echo -e "${GREEN}✓ Billing account already linked.${NC}"
+    else
+      gcloud billing projects link "${PROJECT_ID}" --billing-account="${BILLING_ACCOUNT}" --quiet
+      echo -e "${GREEN}✓ Billing linked successfully.${NC}"
+    fi
   fi
+else
+  echo -e "\n${BOLD}[3/7] ℹ️ Skipping billing account linking (No billing account specified)...${NC}"
 fi
 
 # Step 4: Enable Required APIs
