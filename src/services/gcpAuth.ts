@@ -138,10 +138,9 @@ export class GcpAuthService {
       this.callerEmailCache = envEmail.replace(/^user:/i, '').trim();
       return this.callerEmailCache;
     }
-    try {
-      const token = await this.getAccessToken().catch(() => null);
-      if (token) {
-        const resp = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`);
+    if (this.staticToken) {
+      try {
+        const resp = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(this.staticToken)}`);
         if (resp.ok) {
           const data: any = await resp.json();
           if (data.email && !data.email.endsWith('.gserviceaccount.com')) {
@@ -149,8 +148,8 @@ export class GcpAuthService {
             return this.callerEmailCache;
           }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     try {
       const { stdout } = await execFileAsync('gcloud', ['config', 'get-value', 'account']);
@@ -196,9 +195,32 @@ export class GcpAuthService {
       );
 
       if (!isServiceIdentity) {
+        const callerEmail = await this.getCallerIdentity().catch(() => undefined);
+        if (callerEmail && callerEmail.toLowerCase() === lower) {
+          if (this.staticToken) {
+            return this.staticToken;
+          }
+          if (this.cachedAdcToken && this.cachedAdcToken.expiresAt > Date.now() + 60000) {
+            return this.cachedAdcToken.token;
+          }
+          try {
+            const { stdout } = await execFileAsync('gcloud', ['auth', 'print-access-token']);
+            const token = stdout.trim();
+            if (token) {
+              this.cachedAdcToken = {
+                token,
+                expiresAt: Date.now() + 3000 * 1000
+              };
+              return token;
+            }
+          } catch (err: any) {
+            logger.warn(`Failed to obtain caller token via gcloud ADC: ${err.message}`);
+          }
+        }
+
         // 1.a Workforce Identity Federation Impersonation (active if WIF configured or external domain)
         const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
-        if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' || isExternalDomain || fs.existsSync('wif-migration-key.pem')) {
+        if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' || isExternalDomain) {
           try {
             const wifToken = await this.mintWorkforceToken(cleanEmail);
             if (wifToken) {

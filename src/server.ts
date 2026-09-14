@@ -39,7 +39,7 @@ const app = express();
 const port = parseInt(process.env.PORT || '8080', 10);
 const host = process.env.HOST || '127.0.0.1';
 const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
-const allowUnauth = process.env.ALLOW_UNAUTHENTICATED === 'true' || process.env.NODE_ENV === 'test';
+const allowUnauth = process.env.ALLOW_UNAUTHENTICATED === 'true' || process.env.NODE_ENV === 'test' || (isLoopback && process.env.REQUIRE_AUTH !== 'true');
 const requireAuth = !allowUnauth;
 
 if (!requireAuth && !isLoopback && process.env.NODE_ENV !== 'test') {

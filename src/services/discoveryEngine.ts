@@ -18,7 +18,7 @@ import { EnvironmentConfig } from '../types/migration.js';
 import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, AppEngine, IamPolicy, Memory } from '../types/index.js';
 import { getSafeDiscoveryEngineUrl, validateResourceId } from '../security/validator.js';
 import { GcpAuthService } from './gcpAuth.js';
-import { retryWithBackoff } from '../utils/concurrency.js';
+import { retryWithBackoff, mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
 export class DiscoveryEngineClient {
@@ -217,17 +217,23 @@ export class DiscoveryEngineClient {
     return notebooks;
   }
 
-  async batchDeleteNotebooks(projectId: string, location: string, notebookNames: string[], forUserEmail?: string): Promise<any> {
+  async batchDeleteNotebooks(projectId: string, location: string, notebookNames: string[], forUserEmail?: string): Promise<{ success: boolean; count: number; failed: number }> {
     const baseUrl = getSafeDiscoveryEngineUrl(location);
     const url = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/notebooks:batchDelete`;
-    for (const name of notebookNames) {
+    let deleted = 0;
+    let failed = 0;
+
+    await mapConcurrent(notebookNames, 8, async (name) => {
       try {
         await this.request<any>(url, 'POST', { names: [name] }, projectId, undefined, forUserEmail);
+        deleted++;
       } catch (err: any) {
+        failed++;
         logger.warn(`Could not delete notebook ${name}: ${err.message}`);
       }
-    }
-    return { success: true, count: notebookNames.length };
+    });
+
+    return { success: failed === 0, count: deleted, failed };
   }
 
   async getNotebook(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<Notebook> {

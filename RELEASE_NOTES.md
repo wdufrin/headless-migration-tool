@@ -1,5 +1,5 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
-## Release Notes — Version 1.5.0
+## Release Notes — Version 1.5.1
 
 **Release Date:** September 14, 2026  
 **License:** Apache-2.0  
@@ -9,34 +9,32 @@
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.0** delivers an **Interactive Step 2 Config & Parity Audit Environment Selector** with real-time bi-directional synchronization to Migration Studio, safeguards preventing premature blank pre-checks, streamlined execution controls in Step 3, comprehensive forensic SWE audit remediations across Discovery Engine pagination (`listAllPages`) and fail-closed authentication, and an expanded test suite with **105 automated tests passing at 100%**.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.1** introduces **Multi-Project Setup Instructions & Cross-Project IAM Automation**, truthful live verification for Workforce Identity Federation (WiF) service account impersonation via the GCP IAM Credentials API, security fixes for web console embedded iframe sandboxes, and an expanded test suite with **106 automated tests passing at 100%**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 🎯 Interactive Step 2 Environment Selector & Parity Auditor
-* **Direct Environment Configuration**: Step 2 (Config & Parity Audit) now features interactive Source and Target environment cards allowing administrators to configure Source Project ID, Region, Collection, and Engine ID as well as Target Project ID, Region, Collection, and Engine ID directly before running parity checks.
-* **Bi-Directional State Synchronization**: Any configuration changed in Step 2 automatically synchronizes to Step 3 (Migration Studio), and vice-versa.
-* **Guided Empty-State Guardrail**: Prevents premature API calls when project IDs are unconfigured, guiding the user with actionable instructions instead of false-failure error states.
-* **Next Step Wizard Transition**: Added a prominent `Next: Proceed to Step 3: Migration Studio ➔` transition button at the bottom of the audit report.
+#### 1. 🌐 Multi-Project Architecture & Cross-Project IAM Setup Instructions
+* **Dual Project Setup in Auth Wizard**: Step 1 (DWD & WiF Setup Wizard) now prompts for both **Source GCP Project ID** and **Target GCP Project ID**, with real-time bi-directional synchronization to Step 2 (Audit) and Step 3 (Studio).
+* **Automated Cross-Project Command Generation**: The Setup Wizard's copy-paste `gcloud` command generator now automatically produces required IAM role bindings for both Source and Target environments:
+  * `roles/discoveryengine.admin` on both Source and Target projects.
+  * `roles/serviceusage.serviceUsageConsumer` on both Source and Target projects.
+* **Architecture Clarification & Dedicated Guide**: Added a prominent Cross-Project IAM Architecture Explainer banner in the console and authored the dedicated [JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md).
 
-#### 2. ⚡ Streamlined Step 3 (Migration Studio) Action Controls
-* **Eliminated Redundancy**: Removed the duplicate `Pre-Check Configurations & Gaps` button from Step 3, focusing the bottom action bar exclusively on migration execution (`⚡ Execute Pre-Flight Dry Run` / `⚡ Execute Live Migration`).
-* **Direct Back Navigation**: Added a clean `← Step 2: Config & Parity Audit` back-link for quick review of parity gaps.
+#### 2. 🔒 Hardened WiF Impersonation Live Verification (Anti-Lying Guardrail)
+* **Real GCP IAM Token Exchange**: Upgraded `/api/wizard/test-wif` to perform a live call to the GCP IAM Credentials API (`serviceAccounts.generateAccessToken`).
+* **Zero Simulated Passes**: Eliminates simulated or false positive test passes when testing service account impersonation. If the calling identity lacks `roles/iam.serviceAccountTokenCreator`, the test fails truthfully with actionable diagnostic messages.
 
-#### 3. 🛡️ Forensic SWE Hardening & Security Audit Remediation
-* **Zero Truncation Pagination (`listAllPages`)**: Replaced single-page API calls across Discovery Engine services with recursive `listAllPages` token pagination.
-* **Fail-Closed Authentication**: Strict token verification with caller service account email matching and OAuth2 audience validation.
-* **Explicit Opt-in Decommissioning**: Prevented accidental teardown by requiring explicit `--confirm <PROJECT_ID>` and programmatic verification.
-* **Zod Schema Audit Payloads**: Hardened `/api/audit/config` endpoints with strict Zod schema validation.
+#### 3. 🛡️ Web Console Iframe Extension Security Fix
+* **Sandbox Policy Hardening**: Added `allow-same-origin` to `artifactIframe` and `checklistIframe` sandbox attributes in `public/index.html`. This eliminates `Uncaught SecurityError: Blocked a frame with origin "null"` exceptions caused by Chrome extensions inspecting embedded frames while preserving strict execution sandboxing.
 
-#### 4. 🧪 Automated Test Suite Expansion (105/105 Tests Passing)
-* Full 105-test automated suite across 14 test suites passing with 100% success rate, verifying all auth types, audit engines, and export formatting pipelines.
+#### 4. 🧪 Automated Test Suite Expansion (106/106 Tests Passing)
+* Full 106-test automated suite across 14 test suites running at 100% pass rate.
 
 ---
 
-### 📦 Upgrade Guide (v1.4.1 &rarr; v1.5.0)
+### 📦 Upgrade Guide (v1.5.0 &rarr; v1.5.1)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -47,7 +45,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.0** deliver
    ```bash
    npm run build
    ```
-3. **Run Test Suite (All 105 Tests Passing)**:
+3. **Run Test Suite (All 106 Tests Passing)**:
    ```bash
    npm test
    ```
@@ -64,7 +62,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.0** deliver
 
 ### 📜 Version History
 
-* **v1.5.0** *(Current)*: Interactive Step 2 environment selector and bi-directional sync, streamlined Step 3 action bar, forensic SWE pagination and fail-closed auth hardening, and 105 passing tests.
+* **v1.5.1** *(Current)*: Multi-project IAM wizard and setup generator, hardened WiF impersonation live testing, iframe sandbox security fix, and 106 passing tests.
+* **v1.5.0**: Interactive Step 2 environment selector and bi-directional sync, streamlined Step 3 action bar, forensic SWE pagination and fail-closed auth hardening, and 105 passing tests.
 * **v1.4.1**: Organization Policy pre-flight matrix, 1-click project-level key creation override, WiF keyless architecture assessment, permission auditor org policy integration, and test suite maintenance.
 * **v1.4.0**: Standalone zero-dependency interactive Quiz & Flashcards applications, Explainer Video compression (`ffmpeg`), single-ZIP handover archive (`NotebookLM_Artifacts.zip`), clean notes migration policy, and interactive action checklists.
 * **v1.3.0**: User-created skills migration (`SkillMigrator`), Configuration Pre-Check & Gap Audit engine (`ConfigAuditEngine`), 1-click engine feature sync, attached DataStore filtering, and clipboard resilience.

@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.0</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.1</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -1649,7 +1649,7 @@
             </div>
           </div>
           <div class="flex-1 bg-black p-2 flex items-center justify-center overflow-hidden">
-            <iframe id="artifactIframe" class="w-full h-full rounded-xl border border-gray-800 bg-slate-950" sandbox="allow-scripts allow-popups allow-forms"></iframe>
+            <iframe id="artifactIframe" class="w-full h-full rounded-xl border border-gray-800 bg-slate-950" sandbox="allow-scripts allow-popups allow-forms allow-same-origin"></iframe>
           </div>
         </div>
       </div>
@@ -1893,7 +1893,7 @@
             </div>
           </div>
           <div class="flex-1 bg-black p-2 flex items-center justify-center overflow-hidden">
-            <iframe id="checklistIframe" class="w-full h-full rounded-xl border border-gray-800 bg-white" sandbox="allow-scripts allow-popups allow-forms"></iframe>
+            <iframe id="checklistIframe" class="w-full h-full rounded-xl border border-gray-800 bg-white" sandbox="allow-scripts allow-popups allow-forms allow-same-origin"></iframe>
           </div>
         </div>
       </div>
@@ -1935,19 +1935,37 @@
                 <span class="text-xs text-gray-400 font-mono">Google Cloud Console / CLI</span>
               </div>
               
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div>
+                  <label class="block text-gray-400 mb-1 font-medium flex items-center gap-1">
+                    <span>📤</span> Source GCP Project ID <span class="text-[10px] text-gray-500">(Read/Discovery)</span>
+                  </label>
+                  <input type="text" id="wizDwdSrcProject" value="" placeholder="e.g. your-source-project-id" oninput="updateDwdScript(); syncDwdProjectInputs('src');" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
+                </div>
                 <div>
                   <div class="flex items-center justify-between mb-1">
-                    <label class="block text-gray-400 font-medium">Target GCP Project ID</label>
+                    <label class="block text-gray-400 font-medium flex items-center gap-1">
+                      <span>📥</span> Target GCP Project ID <span class="text-[10px] text-gray-500">(Restore/Home)</span>
+                    </label>
                     <button type="button" onclick="checkDwdProjectOrgPolicies(this)" id="btnCheckOrgPolicies" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium transition" title="Inspect project organization policies for blockers">
-                      <span>🛡️</span> Check Org Policies
+                      <span>🛡️</span> Check Policies
                     </button>
                   </div>
-                  <input type="text" id="wizDwdProject" value="testgebackupandrestorev2" oninput="updateDwdScript(); debounceCheckDwdOrgPolicies();" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
+                  <input type="text" id="wizDwdProject" value="" placeholder="e.g. your-target-project-id" oninput="updateDwdScript(); syncDwdProjectInputs('tgt'); debounceCheckDwdOrgPolicies();" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
                 </div>
                 <div>
                   <label class="block text-gray-400 mb-1 font-medium">Service Account ID Name</label>
                   <input type="text" id="wizDwdSaName" value="gemini-dwd-migrator" oninput="updateDwdScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500">
+                </div>
+              </div>
+
+              <!-- Cross-Project Access Architecture Explainer -->
+              <div class="p-3 bg-indigo-950/40 border border-indigo-800/60 rounded-xl text-[11px] text-indigo-200 flex items-start gap-2.5">
+                <span class="text-base mt-0.5">ℹ️</span>
+                <div class="leading-relaxed">
+                  <span class="font-semibold text-white">Cross-Project IAM Architecture Requirement:</span>
+                  The migration service account is created in your Target project, but <strong class="text-amber-300">must have Discovery Engine & Service Usage roles bound in BOTH Source and Target projects</strong>.
+                  Without Source project permissions, Discovery Engine blocks engine/datastore discovery and metadata inspection with <code class="bg-gray-900 px-1 py-0.5 rounded text-rose-300 font-mono">403 Permission Denied</code>.
                 </div>
               </div>
 
@@ -2140,8 +2158,12 @@
                   <datalist id="dlWifPools"></datalist>
                 </div>
                 <div>
-                  <label class="block text-gray-400 mb-1 font-medium">Provider ID</label>
-                  <input type="text" id="wizWifProviderId" value="migration-dwd-provider" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-gray-400 font-medium">Provider ID</label>
+                    <span id="badgeWifProviderCount" class="hidden text-[10px] text-emerald-400 font-mono"></span>
+                  </div>
+                  <input type="text" id="wizWifProviderId" list="dlWifProviders" value="migration-dwd-provider" oninput="onWifProviderInput()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
+                  <datalist id="dlWifProviders"></datalist>
                 </div>
                 <div>
                   <label class="block text-gray-400 mb-1 font-medium">External IdP Issuer URI</label>
@@ -2449,14 +2471,49 @@
               <span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Test Iterations</span>
             </div>
 
-            <div class="flex items-center justify-between">
-              <div class="text-xs font-mono text-gray-400 font-normal">
-                Target Project: <code id="maintTargetProject" class="text-red-300 font-bold">Target Project</code>
+            <!-- Environment Scoping Box -->
+            <div class="p-3.5 bg-gray-900/90 border border-gray-800 rounded-xl space-y-3">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <!-- Target Project -->
+                <div>
+                  <label class="block text-xs font-semibold text-gray-300">Target Project</label>
+                  <div class="mt-1 flex items-center gap-2 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 font-mono text-xs text-red-300">
+                    <span class="text-red-400">🏢</span>
+                    <span id="maintTargetProject" class="font-bold">Target Project</span>
+                  </div>
+                </div>
+
+                <!-- Target GE App Instance (Engine) -->
+                <div>
+                  <div class="flex items-center justify-between">
+                    <label class="block text-xs font-semibold text-gray-300">Target GE App Instance (Engine)</label>
+                    <span id="maintTargetAppIdLoadingBadge" class="text-[10px] text-emerald-400 font-medium hidden">Loading engines...</span>
+                  </div>
+                  <select id="maintTargetAppId" onchange="handleMaintEngineSelectChange()" class="mt-1 w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500">
+                    <option value="">Loading target GE apps...</option>
+                  </select>
+                  <div id="maintTargetAppId_custom_container" class="hidden mt-1.5">
+                    <input type="text" id="maintTargetAppId_custom" placeholder="Enter custom Engine / App ID" class="w-full bg-gray-950 border border-red-500/70 rounded-lg px-3 py-1.5 text-xs text-white font-mono">
+                  </div>
+                </div>
               </div>
-              <div class="flex items-center gap-2 text-xs">
-                <button type="button" onclick="toggleAllMaintenanceCheckboxes(true)" class="text-indigo-400 hover:text-indigo-300 underline">Select All</button>
-                <span class="text-gray-600">•</span>
-                <button type="button" onclick="toggleAllMaintenanceCheckboxes(false)" class="text-gray-400 hover:text-gray-300 underline">Deselect All</button>
+
+              <!-- Scope Explanation Callout -->
+              <div class="flex items-start gap-2.5 p-2.5 bg-indigo-950/30 border border-indigo-500/30 rounded-lg text-[11px] text-indigo-200">
+                <span class="text-sm">🎯</span>
+                <div class="space-y-0.5">
+                  <p><strong class="text-white">GE App Isolation:</strong> Custom Agents, Chat History Sessions, and User Memories will be wiped <em>exclusively</em> inside the selected GE App instance. Other Gemini Enterprise apps in project <code class="text-red-300" id="maintScopeProjectCallout">target-project</code> are safeguarded.</p>
+                  <p class="text-gray-400">NotebookLM notebooks exist at the project/region level and will be cleaned per user identity across the project.</p>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between pt-1 border-t border-gray-800/80">
+                <span class="text-xs text-gray-400 font-medium">Select categories to reset:</span>
+                <div class="flex items-center gap-2 text-xs">
+                  <button type="button" onclick="toggleAllMaintenanceCheckboxes(true)" class="text-indigo-400 hover:text-indigo-300 underline">Select All</button>
+                  <span class="text-gray-600">•</span>
+                  <button type="button" onclick="toggleAllMaintenanceCheckboxes(false)" class="text-gray-400 hover:text-gray-300 underline">Deselect All</button>
+                </div>
               </div>
             </div>
 
@@ -2770,6 +2827,16 @@
       } else if (tabId === 'handover') {
         loadUserReports();
       } else if (tabId === 'wizard') {
+        const srcProj = document.getElementById('srcProjectId')?.value?.trim() || document.getElementById('auditSrcProj')?.value?.trim();
+        const wizSrcProj = document.getElementById('wizDwdSrcProject');
+        if (wizSrcProj && srcProj && !wizSrcProj.value.trim()) {
+          wizSrcProj.value = srcProj;
+        }
+        const tgtProj = document.getElementById('tgtProjectId')?.value?.trim() || document.getElementById('auditTgtProj')?.value?.trim();
+        const wizProj = document.getElementById('wizDwdProject');
+        if (wizProj && tgtProj && !wizProj.value.trim()) {
+          wizProj.value = tgtProj;
+        }
         updateDwdScript();
         updateWifScript();
         generateAndSaveWifConfig(false);
@@ -2779,6 +2846,11 @@
         const env = getActiveEnvParams();
         const projectEl = document.getElementById('maintTargetProject');
         if (projectEl) projectEl.textContent = env.tgtProjectId || 'None (Configure Target Project)';
+        const calloutProjEl = document.getElementById('maintScopeProjectCallout');
+        if (calloutProjEl) calloutProjEl.textContent = env.tgtProjectId || 'target-project';
+
+        populateMaintTargetAppOptions(env.tgtAppId);
+
         const inputUsers = document.getElementById('maintTargetUsers');
         if (inputUsers && !inputUsers.value.trim()) {
           const selected = typeof getSelectedUsersForMigration === 'function' ? getSelectedUsersForMigration() : [];
@@ -2790,6 +2862,80 @@
         }
         if (typeof refreshDecommissionPreview === 'function') {
           refreshDecommissionPreview();
+        }
+      }
+    }
+
+    async function populateMaintTargetAppOptions(preferredAppId) {
+      const maintSelect = document.getElementById('maintTargetAppId');
+      const loadingBadge = document.getElementById('maintTargetAppIdLoadingBadge');
+      if (!maintSelect) return;
+
+      const env = getActiveEnvParams();
+      const tgtSelect = document.getElementById('tgtAppId');
+
+      // If tgtAppId already has populated options, mirror them immediately
+      if (tgtSelect && tgtSelect.options.length > 0) {
+        maintSelect.innerHTML = tgtSelect.innerHTML;
+        const targetVal = preferredAppId || getFieldValue('tgtAppId');
+        if (targetVal) maintSelect.value = targetVal;
+        handleMaintEngineSelectChange();
+        return;
+      }
+
+      if (!env.tgtProjectId) {
+        maintSelect.innerHTML = '<option value="">⚠️ Target project not configured</option>';
+        return;
+      }
+
+      if (loadingBadge) loadingBadge.classList.remove('hidden');
+      try {
+        const res = await fetch(`/api/engines/list?projectId=${encodeURIComponent(env.tgtProjectId)}&location=${encodeURIComponent(env.tgtLocation)}&collectionId=${encodeURIComponent(env.tgtCollectionId)}`);
+        const data = await res.json();
+        const engines = data.engines || [];
+
+        maintSelect.innerHTML = '';
+        if (engines.length > 0) {
+          engines.forEach(eng => {
+            const opt = document.createElement('option');
+            opt.value = eng.id;
+            opt.textContent = `${eng.displayName || eng.id} (${eng.id})`;
+            maintSelect.appendChild(opt);
+          });
+        } else {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.disabled = true;
+          opt.textContent = '⚠️ No engines found in target project (select Custom)';
+          maintSelect.appendChild(opt);
+        }
+
+        const customOpt = document.createElement('option');
+        customOpt.value = 'custom';
+        customOpt.textContent = '✏️ Enter Custom Engine / App ID...';
+        maintSelect.appendChild(customOpt);
+
+        if (preferredAppId) {
+          maintSelect.value = preferredAppId;
+        } else if (engines.length > 0) {
+          maintSelect.selectedIndex = 0;
+        }
+        handleMaintEngineSelectChange();
+      } catch (e) {
+        console.warn('Could not populate maintenance target apps:', e);
+      } finally {
+        if (loadingBadge) loadingBadge.classList.add('hidden');
+      }
+    }
+
+    function handleMaintEngineSelectChange() {
+      const select = document.getElementById('maintTargetAppId');
+      const customContainer = document.getElementById('maintTargetAppId_custom_container');
+      if (select && customContainer) {
+        if (select.value === 'custom') {
+          customContainer.classList.remove('hidden');
+        } else {
+          customContainer.classList.add('hidden');
         }
       }
     }
@@ -4137,29 +4283,67 @@ gcloud org-policies set-policy /tmp/override_sa_key.yaml --project=${projectId}`
       }
     }
 
-    function updateDwdScript() {
-      const proj = document.getElementById('wizDwdProject')?.value?.trim() || '<PROJECT_ID>';
-      const saName = document.getElementById('wizDwdSaName')?.value?.trim() || 'gemini-dwd-migrator';
-      const saEmail = `${saName}@${proj}.iam.gserviceaccount.com`;
+    function syncDwdProjectInputs(type) {
+      if (type === 'src') {
+        const p = document.getElementById('wizDwdSrcProject')?.value?.trim() || '';
+        const auditP = document.getElementById('auditSrcProj');
+        if (auditP && p && auditP.value !== p) { auditP.value = p; if (typeof loadAuditSourceEngines === 'function') loadAuditSourceEngines(); }
+        const studioP = document.getElementById('srcProjectId');
+        if (studioP && p && studioP.value !== p) studioP.value = p;
+      } else if (type === 'tgt') {
+        const p = document.getElementById('wizDwdProject')?.value?.trim() || '';
+        const auditP = document.getElementById('auditTgtProj');
+        if (auditP && p && auditP.value !== p) { auditP.value = p; if (typeof loadAuditTargetEngines === 'function') loadAuditTargetEngines(); }
+        const studioP = document.getElementById('tgtProjectId');
+        if (studioP && p && studioP.value !== p) studioP.value = p;
+      }
+    }
 
-      const script = `# 1. Create the Service Account
+    function updateDwdScript() {
+      const srcProj = document.getElementById('wizDwdSrcProject')?.value?.trim() || document.getElementById('auditSrcProj')?.value?.trim() || document.getElementById('srcProjectId')?.value?.trim() || '<SOURCE_PROJECT_ID>';
+      const tgtProj = document.getElementById('wizDwdProject')?.value?.trim() || document.getElementById('auditTgtProj')?.value?.trim() || document.getElementById('tgtProjectId')?.value?.trim() || '<TARGET_PROJECT_ID>';
+      const saName = document.getElementById('wizDwdSaName')?.value?.trim() || 'gemini-dwd-migrator';
+      const saEmail = `${saName}@${tgtProj}.iam.gserviceaccount.com`;
+
+      const script = `# ==============================================================================
+# 1. CREATE SERVICE ACCOUNT (in Target Project: ${tgtProj})
+# ==============================================================================
 gcloud iam service-accounts create "${saName}" \\
     --display-name="Gemini Enterprise Migration Service Account" \\
-    --project="${proj}"
+    --project="${tgtProj}"
 
-# 2. Grant Discovery Engine Admin & Token Creator Roles
-gcloud projects add-iam-policy-binding "${proj}" \\
+# ==============================================================================
+# 2. TARGET PROJECT PERMISSIONS (Engine creation, restoring agents, token creator)
+# ==============================================================================
+gcloud projects add-iam-policy-binding "${tgtProj}" \\
     --member="serviceAccount:${saEmail}" \\
     --role="roles/discoveryengine.admin"
 
-gcloud projects add-iam-policy-binding "${proj}" \\
+gcloud projects add-iam-policy-binding "${tgtProj}" \\
     --member="serviceAccount:${saEmail}" \\
     --role="roles/iam.serviceAccountTokenCreator"
 
-# 3. Generate and download the JSON key file
+gcloud projects add-iam-policy-binding "${tgtProj}" \\
+    --member="serviceAccount:${saEmail}" \\
+    --role="roles/serviceusage.serviceUsageConsumer"
+
+# ==============================================================================
+# 3. SOURCE PROJECT PERMISSIONS (MANDATORY: Read & discover source engines/datastores)
+# ==============================================================================
+gcloud projects add-iam-policy-binding "${srcProj}" \\
+    --member="serviceAccount:${saEmail}" \\
+    --role="roles/discoveryengine.admin"
+
+gcloud projects add-iam-policy-binding "${srcProj}" \\
+    --member="serviceAccount:${saEmail}" \\
+    --role="roles/serviceusage.serviceUsageConsumer"
+
+# ==============================================================================
+# 4. GENERATE & DOWNLOAD SA KEY (saved locally as sa-dwd-key.json)
+# ==============================================================================
 gcloud iam service-accounts keys create sa-dwd-key.json \\
     --iam-account="${saEmail}" \\
-    --project="${proj}"`;
+    --project="${tgtProj}"`;
 
       const el = document.getElementById('wizDwdScript');
       if (el) el.textContent = script;
@@ -4213,6 +4397,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     }
 
     let discoveredWifData = null;
+    let cachedWifProviders = [];
 
     async function autoDiscoverWif(btnEl = null) {
       let origText = '';
@@ -4332,11 +4517,30 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           <button type="button" onclick="selectDiscoveredPool('${escapeHtml(p.id)}')" 
             class="px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition border flex items-center gap-1.5 ${
               isSelected 
-                ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-600/30' 
+                ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-600/30 ring-1 ring-purple-400/50' 
                 : 'bg-gray-900/80 text-gray-300 border-gray-700 hover:border-purple-500/60 hover:text-white'
             }">
             <span>${isSelected ? '●' : '○'}</span>
             <span>${escapeHtml(p.id)}</span>
+            <span class="text-[9px] px-1 py-0.2 rounded bg-black/40 text-emerald-300">${escapeHtml(p.state || 'ACTIVE')}</span>
+          </button>
+        `;
+      }).join('');
+
+      // Discovered Provider badges for the active pool
+      const providerPills = (cachedWifProviders || []).map(p => {
+        const pName = p.name ? p.name.split('/').pop() : 'provider';
+        const isSelected = pName.toLowerCase() === currentProv.toLowerCase();
+        const issuerUri = p.oidc?.issuerUri || '';
+        return `
+          <button type="button" onclick="selectDiscoveredProvider('${escapeHtml(pName)}', '${escapeHtml(issuerUri)}')" 
+            class="px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition border flex items-center gap-1.5 ${
+              isSelected 
+                ? 'bg-emerald-600 text-white border-emerald-400 shadow-md shadow-emerald-600/30 ring-1 ring-emerald-400/50' 
+                : 'bg-gray-900/80 text-gray-300 border-gray-700 hover:border-emerald-500/60 hover:text-white'
+            }">
+            <span>${isSelected ? '●' : '○'}</span>
+            <span>${escapeHtml(pName)}</span>
             <span class="text-[9px] px-1 py-0.2 rounded bg-black/40 text-emerald-300">${escapeHtml(p.state || 'ACTIVE')}</span>
           </button>
         `;
@@ -4362,12 +4566,20 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
              </button>
            </div>`;
 
-      // 1-Click Provider Register Action
-      const registerAction = `
-        <button type="button" onclick="registerMigrationProviderInGcp(this)" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-semibold transition flex items-center gap-1 shrink-0 shadow">
-          <span>🚀</span> 1-Click Register "${escapeHtml(currentProv)}" in GCP
-        </button>
-      `;
+      // Check if currentProv is already active in GCP
+      const isProvActive = (cachedWifProviders || []).some(p => {
+        const name = p.name ? p.name.split('/').pop() : '';
+        return name.toLowerCase() === currentProv.toLowerCase();
+      });
+
+      // 1-Click Provider Register Action vs Active badge
+      const registerAction = isProvActive
+        ? `<div class="px-3 py-1 bg-emerald-950/70 border border-emerald-500/60 text-emerald-300 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 shrink-0 shadow">
+             <span>✅</span> Provider "${escapeHtml(currentProv)}" is Active in GCP
+           </div>`
+        : `<button type="button" onclick="registerMigrationProviderInGcp(this)" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-semibold transition flex items-center gap-1 shrink-0 shadow">
+             <span>🚀</span> 1-Click Register "${escapeHtml(currentProv)}" in GCP
+           </button>`;
 
       banner.className = 'p-4 rounded-xl border border-purple-500/40 bg-purple-950/20 text-xs space-y-3';
       banner.innerHTML = `
@@ -4399,12 +4611,24 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           </div>
         </div>
 
+        ${cachedWifProviders && cachedWifProviders.length > 0 ? `
+        <div>
+          <div class="text-[11px] font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+            <span>Discovered Identity Providers in Pool <code class="text-purple-300 font-mono font-bold">${escapeHtml(currentPool || 'selected')}</code>:</span>
+            <span class="text-[10px] text-gray-400">Click a provider to select</span>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            ${providerPills}
+          </div>
+        </div>
+        ` : ''}
+
         ${keyStatusBadge}
 
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-purple-500/20 text-[11px] text-gray-300">
           <div class="flex items-center gap-1.5">
             <span>Target Provider:</span>
-            <code class="text-white font-mono font-semibold bg-gray-900 px-1.5 py-0.5 rounded border border-gray-800">${escapeHtml(currentProv)}</code>
+            <code class="text-emerald-300 font-mono font-semibold bg-gray-900 px-1.5 py-0.5 rounded border border-gray-800">${escapeHtml(currentProv)}</code>
             <span>in pool</span>
             <code class="text-purple-300 font-mono font-semibold bg-gray-900 px-1.5 py-0.5 rounded border border-gray-800">${escapeHtml(currentPool || 'None')}</code>
           </div>
@@ -4422,6 +4646,177 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       updateWifScript();
       generateAndSaveWifConfig(false);
       verifyWifPoolInGcp();
+    }
+
+    function selectDiscoveredProvider(provId, issuerUri = '') {
+      const provInput = document.getElementById('wizWifProviderId');
+      if (provInput) provInput.value = provId;
+
+      if (issuerUri && issuerUri.trim()) {
+        const issuerInput = document.getElementById('wizWifIssuer');
+        if (issuerInput) issuerInput.value = issuerUri.trim();
+      }
+
+      // Sync preset buttons state
+      document.querySelectorAll('.wif-preset-btn').forEach(b => {
+        b.className = 'wif-preset-btn p-3 rounded-xl border border-gray-800 bg-gray-900/60 text-left transition hover:border-purple-400';
+      });
+      if (provId === 'migration-dwd-provider') {
+        const b = document.getElementById('wif-preset-DWD_MIGRATOR');
+        if (b) b.className = 'wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition';
+      } else if (provId.includes('okta')) {
+        const b = document.getElementById('wif-preset-OKTA');
+        if (b) b.className = 'wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition';
+      } else if (provId.includes('entra')) {
+        const b = document.getElementById('wif-preset-ENTRA');
+        if (b) b.className = 'wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition';
+      } else if (provId.includes('ping')) {
+        const b = document.getElementById('wif-preset-PING');
+        if (b) b.className = 'wif-preset-btn p-3 rounded-xl border border-purple-500/60 bg-purple-950/20 text-left transition';
+      }
+
+      if (discoveredWifData) {
+        renderWifDiscoveryBanner(discoveredWifData);
+      }
+      updateWifScript();
+      generateAndSaveWifConfig(false);
+      renderRegisteredProviders();
+    }
+
+    function onWifProviderInput() {
+      const val = document.getElementById('wizWifProviderId')?.value?.trim();
+      if (val && cachedWifProviders && cachedWifProviders.length > 0) {
+        const match = cachedWifProviders.find(p => {
+          const name = p.name ? p.name.split('/').pop() : '';
+          return name.toLowerCase() === val.toLowerCase();
+        });
+        if (match && match.oidc?.issuerUri) {
+          const issuerInput = document.getElementById('wizWifIssuer');
+          if (issuerInput) issuerInput.value = match.oidc.issuerUri;
+        }
+      }
+      if (discoveredWifData) {
+        renderWifDiscoveryBanner(discoveredWifData);
+      }
+      updateWifScript();
+      generateAndSaveWifConfig(false);
+      renderRegisteredProviders();
+    }
+
+    function renderRegisteredProviders() {
+      const provListEl = document.getElementById('wifProvidersContainer');
+      if (!provListEl) return;
+
+      const provId = document.getElementById('wizWifProviderId')?.value?.trim() || '';
+
+      if (!cachedWifProviders || cachedWifProviders.length === 0) {
+        provListEl.innerHTML = '<div class="text-gray-400 text-xs italic p-2">No providers found in this workforce pool.</div>';
+        return;
+      }
+
+      const cardsHtml = cachedWifProviders.map(p => {
+        const name = p.name ? p.name.split('/').pop() : 'provider';
+        const isTarget = name.toLowerCase() === provId.toLowerCase();
+        const issuerUri = p.oidc?.issuerUri || '';
+        const typeLabel = p.oidc ? 'OIDC' : (p.saml ? 'SAML' : 'IdP');
+        const desc = p.displayName || p.description || (p.oidc ? 'Active OIDC' : 'Active Provider');
+
+        const isHeadless = (
+          name.toLowerCase().includes('dwd') || 
+          name.toLowerCase().includes('migration') || 
+          (issuerUri && issuerUri.includes('gemini-migration')) ||
+          Boolean(p.oidc?.jwksJson)
+        );
+
+        const capabilityBadge = isHeadless
+          ? '<span class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700/60" title="Configured for headless automated STS impersonation via local RSA keys">⚡ Headless DWD Ready</span>'
+          : `<span class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-cyan-950 text-cyan-300 border border-cyan-800/60" title="Configured for interactive human user login via ${escapeHtml(typeLabel)}">👤 Interactive SSO</span>`;
+
+        return `
+          <div onclick="selectDiscoveredProvider('${escapeHtml(name)}', '${escapeHtml(issuerUri)}')"
+            class="flex items-center justify-between p-3 rounded-xl transition cursor-pointer ${
+              isTarget 
+                ? 'border-2 border-emerald-500 bg-emerald-950/40 shadow-lg shadow-emerald-950/50 ring-1 ring-emerald-500/40' 
+                : 'bg-gray-900/90 border border-gray-800 hover:border-purple-500/60 hover:bg-purple-950/20'
+            } text-xs group">
+            <div class="flex items-center gap-3">
+              <span class="${isTarget ? 'text-emerald-400 font-bold text-sm' : 'text-gray-500 group-hover:text-purple-400 text-sm'}">
+                ${isTarget ? '●' : '○'}
+              </span>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-white font-bold text-xs ${isTarget ? 'text-emerald-300' : ''}">${escapeHtml(name)}</span>
+                  <span class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-purple-900/40 text-purple-300 border border-purple-800/60">${typeLabel}</span>
+                  ${capabilityBadge}
+                  ${isTarget ? '<span class="text-[10px] font-bold text-emerald-400 flex items-center gap-1">● ACTIVE SELECTION</span>' : ''}
+                </div>
+                <div class="text-[11px] text-gray-400 mt-0.5">
+                  ${escapeHtml(desc)} ${issuerUri ? `• <span class="font-mono text-gray-500">${escapeHtml(issuerUri)}</span>` : ''}
+                </div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">${escapeHtml(p.state || 'ACTIVE')}</span>
+              ${isTarget 
+                ? '<span class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-500 text-gray-950 border border-emerald-400 shadow flex items-center gap-1">✓ SELECTED</span>'
+                : '<span class="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-gray-800 text-gray-400 group-hover:bg-purple-600 group-hover:text-white transition">Click to Select</span>'
+              }
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const activeObj = cachedWifProviders.find(p => {
+        const n = p.name ? p.name.split('/').pop() : '';
+        return n.toLowerCase() === provId.toLowerCase();
+      });
+      const activeIsHeadless = activeObj ? (
+        (activeObj.name && activeObj.name.toLowerCase().includes('dwd')) ||
+        (activeObj.name && activeObj.name.toLowerCase().includes('migration')) ||
+        (activeObj.oidc?.issuerUri && activeObj.oidc.issuerUri.includes('gemini-migration')) ||
+        Boolean(activeObj.oidc?.jwksJson)
+      ) : false;
+
+      const capabilityBox = activeObj ? (
+        activeIsHeadless
+          ? `
+            <div class="mt-2 p-3 rounded-xl bg-emerald-950/40 border border-emerald-700/60 text-emerald-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div class="space-y-0.5">
+                <div class="font-bold flex items-center gap-1.5 text-emerald-300">
+                  <span>⚡</span> <span>Impersonation Check: Provider "${escapeHtml(provId)}" is Headless Ready</span>
+                </div>
+                <div class="text-[11px] text-gray-300">
+                  Configured with dedicated RSA signing keys. The migration engine can mint and exchange user-scoped STS tokens for any human identity automatically without prompts.
+                </div>
+              </div>
+              <button type="button" onclick="testWifConnection()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-gray-950 rounded-lg text-xs font-bold shrink-0 transition shadow flex items-center gap-1">
+                <span>🧪</span> Verify Live in STS
+              </button>
+            </div>
+          `
+          : `
+            <div class="mt-2 p-3 rounded-xl bg-amber-950/30 border border-amber-800/60 text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div class="space-y-0.5">
+                <div class="font-bold flex items-center gap-1.5 text-amber-300">
+                  <span>ℹ️</span> <span>Impersonation Check: Provider "${escapeHtml(provId)}" is Interactive SSO Only</span>
+                </div>
+                <div class="text-[11px] text-gray-300">
+                  This provider delegates signing to your enterprise IdP (${escapeHtml(activeObj.oidc ? 'OIDC' : 'SAML')}) for browser logins. For automated headless user migration, switch to the dedicated DWD provider or supply live IdP tokens.
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button type="button" onclick="testWifConnection()" class="px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold border border-gray-700 transition">
+                  🧪 Test STS
+                </button>
+                <button type="button" onclick="selectDiscoveredProvider('migration-dwd-provider', 'https://gemini-migration.internal')" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition shadow flex items-center gap-1">
+                  <span>⚡</span> Switch to DWD Provider
+                </button>
+              </div>
+            </div>
+          `
+      ) : '';
+
+      provListEl.innerHTML = cardsHtml + capabilityBox;
     }
 
     async function generateLocalWifKeys(btnEl = null) {
@@ -4523,20 +4918,21 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         statusCard.classList.remove('hidden');
 
         if (data.verified) {
-          const provBadges = (data.providers || []).map(p => {
-            const name = p.name ? p.name.split('/').pop() : 'provider';
-            const isTarget = name === provId;
-            return `
-              <div class="flex items-center justify-between p-2.5 rounded-lg bg-gray-900 border ${isTarget ? 'border-emerald-500/50 bg-emerald-950/20' : 'border-gray-800'} text-xs">
-                <div class="flex items-center gap-2">
-                  <span class="${isTarget ? 'text-emerald-400' : 'text-purple-400'} font-bold">●</span>
-                  <span class="font-mono text-white font-semibold">${escapeHtml(name)}</span>
-                  <span class="text-[11px] text-gray-400">(${escapeHtml(p.displayName || p.description || 'Active OIDC')})</span>
-                </div>
-                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">${escapeHtml(p.state || 'ACTIVE')}</span>
-              </div>
-            `;
-          }).join('');
+          cachedWifProviders = data.providers || [];
+
+          // Populate Datalist and badge
+          const dlProvs = document.getElementById('dlWifProviders');
+          if (dlProvs) {
+            dlProvs.innerHTML = cachedWifProviders.map(p => {
+              const pName = p.name ? p.name.split('/').pop() : 'provider';
+              return `<option value="${escapeHtml(pName)}">${escapeHtml(p.displayName ? `${p.displayName} (${pName})` : pName)}</option>`;
+            }).join('');
+          }
+          const badgeProv = document.getElementById('badgeWifProviderCount');
+          if (badgeProv && cachedWifProviders.length > 0) {
+            badgeProv.textContent = `${cachedWifProviders.length} provider${cachedWifProviders.length === 1 ? '' : 's'} discovered`;
+            badgeProv.classList.remove('hidden');
+          }
 
           statusCard.className = 'p-4 rounded-xl border border-emerald-500/40 bg-emerald-950/20 text-xs space-y-3';
           statusCard.innerHTML = `
@@ -4551,14 +4947,24 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
               Parent Org: <code class="text-amber-300 font-mono">${escapeHtml(data.pool.parent || '')}</code> • Session Duration: <code class="text-cyan-300 font-mono">${escapeHtml(data.pool.sessionDuration || '3600s')}</code>
             </div>
             <div class="space-y-1.5 pt-1">
-              <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Registered Identity Providers (${data.providers?.length || 0}):</div>
-              <div class="space-y-1.5">${provBadges}</div>
+              <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                <span>Registered Identity Providers (${cachedWifProviders.length}):</span>
+                <span class="text-[10px] text-purple-400 lowercase font-normal flex items-center gap-1">
+                  <span>👆</span> click any provider card to select
+                </span>
+              </div>
+              <div id="wifProvidersContainer" class="space-y-1.5 pt-0.5"></div>
             </div>
             <div class="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-200 text-[11px] flex items-center gap-2">
               <span>🎉</span>
-              <span><strong>Provisioning Complete:</strong> Pool and migration provider are active in GCP. No terminal commands required.</span>
+              <span><strong>Provisioning Complete:</strong> Pool and identity providers are active in GCP. Select your desired provider above or create a new one.</span>
             </div>
           `;
+
+          renderRegisteredProviders();
+          if (discoveredWifData) {
+            renderWifDiscoveryBanner(discoveredWifData);
+          }
         } else {
           statusCard.className = 'p-4 rounded-xl border border-amber-500/40 bg-amber-950/20 text-xs space-y-2';
           statusCard.innerHTML = `
@@ -4604,8 +5010,12 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         document.getElementById('wizWifProviderId').value = 'ping-provider';
         document.getElementById('wizWifIssuer').value = 'https://auth.pingone.com/<ENV_ID>/as';
       }
+      if (discoveredWifData) {
+        renderWifDiscoveryBanner(discoveredWifData);
+      }
       updateWifScript();
       generateAndSaveWifConfig(false);
+      renderRegisteredProviders();
       verifyWifPoolInGcp();
     }
 
@@ -4772,12 +5182,14 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       resultBox.innerHTML = `<span>⏳ Verifying Workforce Identity Federation configuration & testing impersonation...</span>`;
 
       try {
+        const tgtProj = document.getElementById('wizTgtProj')?.value?.trim() || document.getElementById('auditTgtProj')?.value?.trim() || '';
         const res = await fetch('/api/wizard/test-wif', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             serviceAccountToImpersonate: saEmail,
             testUserEmail: testEmail,
+            targetProjectId: tgtProj,
             wifConfig: currentWifConfigJson
           })
         });
@@ -4812,8 +5224,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           resultBox.className = 'rounded-xl border border-red-500/40 bg-red-950/20 p-3.5 text-xs text-red-300 space-y-2.5';
           const remediationHtml = Array.isArray(data.remediation) && data.remediation.length > 0 
             ? `<div class="mt-2 space-y-1 bg-gray-900/80 p-2.5 rounded-lg border border-gray-800">
-                 <div class="font-semibold text-gray-200 text-[11px] mb-1">Required Next Steps:</div>
-                 <ul class="list-disc list-inside space-y-1 text-gray-300 text-[11px]">
+                 <div class="font-semibold text-gray-200 text-[11px] mb-1">Required Next Steps & IAM Fixes:</div>
+                 <ul class="list-disc list-inside space-y-1 text-gray-300 text-[11px] font-mono select-all">
                    ${data.remediation.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
                  </ul>
                </div>`
@@ -4833,11 +5245,17 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             `;
           }
 
+          const errorTitle = data.error === 'ServiceAccountImpersonationFailed' 
+            ? '❌ Service Account Impersonation Failed' 
+            : (data.error === 'WorkforcePrincipalNotAuthorized' ? '❌ Workforce Principal Authorization Failed' : '❌ WiF STS Token Exchange Failed');
+
           resultBox.innerHTML = `
             <div class="flex items-center gap-2 font-bold text-red-400">
-              <span>❌ WiF STS Token Exchange Failed</span>
+              <span>${errorTitle}</span>
             </div>
-            <p class="text-gray-300 text-xs">${escapeHtml(data.message)}</p>
+            <p class="text-gray-300 text-xs leading-relaxed">${escapeHtml(data.message)}</p>
+            ${data.impersonatedPrincipal ? `<div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[11px] text-purple-300">Principal: ${escapeHtml(data.impersonatedPrincipal)}</div>` : ''}
+            ${data.attemptedServiceAccount ? `<div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[11px] text-rose-300">Attempted SA: ${escapeHtml(data.attemptedServiceAccount)}</div>` : ''}
             ${fixBtnHtml}
             ${remediationHtml}
           `;
@@ -5195,6 +5613,12 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             auditSelect.innerHTML = engineSelect.innerHTML;
             auditSelect.value = engineSelect.value;
           }
+          const maintSelect = document.getElementById('maintTargetAppId');
+          if (maintSelect) {
+            maintSelect.innerHTML = engineSelect.innerHTML;
+            maintSelect.value = engineSelect.value;
+            handleMaintEngineSelectChange();
+          }
           const tgtLocEl = document.getElementById('auditTargetLocationLabel');
           if (tgtLocEl) {
             const effectiveApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || 'default_engine';
@@ -5245,6 +5669,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       if (auditSrcC && auditSrcC.value !== c) auditSrcC.value = c;
       const srcProjEl = document.getElementById('auditSourceProjectLabel');
       if (srcProjEl) srcProjEl.textContent = p || 'Not configured';
+      const wizSrcProj = document.getElementById('wizDwdSrcProject');
+      if (wizSrcProj && !wizSrcProj.value.trim() && p) {
+        wizSrcProj.value = p;
+        if (typeof updateDwdScript === 'function') updateDwdScript();
+      }
 
       clearTimeout(srcEnvDebounce);
       srcEnvDebounce = setTimeout(() => {
@@ -5266,6 +5695,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       if (auditTgtC && auditTgtC.value !== c) auditTgtC.value = c;
       const tgtProjEl = document.getElementById('auditTargetProjectLabel');
       if (tgtProjEl) tgtProjEl.textContent = p || 'Not configured';
+      const wizProj = document.getElementById('wizDwdProject');
+      if (wizProj && !wizProj.value.trim() && p) {
+        wizProj.value = p;
+        if (typeof updateDwdScript === 'function') updateDwdScript();
+      }
 
       clearTimeout(tgtEnvDebounce);
       tgtEnvDebounce = setTimeout(() => {
@@ -6353,8 +6787,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
                   ? '<span class="text-blue-400 font-semibold">🎯 Registry Skill</span>'
                   : '<span class="text-purple-400 font-semibold">🤖 Agent</span>';
 
-        const targetProj = (activeReportData && activeReportData.target && activeReportData.target.projectId) || (document.getElementById('tgtProjectId')?.value || 'testgebackupandrestorev2').trim();
-        const targetApp = (activeReportData && activeReportData.target && (activeReportData.target.engineId || activeReportData.target.appId)) || (getFieldValue('tgtAppId') || 'testnotebooks_1784725785748').trim();
+        const targetProj = (activeReportData && activeReportData.target && activeReportData.target.projectId) || (document.getElementById('tgtProjectId')?.value || '').trim();
+        const targetApp = (activeReportData && activeReportData.target && (activeReportData.target.engineId || activeReportData.target.appId)) || (getFieldValue('tgtAppId') || '').trim();
 
         let targetIdHtml = '-';
         if (item.targetId) {
@@ -6573,6 +7007,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
     async function clearTargetDestination() {
       const env = getActiveEnvParams();
+      const targetAppId = getFieldValue('maintTargetAppId') || getFieldValue('tgtAppId') || '';
 
       const cleanSessions = document.getElementById('chkCleanChats')?.checked ?? true;
       const cleanAgents = document.getElementById('chkCleanAgents')?.checked ?? true;
@@ -6581,11 +7016,16 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const cleanArtifacts = document.getElementById('chkCleanArtifacts')?.checked ?? true;
       const cleanReports = document.getElementById('chkCleanReports')?.checked ?? true;
 
+      if ((cleanAgents || cleanSessions || cleanMemories) && !targetAppId) {
+        alert('⚠️ Please specify or select a Target GE App (Engine) instance to clean. Custom agents, chat sessions, and memories belong to a specific GE App instance.');
+        return;
+      }
+
       const selectedNames = [];
-      if (cleanSessions) selectedNames.push('Chat History Sessions');
-      if (cleanAgents) selectedNames.push('Custom Agents (Preserving system agents)');
-      if (cleanNotebooks) selectedNames.push('Gemini Notebooks (All Users)');
-      if (cleanMemories) selectedNames.push('User Memories & Facts (Personalization)');
+      if (cleanSessions) selectedNames.push(`Chat History Sessions (Engine: ${targetAppId})`);
+      if (cleanAgents) selectedNames.push(`Custom Agents (Engine: ${targetAppId}, Preserving deep_research)`);
+      if (cleanNotebooks) selectedNames.push('Gemini Notebooks (Project/Region Scope, All Users)');
+      if (cleanMemories) selectedNames.push(`User Memories & Facts (Engine: ${targetAppId})`);
       if (cleanArtifacts) selectedNames.push('Local Exported Artifacts');
       if (cleanReports) selectedNames.push('Migration Reports & Handover Folders');
 
@@ -6594,7 +7034,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         return;
       }
 
-      const typedConfirmation = prompt(`⚠️ CAUTION: Irreversible Destructive Operation\n\nYou are about to wipe selected categories from target project "${env.tgtProjectId}":\n\n• ${selectedNames.join('\n• ')}\n\nTo confirm, please type the Target Project ID (${env.tgtProjectId}) below:`);
+      const appInfo = targetAppId ? `\n• Target GE App (Engine): ${targetAppId} (Custom Agents, Chats & Memories scoped to this app)` : '';
+      const typedConfirmation = prompt(`⚠️ CAUTION: Irreversible Destructive Operation\n\nYou are about to wipe selected categories from target project "${env.tgtProjectId}":${appInfo}\n\n• ${selectedNames.join('\n• ')}\n\nNote: Custom Agents, Chat Sessions, and Memories are purged ONLY within "${targetAppId}". NotebookLM notebooks are project/region scoped for the targeted users.\n\nTo confirm, please type the Target Project ID (${env.tgtProjectId}) below:`);
       if (!typedConfirmation || typedConfirmation.trim() !== env.tgtProjectId.trim()) {
         if (typedConfirmation !== null) {
           alert(`❌ Confirmation failed: Project ID "${typedConfirmation}" did not match "${env.tgtProjectId}". Operation cancelled.`);
@@ -6646,6 +7087,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
         const payload = {
           ...env.payload,
+          tgtAppId: targetAppId,
+          targetEngine: targetAppId,
+          forceAllAgents: true,
           confirmProjectId: typedConfirmation.trim(),
           userFilter: userList,
           users: userList,
@@ -6670,16 +7114,16 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         const summaryParts = [];
         if (cleanNotebooks) {
           if (data.deletedNotebooks > 0) {
-            summaryParts.push(`• Deleted ${data.deletedNotebooks} Notebooks`);
+            summaryParts.push(`• Deleted ${data.deletedNotebooks} Notebooks (Project/Region Scope)`);
           } else if (data.warning) {
             summaryParts.push(`• Notebooks: 0 deleted (${data.warning})`);
           } else {
             summaryParts.push(`• Deleted 0 Notebooks`);
           }
         }
-        if (cleanAgents) summaryParts.push(`• Deleted ${data.deletedAgents || 0} Custom Agents`);
-        if (cleanSessions) summaryParts.push(`• Deleted ${data.deletedSessions || 0} Chat Sessions`);
-        if (cleanMemories) summaryParts.push(`• Deleted ${data.deletedMemories || 0} User Memories`);
+        if (cleanAgents) summaryParts.push(`• Deleted ${data.deletedAgents || 0} Custom Agents (Engine: ${targetAppId})`);
+        if (cleanSessions) summaryParts.push(`• Deleted ${data.deletedSessions || 0} Chat Sessions (Engine: ${targetAppId})`);
+        if (cleanMemories) summaryParts.push(`• Deleted ${data.deletedMemories || 0} User Memories (Engine: ${targetAppId})`);
         if (cleanReports) summaryParts.push(`• Deleted ${data.clearedReports || 0} Migration Reports`);
         if (cleanArtifacts) summaryParts.push(`• Cleared Local Artifact Archive`);
 
@@ -6690,7 +7134,14 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           summaryParts.push(`\n⚠️ Notice: ${data.warning}`);
         }
 
-        alert(`🎉 Target Cleanup Completed Successfully!\n\n${summaryParts.join('\n')}`);
+        const totalDeletedCloudAssets = (data.deletedNotebooks || 0) + (data.deletedAgents || 0) + (data.deletedSessions || 0) + (data.deletedMemories || 0);
+        const cloudCategoriesSelected = cleanNotebooks || cleanAgents || cleanSessions || cleanMemories;
+
+        if (cloudCategoriesSelected && totalDeletedCloudAssets === 0) {
+          alert(`⚠️ Target Cleanup Notice\n\n0 cloud assets were found or deleted in Engine "${targetAppId || 'N/A'}" for target project "${env.tgtProjectId}".\n\n${summaryParts.join('\n')}\n\nTip: For user-scoped assets (Notebooks & Chats), ensure target user email addresses are provided in the Target User Scope field.`);
+        } else {
+          alert(`🎉 Target Cleanup Completed Successfully!\n\n${summaryParts.join('\n')}`);
+        }
 
         // Refresh tables if loaded
         if (typeof loadHistoricalRuns === 'function') loadHistoricalRuns();

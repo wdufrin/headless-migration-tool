@@ -172,6 +172,23 @@ describe('AppStateTracker & Decommissioning Suite', () => {
       expect(data.message).toContain('Safety check failed');
     });
 
+    it('POST /api/cleanup should require targetEngine when cleaning custom agents or sessions', async () => {
+      const res = await fetch(`${baseUrl}/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tgtProjectId: 'prod-target-project',
+          confirmProjectId: 'prod-target-project',
+          cleanAgents: true
+        })
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('MissingTargetEngine');
+      expect(data.message).toContain('Target GE App (Engine) instance must be specified');
+    });
+
     it('POST /api/maintenance/decommission should require target project ID', async () => {
       const res = await fetch(`${baseUrl}/maintenance/decommission`, {
         method: 'POST',

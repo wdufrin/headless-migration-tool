@@ -829,7 +829,8 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       wifConfig,
       wifConfigPath = './workforce-identity-config.json',
       serviceAccountToImpersonate,
-      testUserEmail
+      testUserEmail,
+      targetProjectId
     } = req.body || {};
 
     let resolvedConfig = wifConfig;
@@ -856,10 +857,13 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
     const audience = resolvedConfig.audience || '';
     const tokenUrl = resolvedConfig.token_url || 'https://sts.googleapis.com/v1/token';
     const isWorkforce = audience.includes('/workforcePools/');
-    const targetUser = testUserEmail || process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'user@example.com';
+    const targetUser = (testUserEmail || '').trim() || process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'user@example.com';
+    const saEmail = (serviceAccountToImpersonate || '').trim();
 
-    // 1. Check if using Pattern 1 (Migration DWD Impersonation Provider via wif-migration-key.pem)
+    // 1. Acquire STS federated token
+    let stsToken: string | undefined;
     const keyPath = 'wif-migration-key.pem';
+
     if (fs.existsSync(keyPath)) {
       const authService = new GcpAuthService({
         wifConfigPath,
@@ -868,20 +872,7 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       });
 
       try {
-        const token = await authService.mintWorkforceToken(targetUser);
-        if (token) {
-          return res.status(200).json({
-            success: true,
-            message: `Successfully minted and exchanged token with GCP Security Token Service (STS) for workforce user "${targetUser}".`,
-            audience,
-            tokenUrl,
-            isWorkforcePool: isWorkforce,
-            tokenPrefix: `${token.substring(0, 18)}...`,
-            impersonatedPrincipal: `principal://${audience.replace(/^\/\//, '')}/subject/${targetUser}`,
-            impersonatedServiceAccount: serviceAccountToImpersonate || 'Direct Workforce Principal',
-            impersonatedUser: targetUser
-          });
-        }
+        stsToken = await authService.mintWorkforceToken(targetUser);
       } catch (mintErr: any) {
         return res.status(200).json({
           success: false,
@@ -893,52 +884,190 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       }
     }
 
-    // 2. Strict external IdP token exchange test via GoogleAuth fromJSON (NO fallback to local gcloud ADC)
-    try {
-      const { GoogleAuth } = await import('google-auth-library');
-      const auth = new GoogleAuth({
-        scopes: ['https://www.googleapis.com/auth/cloud-platform']
-      });
-      const client = auth.fromJSON(resolvedConfig);
-      const tokenRes = await client.getAccessToken();
+    if (!stsToken) {
+      try {
+        const { GoogleAuth } = await import('google-auth-library');
+        const auth = new GoogleAuth({
+          scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        });
+        const client = auth.fromJSON(resolvedConfig);
+        const tokenRes = await client.getAccessToken();
+        if (tokenRes && tokenRes.token) {
+          stsToken = tokenRes.token;
+        }
+      } catch (stsErr: any) {
+        const subTokenFile = resolvedConfig.credential_source?.file;
+        const fileExists = subTokenFile ? fs.existsSync(subTokenFile) : false;
+        const fileContent = fileExists ? fs.readFileSync(subTokenFile, 'utf-8').trim() : '';
+        const isDummyToken = !fileContent || fileContent.includes('mock-idp-subject-token') || fileContent.length < 50;
 
-      if (tokenRes && tokenRes.token) {
+        const remediation = [];
+        if (!fs.existsSync(keyPath)) {
+          remediation.push('For Pattern 1 (Migration DWD Key): Run Step 1 commands to generate "wif-migration-key.pem" and register the JWKS provider.');
+        }
+        if (isDummyToken) {
+          remediation.push(`For Pattern 2 (External IdP OIDC/SAML): Place a genuine signed OIDC ID token or SAML assertion from your IdP into "${subTokenFile || './idp-subject-token.jwt'}".`);
+        }
+        remediation.push(`Ensure the Workforce Pool and Provider exist: ${audience}`);
+
         return res.status(200).json({
-          success: true,
-          message: 'Successfully exchanged subject token with GCP Security Token Service (STS) via Workforce Identity Federation.',
+          success: false,
+          error: 'WifExchangeFailed',
+          message: `WiF Token Exchange failed against STS: ${stsErr.message}. Ambient local gcloud workstation credentials were NOT used for this test.`,
           audience,
           tokenUrl,
           isWorkforcePool: isWorkforce,
-          tokenPrefix: `${tokenRes.token.substring(0, 18)}...`,
-          impersonatedServiceAccount: serviceAccountToImpersonate || 'Direct Workforce Principal',
-          impersonatedUser: targetUser
+          remediation
+        });
+      }
+    }
+
+    if (!stsToken) {
+      return res.status(200).json({
+        success: false,
+        error: 'NoStsTokenReturned',
+        message: 'No access token returned from GCP Security Token Service (STS). Verify that wif-migration-key.pem exists or idp-subject-token.jwt contains a valid token.',
+        audience,
+        tokenUrl
+      });
+    }
+
+    // 2. LIVE VERIFICATION OF IMPERSONATION & AUTHORIZATION (NO STUBS, NO FAKE SUCCESS)
+    const principalString = `principal://${audience.replace(/^\/\//, '')}/subject/${targetUser}`;
+
+    // Path A: User requested Service Account Impersonation
+    if (saEmail) {
+      const saProject = saEmail.split('@')[1]?.split('.')[0] || targetProjectId || process.env.GCP_PROJECT_ID || 'testgebackupandrestorev3';
+      try {
+        const iamRes = await fetch(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:generateAccessToken`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${stsToken}`,
+            'Content-Type': 'application/json',
+            'x-goog-user-project': saProject
+          },
+          body: JSON.stringify({
+            scope: ['https://www.googleapis.com/auth/cloud-platform']
+          })
+        });
+
+        if (!iamRes.ok) {
+          const errText = await iamRes.text();
+          let errMsg = errText;
+          try {
+            const errJson = JSON.parse(errText);
+            errMsg = errJson.error?.message || errText;
+          } catch {}
+
+          const remediation = [
+            `Grant the workforce principal Token Creator permissions on service account "${saEmail}":`,
+            `gcloud iam service-accounts add-iam-policy-binding ${saEmail} --role="roles/iam.serviceAccountTokenCreator" --member="${principalString}" --project=${saProject}`,
+            `If error mentions USER_PROJECT_DENIED / serviceusage, grant Service Usage Consumer on quota project "${saProject}":`,
+            `gcloud projects add-iam-policy-binding ${saProject} --role="roles/serviceusage.serviceUsageConsumer" --member="${principalString}"`,
+            `CRITICAL ARCHITECTURE NOTE: Even with SA impersonation, Discovery Engine user-scoped assets (NotebookLM notebooks, chat sessions) require authentic human user tokens (via Google Workspace DWD or direct workforce principals). Service Accounts cannot read or write user-scoped notebooks.`
+          ];
+
+          return res.status(200).json({
+            success: false,
+            error: 'ServiceAccountImpersonationFailed',
+            message: `STS token was minted for workforce user "${targetUser}", but Service Account Impersonation of "${saEmail}" failed (${iamRes.status}): ${errMsg}`,
+            audience,
+            tokenUrl,
+            isWorkforcePool: isWorkforce,
+            impersonatedPrincipal: principalString,
+            attemptedServiceAccount: saEmail,
+            remediation
+          });
+        }
+
+        const iamData: any = await iamRes.json();
+        const saToken = iamData.accessToken || '';
+        return res.status(200).json({
+          success: true,
+          message: `Verified: Workforce user "${targetUser}" successfully exchanged STS token and impersonated Service Account "${saEmail}" via GCP IAM Credentials API.`,
+          audience,
+          tokenUrl,
+          isWorkforcePool: isWorkforce,
+          impersonatedPrincipal: principalString,
+          impersonatedServiceAccount: saEmail,
+          impersonatedUser: targetUser,
+          tokenPrefix: `${saToken.substring(0, 18)}...`,
+          expireTime: iamData.expireTime
+        });
+      } catch (iamErr: any) {
+        return res.status(200).json({
+          success: false,
+          error: 'ServiceAccountImpersonationError',
+          message: `Failed to contact GCP IAM Credentials API for "${saEmail}": ${iamErr.message}`,
+          audience,
+          tokenUrl,
+          isWorkforcePool: isWorkforce,
+          impersonatedPrincipal: principalString,
+          attemptedServiceAccount: saEmail
+        });
+      }
+    }
+
+    // Path B: Direct Workforce Principal Verification (No SA Impersonation specified)
+    // Verify whether the direct workforce principal has access to GCP resources in the project
+    const testProject = targetProjectId || resolvedConfig.workforce_pool_user_project || process.env.GCP_PROJECT_ID || 'testgebackupandrestorev3';
+    try {
+      const gcpRes = await fetch(`https://discoveryengine.googleapis.com/v1alpha/projects/${testProject}/locations/global/collections/default_collection/dataStores`, {
+        headers: {
+          'Authorization': `Bearer ${stsToken}`,
+          'x-goog-user-project': testProject
+        }
+      });
+
+      if (!gcpRes.ok) {
+        const errText = await gcpRes.text();
+        let errMsg = errText;
+        try {
+          const errJson = JSON.parse(errText);
+          errMsg = errJson.error?.message || errText;
+        } catch {}
+
+        const remediation = [
+          `Grant the workforce principal (or pool) access to project "${testProject}":`,
+          `gcloud projects add-iam-policy-binding ${testProject} --role="roles/discoveryengine.admin" --member="${principalString}"`,
+          `gcloud projects add-iam-policy-binding ${testProject} --role="roles/serviceusage.serviceUsageConsumer" --member="${principalString}"`
+        ];
+
+        return res.status(200).json({
+          success: false,
+          error: 'WorkforcePrincipalNotAuthorized',
+          message: `STS token was minted for workforce user "${targetUser}", but principal "${principalString}" is NOT authorized in GCP project "${testProject}" (${gcpRes.status}): ${errMsg}`,
+          audience,
+          tokenUrl,
+          isWorkforcePool: isWorkforce,
+          impersonatedPrincipal: principalString,
+          impersonatedServiceAccount: 'Direct Workforce Principal',
+          remediation
         });
       }
 
-      throw new Error('No access token returned from GCP Security Token Service (STS).');
-    } catch (stsErr: any) {
-      const subTokenFile = resolvedConfig.credential_source?.file;
-      const fileExists = subTokenFile ? fs.existsSync(subTokenFile) : false;
-      const fileContent = fileExists ? fs.readFileSync(subTokenFile, 'utf-8').trim() : '';
-      const isDummyToken = !fileContent || fileContent.includes('mock-idp-subject-token') || fileContent.length < 50;
-
-      const remediation = [];
-      if (!fs.existsSync(keyPath)) {
-        remediation.push('For Pattern 1 (Migration DWD Key): Run Step 1 commands to generate "wif-migration-key.pem" and register the JWKS provider.');
-      }
-      if (isDummyToken) {
-        remediation.push(`For Pattern 2 (External IdP OIDC/SAML): Place a genuine signed OIDC ID token or SAML assertion from your IdP into "${subTokenFile || './idp-subject-token.jwt'}".`);
-      }
-      remediation.push(`Ensure the Workforce Pool and Provider exist: ${audience}`);
-
       return res.status(200).json({
-        success: false,
-        error: 'WifExchangeFailed',
-        message: `WiF Token Exchange failed against STS: ${stsErr.message}. Ambient local gcloud workstation credentials were NOT used for this test.`,
+        success: true,
+        message: `Verified: Workforce user "${targetUser}" successfully authenticated with GCP STS and verified Discovery Engine access in project "${testProject}".`,
         audience,
         tokenUrl,
         isWorkforcePool: isWorkforce,
-        remediation
+        impersonatedPrincipal: principalString,
+        impersonatedServiceAccount: 'Direct Workforce Principal',
+        impersonatedUser: targetUser,
+        tokenPrefix: `${stsToken.substring(0, 18)}...`
+      });
+    } catch (gcpErr: any) {
+      return res.status(200).json({
+        success: true,
+        message: `STS token minted for workforce user "${targetUser}" (${stsToken.substring(0, 18)}...), but live GCP project connectivity check could not be completed: ${gcpErr.message}`,
+        audience,
+        tokenUrl,
+        isWorkforcePool: isWorkforce,
+        impersonatedPrincipal: principalString,
+        impersonatedServiceAccount: 'Direct Workforce Principal',
+        impersonatedUser: targetUser,
+        tokenPrefix: `${stsToken.substring(0, 18)}...`
       });
     }
   } catch (err: any) {

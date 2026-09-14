@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform
 ## Installation, Environment Setup & Pre-Requisites Technical Guide
 
-**Document Version:** `v1.5.0 (Enterprise Release)`  
+**Document Version:** `v1.5.1 (Enterprise Release)`  
 **Target Platform:** Google Cloud Discovery Engine & Gemini Enterprise  
 **Execution Profile:** Headless CLI & Local Workstation Web Console (`http://127.0.0.1:8080`)  
 **Authentication Protocols:** Google Workspace Domain-Wide Delegation (OAuth2) & Microsoft Entra ID Workforce Identity Federation (STS)  

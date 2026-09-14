@@ -5,6 +5,24 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-09-14
+
+### Added
+- **Multi-Project Setup Instructions & Cross-Project IAM Generator**:
+  - Enhanced Step 1 (DWD & WiF Setup Wizard) to explicitly accept both Source GCP Project ID (`wizDwdSrcProject`) and Target GCP Project ID (`wizDwdProject`), automatically synced with Step 2 and Step 3.
+  - Added dedicated Cross-Project IAM Architecture Explainer banner clarifying DWD user impersonation vs pipeline admin permissions.
+  - Updated `gcloud` script generator to output complete setup commands granting `roles/discoveryengine.admin` and `roles/serviceusage.serviceUsageConsumer` across both Source and Target projects.
+  - Added new comprehensive guide: `docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md` covering all configuration properties and cross-project IAM topologies.
+
+### Changed
+- **Hardened WiF Impersonation Verification**:
+  - Updated `/api/wizard/test-wif` to perform live token exchanges with the Google Cloud IAM Credentials API (`serviceAccounts.generateAccessToken`).
+  - Removed simulated success paths; requests now strictly verify that the workforce pool principal or caller has `roles/iam.serviceAccountTokenCreator` on the target service account.
+- **Fixed Iframe Extension Security Errors**:
+  - Added `allow-same-origin` to `artifactIframe` and `checklistIframe` sandbox attributes in `public/index.html`, eliminating `Uncaught SecurityError: Blocked a frame with origin "null"` triggered by browser extensions inspecting iframes.
+
+---
+
 ## [1.5.0] - 2026-09-14
 
 ### Added

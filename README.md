@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.1-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.0-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.1-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -13,6 +13,21 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
+
+---
+
+## 🚀 What's New in v1.5.1
+
+* **🌐 Multi-Project Architecture & Cross-Project IAM Setup Instructions**:
+  * Full guided support for enterprise migrations across distinct Source and Target Google Cloud projects.
+  * Interactive Setup Wizard (Step 1 Card 1) dynamically prompts for Source and Target GCP project IDs and generates copy-paste ready `gcloud` IAM role binding commands for both environments (`roles/discoveryengine.admin`, `roles/serviceusage.serviceUsageConsumer`).
+  * Permanent Cross-Project Architecture documentation and explainer banners in the console and [JSON Setup Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md).
+* **🔒 Truthful WiF & Impersonation Testing**:
+  * Hardened `/api/wizard/test-wif` with live GCP IAM Credentials API (`generateAccessToken`) validation. Eliminates simulated passes and guarantees truthful failure reporting if impersonation permissions are missing or misconfigured.
+* **🛡️ Web Console Iframe Sandbox Security Fix**:
+  * Resolved null-origin `SecurityError` exceptions caused by browser extensions inspecting embedded artifact and handover checklist iframes by adding `allow-same-origin` to iframe sandbox policies.
+* **🧪 Test Suite Expansion (106/106 Tests Passing)**:
+  * 100% automated test pass rate across 14 test suites covering authentication, cross-project parity pre-checks, and decommissioning verification.
 
 ---
 

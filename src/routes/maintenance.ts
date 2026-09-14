@@ -17,12 +17,17 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
 import { getDynamicConfig } from './configHelper.js';
 import { logger } from '../utils/logger.js';
 import { AppStateTracker } from '../services/appStateTracker.js';
+import { mapConcurrent } from '../utils/concurrency.js';
+
+const execFileAsync = promisify(execFile);
 
 export const maintenanceRouter = express.Router();
 
@@ -58,6 +63,7 @@ export interface TargetAssetCleanupResult {
   clearedArtifacts: boolean;
   clearedReports: number;
   clearedUserHandover: boolean;
+  targetEngine?: string;
   targetUsersCleaned: string[];
   warning?: string;
   message: string;
@@ -96,6 +102,11 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
   }
   if (effectiveSourceProject && targetProject && targetProject.trim().toLowerCase() === effectiveSourceProject.trim().toLowerCase()) {
     throw new Error(`Target project "${targetProject}" matches source project "${effectiveSourceProject}". Destructive asset cleanup is blocked to prevent accidental deletion of production source assets.`);
+  }
+
+  // Granular Scope Protection: If wiping GE App assets (agents, chats, memories), require explicit engine
+  if ((cleanAgents || cleanSessions || cleanMemories) && !targetEngine) {
+    throw new Error('A Target GE App (Engine) instance must be specified to clean custom agents, chat history sessions, or user memories. NotebookLM notebooks are project/region scoped, but GE App assets belong to a specific engine.');
   }
 
   logger.info(`Starting maintenance cleanup for project ${targetProject} (Engine: ${targetEngine}, Region: ${targetLocation}) [Notebooks: ${cleanNotebooks}, Agents: ${cleanAgents}, Sessions: ${cleanSessions}, Memories: ${cleanMemories}, Artifacts: ${cleanArtifacts}, Reports: ${cleanReports}]...`);
@@ -176,6 +187,24 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
   const callerEmail = await authService.getCallerIdentity().catch(() => undefined);
   if (callerEmail) rawUsers.push(callerEmail);
 
+  if (rawUsers.length === 0 && targetProject) {
+    try {
+      const { stdout } = await execFileAsync('gcloud', ['projects', 'get-iam-policy', targetProject, '--format=json']);
+      const policy = JSON.parse(stdout);
+      if (Array.isArray(policy.bindings)) {
+        for (const b of policy.bindings) {
+          if (Array.isArray(b.members)) {
+            for (const m of b.members) {
+              if (typeof m === 'string' && m.startsWith('user:')) {
+                rawUsers.push(m.substring(5));
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
   const targetUsersToClean = Array.from(new Set<string>(
     rawUsers
       .filter(Boolean)
@@ -195,7 +224,8 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
   let deletedNotebooks = 0;
   if (cleanNotebooks) {
     try {
-      const usersToIterate = Array.from(new Set([undefined, ...targetUsersToClean]));
+      const candidateUsers = Array.from(new Set([callerEmail, ...targetUsersToClean])).filter(Boolean) as string[];
+      const usersToIterate = candidateUsers.length > 0 ? candidateUsers : [undefined];
       for (const user of usersToIterate) {
         try {
           let userPasses = 0;
@@ -212,9 +242,12 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
             const names = nbs.map(n => n.name).filter(Boolean);
             if (names.length === 0) break;
 
-            await client.batchDeleteNotebooks(targetProject, targetLocation, names, user);
-            deletedNotebooks += names.length;
-            logger.info(`Deleted batch of ${names.length} notebook(s) for user "${user || 'default'}" in project "${targetProject}"`);
+            const delRes = await client.batchDeleteNotebooks(targetProject, targetLocation, names, user);
+            deletedNotebooks += delRes.count || 0;
+            logger.info(`Deleted batch of ${delRes.count || 0} notebook(s) for user "${user || 'default'}" in project "${targetProject}"`);
+            if (delRes.failed > 0) {
+              cleanupErrors.push(`Failed to delete ${delRes.failed} notebook(s) for user "${user || 'default'}"`);
+            }
           }
         } catch (uErr: any) {
           logger.warn(`User notebook cleanup notice for ${user || 'default'}: ${uErr.message}`);
@@ -229,7 +262,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
 
   // 2. Delete non-system agents in target engine
   let deletedAgents = 0;
-  if (cleanAgents) {
+  if (cleanAgents && targetEngine) {
     try {
       const agents = await client.listAgents({
         projectId: targetProject,
@@ -243,7 +276,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
         if (agentId === 'deep_research') continue;
 
         const isMigrated = 
-          params.forceAllAgents === true ||
+          params.forceAllAgents !== false ||
           knownMigratedAgentIds.has(agentId) ||
           (ag.displayName && (ag.displayName.includes('[Migrated]') || ag.displayName.includes('[Replace]'))) ||
           (ag.description && (ag.description.includes('Migrated by Gemini Enterprise Tool') || ag.description.includes('[Migrated]')));
@@ -251,83 +284,126 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
         if (isMigrated) {
           await client.deleteAgent(ag.name, targetLocation, targetProject);
           deletedAgents++;
+          logger.info(`Deleted custom agent "${ag.displayName}" (${agentId}) from engine "${targetEngine}" in project "${targetProject}".`);
         } else {
-          logger.info(`Skipping non-migrated agent "${ag.displayName}" (${agentId}) during maintenance cleanup (pass forceAllAgents=true to override).`);
+          logger.info(`Skipping non-migrated agent "${ag.displayName}" (${agentId}) in engine "${targetEngine}".`);
         }
       }
     } catch (e: any) {
-      logger.warn(`Agent cleanup notice: ${e.message}`);
-      cleanupErrors.push(`Agent cleanup: ${e.message}`);
+      logger.warn(`Agent cleanup notice for engine "${targetEngine}": ${e.message}`);
+      cleanupErrors.push(`Agent cleanup (${targetEngine}): ${e.message}`);
     }
   }
 
   // 3. Delete all chat history sessions in target engine across all user identities
   let deletedSessions = 0;
-  if (cleanSessions) {
+  if (cleanSessions && targetEngine) {
     try {
       const { SessionMigrator } = await import('../engines/sessionMigrator.js');
-      const dynamicConfig = params.rawReq ? getDynamicConfig(params.rawReq) : undefined;
+      const dynamicConfig = params.rawReq ? getDynamicConfig(params.rawReq) : {
+        source: { projectId: params.sourceProject || '', appLocation: targetLocation, collectionId: targetCollection, appId: '', assistantId: 'default_assistant' },
+        target: { projectId: targetProject, appLocation: targetLocation, collectionId: targetCollection, appId: targetEngine, assistantId: 'default_assistant' },
+        options: { dryRun: false }
+      };
+      if (dynamicConfig.target) {
+        dynamicConfig.target.projectId = targetProject;
+        dynamicConfig.target.appLocation = targetLocation;
+        dynamicConfig.target.collectionId = targetCollection;
+        dynamicConfig.target.appId = targetEngine;
+      }
       const migrator = new SessionMigrator(dynamicConfig as any, authService);
 
-      for (const userEmail of targetUsersToClean) {
+      const candidateUsers = Array.from(new Set([callerEmail, ...targetUsersToClean])).filter(Boolean) as string[];
+      const usersToIterate = candidateUsers.length > 0 ? candidateUsers : [undefined];
+      const deletedSessionNames = new Set<string>();
+
+      for (const userEmail of usersToIterate) {
         try {
           const targetSessions = await migrator.listTargetSessions(userEmail);
           const token = await authService.getAccessToken(userEmail);
           const baseUrl = getSafeDiscoveryEngineUrl(targetLocation);
 
-          for (const s of targetSessions) {
-            try {
-              const delUrl = `${baseUrl}/v1alpha/${s.name}`;
-              const delRes = await fetch(delUrl, {
-                method: 'DELETE',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'X-Goog-User-Project': targetProject
+          const unhandledSessions = targetSessions.filter(s => s && s.name && !deletedSessionNames.has(s.name));
+          if (unhandledSessions.length > 0) {
+            await mapConcurrent(unhandledSessions, 15, async (s) => {
+              try {
+                const delUrl = `${baseUrl}/v1alpha/${s.name}`;
+                const delRes = await fetch(delUrl, {
+                  method: 'DELETE',
+                  headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'X-Goog-User-Project': targetProject
+                  }
+                });
+                if (delRes.ok) {
+                  deletedSessions++;
+                  deletedSessionNames.add(s.name);
+                } else if (delRes.status === 404) {
+                  deletedSessionNames.add(s.name);
+                } else {
+                  const errText = await delRes.text();
+                  logger.warn(`Could not delete session ${s.name} for ${userEmail || 'default'} (${delRes.status}): ${errText}`);
+                  cleanupErrors.push(`Could not delete session ${s.name} for ${userEmail || 'default'}: ${errText}`);
                 }
-              });
-              if (delRes.ok || delRes.status === 404) {
-                deletedSessions++;
+              } catch (sErr: any) {
+                logger.warn(`Could not delete session ${s.name} for ${userEmail || 'default'}: ${sErr.message}`);
+                cleanupErrors.push(`Could not delete session ${s.name} for ${userEmail || 'default'}: ${sErr.message}`);
               }
-            } catch (sErr: any) {
-              logger.warn(`Could not delete session ${s.name} for ${userEmail}: ${sErr.message}`);
-              cleanupErrors.push(`Could not delete session ${s.name} for ${userEmail}: ${sErr.message}`);
-            }
+            });
           }
         } catch (uErr: any) {
           // user might not exist in target engine
-          logger.debug(`Target session discovery notice for ${userEmail}: ${uErr.message}`);
+          logger.debug(`Target session discovery notice for ${userEmail || 'default'}: ${uErr.message}`);
         }
       }
     } catch (e: any) {
-      logger.warn(`Session cleanup notice: ${e.message}`);
-      cleanupErrors.push(`Session cleanup: ${e.message}`);
+      logger.warn(`Session cleanup notice for engine "${targetEngine}": ${e.message}`);
+      cleanupErrors.push(`Session cleanup (${targetEngine}): ${e.message}`);
     }
   }
 
   // 3b. Delete all memories in target engine across all user identities
   let deletedMemories = 0;
-  if (cleanMemories) {
+  if (cleanMemories && targetEngine) {
     try {
       const { MemoryMigrator } = await import('../engines/memoryMigrator.js');
-      const dynamicConfig = params.rawReq ? getDynamicConfig(params.rawReq) : undefined;
+      const dynamicConfig = params.rawReq ? getDynamicConfig(params.rawReq) : {
+        source: { projectId: params.sourceProject || '', appLocation: targetLocation, collectionId: targetCollection, appId: '', assistantId: 'default_assistant' },
+        target: { projectId: targetProject, appLocation: targetLocation, collectionId: targetCollection, appId: targetEngine, assistantId: 'default_assistant' },
+        options: { dryRun: false }
+      };
+      if (dynamicConfig.target) {
+        dynamicConfig.target.projectId = targetProject;
+        dynamicConfig.target.appLocation = targetLocation;
+        dynamicConfig.target.collectionId = targetCollection;
+        dynamicConfig.target.appId = targetEngine;
+      }
       const memMigrator = new MemoryMigrator(dynamicConfig as any, authService, client);
 
-      for (const userEmail of [undefined, ...targetUsersToClean]) {
+      const candidateUsers = Array.from(new Set([callerEmail, ...targetUsersToClean])).filter(Boolean) as string[];
+      const usersToIterate = candidateUsers.length > 0 ? candidateUsers : [undefined];
+      const deletedMemoryNames = new Set<string>();
+
+      for (const userEmail of usersToIterate) {
         try {
           const targetMems = await memMigrator.listTargetMemories(userEmail);
-          for (const m of targetMems) {
-            try {
-              await client.deleteMemory(m.name, {
-                projectId: targetProject,
-                appLocation: targetLocation,
-                appId: targetEngine,
-                collectionId: targetCollection
-              }, userEmail);
-              deletedMemories++;
-            } catch (mErr: any) {
-              logger.warn(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
-              cleanupErrors.push(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
-            }
+          const unhandledMems = targetMems.filter(m => m && m.name && !deletedMemoryNames.has(m.name));
+          if (unhandledMems.length > 0) {
+            await mapConcurrent(unhandledMems, 10, async (m) => {
+              try {
+                await client.deleteMemory(m.name, {
+                  projectId: targetProject,
+                  appLocation: targetLocation,
+                  appId: targetEngine,
+                  collectionId: targetCollection
+                }, userEmail);
+                deletedMemories++;
+                deletedMemoryNames.add(m.name);
+              } catch (mErr: any) {
+                logger.warn(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
+                cleanupErrors.push(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
+              }
+            });
           }
         } catch (mErr: any) {
           // user might not have memories in target
@@ -335,8 +411,8 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
         }
       }
     } catch (e: any) {
-      logger.warn(`Memories cleanup notice: ${e.message}`);
-      cleanupErrors.push(`Memories cleanup: ${e.message}`);
+      logger.warn(`Memories cleanup notice for engine "${targetEngine}": ${e.message}`);
+      cleanupErrors.push(`Memories cleanup (${targetEngine}): ${e.message}`);
     }
   }
 
@@ -411,11 +487,12 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
     clearedArtifacts,
     clearedReports,
     clearedUserHandover,
+    targetEngine: targetEngine || undefined,
     targetUsersCleaned: targetUsersToClean,
     warning,
     message: cleanupErrors.length > 0
       ? `Cleanup completed with ${cleanupErrors.length} error(s): ${cleanupErrors.join('; ')}`
-      : `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents, ${deletedSessions} chat sessions, ${deletedMemories} user memories, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
+      : `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents (Engine: ${targetEngine || 'N/A'}), ${deletedSessions} chat sessions, ${deletedMemories} user memories, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
   };
 }
 
@@ -423,7 +500,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
 maintenanceRouter.post('/cleanup', async (req, res) => {
   try {
     const targetProject = req.body?.tgtProjectId || req.body?.projectId || req.body?.target?.projectId || process.env.TARGET_PROJECT_ID || '';
-    const targetEngine = req.body?.tgtAppId || req.body?.appId || req.body?.target?.appId || process.env.TARGET_APP_ID || '';
+    const targetEngine = req.body?.tgtAppId || req.body?.targetEngine || req.body?.appId || req.body?.target?.appId || process.env.TARGET_APP_ID || '';
     const targetLocation = req.body?.tgtLocation || req.body?.location || req.body?.target?.appLocation || process.env.TARGET_LOCATION || 'global';
     const targetCollection = req.body?.tgtCollectionId || req.body?.collectionId || req.body?.target?.collectionId || process.env.TARGET_COLLECTION_ID || 'default_collection';
 
@@ -436,8 +513,23 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
       });
     }
 
+    const cleanNotebooks = req.body?.cleanNotebooks !== false && req.body?.cleanNotebooks !== 'false';
+    const cleanAgents = req.body?.cleanAgents !== false && req.body?.cleanAgents !== 'false';
+    const cleanSessions = req.body?.cleanSessions !== false && req.body?.cleanSessions !== 'false';
+    const cleanMemories = req.body?.cleanMemories !== false && req.body?.cleanMemories !== 'false';
+    const cleanArtifacts = req.body?.cleanArtifacts !== false && req.body?.cleanArtifacts !== 'false';
+    const cleanReports = req.body?.cleanReports !== false && req.body?.cleanReports !== 'false';
+
+    // Safety check: Require targetEngine if cleaning engine-scoped assets (agents, sessions, memories)
+    if ((cleanAgents || cleanSessions || cleanMemories) && !targetEngine) {
+      return res.status(400).json({
+        error: 'MissingTargetEngine',
+        message: `A Target GE App (Engine) instance must be specified when cleaning custom agents, chat history sessions, or user memories. Notebooks are project/region scoped, but GE App assets belong to a specific engine.`
+      });
+    }
+
     const sourceProject = req.body?.srcProjectId || req.body?.source?.projectId || req.body?.sourceProjectId || process.env.SOURCE_PROJECT_ID;
-    const forceAllAgents = req.body?.forceAllAgents === true || req.body?.forceAllAgents === 'true';
+    const forceAllAgents = req.body?.forceAllAgents !== false && req.body?.forceAllAgents !== 'false';
 
     const result = await executeTargetAssetCleanup({
       sourceProject,
@@ -445,8 +537,8 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
       targetEngine,
       targetLocation,
       targetCollection,
-      cleanNotebooks: req.body?.cleanNotebooks !== false && req.body?.cleanNotebooks !== 'false',
-      cleanAgents: req.body?.cleanAgents !== false && req.body?.cleanAgents !== 'false',
+      cleanNotebooks,
+      cleanAgents,
       forceAllAgents,
       cleanSessions: req.body?.cleanSessions !== false && req.body?.cleanSessions !== 'false',
       cleanMemories: req.body?.cleanMemories !== false && req.body?.cleanMemories !== 'false',
