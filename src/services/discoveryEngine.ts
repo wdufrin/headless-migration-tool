@@ -101,27 +101,44 @@ export class DiscoveryEngineClient {
     });
   }
 
+  async listAllPages<T>(
+    buildUrl: (pageToken?: string) => string,
+    extractItems: (response: any) => T[] | undefined,
+    projectId: string,
+    forUserEmail?: string
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let pageToken: string | undefined = undefined;
+
+    do {
+      const currentUrl = buildUrl(pageToken);
+      const res = await this.request<any>(currentUrl, 'GET', undefined, projectId, undefined, forUserEmail);
+      const batch = extractItems(res);
+      if (batch && Array.isArray(batch)) {
+        items.push(...batch);
+      }
+      pageToken = res?.nextPageToken || undefined;
+    } while (pageToken);
+
+    return items;
+  }
+
   // --- Agents ---
 
   async listAgents(env: EnvironmentConfig, forUserEmail?: string): Promise<Agent[]> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
     const assistant = env.assistantId || 'default_assistant';
-    let url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/assistants/${assistant}/agents?pageSize=200`;
-
-    const agents: Agent[] = [];
-    let pageToken: string | undefined = undefined;
-
-    do {
-      const currentUrl: string = pageToken ? `${url}&pageToken=${encodeURIComponent(pageToken)}` : url;
-      const res: { agents?: Agent[]; nextPageToken?: string } = await this.request<{ agents?: Agent[]; nextPageToken?: string }>(currentUrl, 'GET', undefined, env.projectId, undefined, forUserEmail);
-      if (res.agents) {
-        agents.push(...res.agents);
-      }
-      pageToken = res.nextPageToken;
-    } while (pageToken);
-
-    return agents;
+    return this.listAllPages<Agent>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '200' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/assistants/${assistant}/agents?${query.toString()}`;
+      },
+      (res) => res.agents,
+      env.projectId,
+      forUserEmail
+    );
   }
 
   async getAgent(agentName: string, env: EnvironmentConfig): Promise<Agent> {
@@ -178,13 +195,18 @@ export class DiscoveryEngineClient {
     return this.request<any>(url, 'DELETE', undefined, pId);
   }
 
-  // --- Notebooks ---
-
   async listNotebooks(env: EnvironmentConfig, forUserEmail?: string): Promise<Notebook[]> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks:listRecentlyViewed`;
-    const res = await this.request<{ notebooks?: Notebook[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
-    const notebooks = res.notebooks || [];
+    const notebooks = await this.listAllPages<Notebook>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks:listRecentlyViewed?${query.toString()}`;
+      },
+      (res) => res.notebooks,
+      env.projectId,
+      forUserEmail
+    );
     if (forUserEmail) {
       for (const nb of notebooks) {
         nb.owner = forUserEmail;
@@ -237,13 +259,16 @@ export class DiscoveryEngineClient {
   async listNotes(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote[]> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes`;
-    try {
-      const res = await this.request<{ notes?: NotebookNote[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
-      return res.notes || [];
-    } catch {
-      return [];
-    }
+    return this.listAllPages<NotebookNote>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes?${query.toString()}`;
+      },
+      (res) => res.notes,
+      env.projectId,
+      forUserEmail
+    );
   }
 
   async createNote(notebookId: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote> {
@@ -256,13 +281,16 @@ export class DiscoveryEngineClient {
   async listArtifacts(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any[]> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/artifacts`;
-    try {
-      const res = await this.request<{ artifacts?: any[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
-      return res.artifacts || [];
-    } catch {
-      return [];
-    }
+    return this.listAllPages<any>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/artifacts?${query.toString()}`;
+      },
+      (res) => res.artifacts,
+      env.projectId,
+      forUserEmail
+    );
   }
 
   async createArtifact(notebookId: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
@@ -275,19 +303,26 @@ export class DiscoveryEngineClient {
   async listEngines(env: { projectId: string; appLocation: string; collectionId?: string }): Promise<AppEngine[]> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
-    const url = `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?pageSize=100`;
     try {
-      const res = await this.request<{ engines?: AppEngine[] }>(url, 'GET', undefined, env.projectId);
-      return res.engines || [];
+      return await this.listAllPages<AppEngine>(
+        (pageToken) => {
+          const query = new URLSearchParams({ pageSize: '100' });
+          if (pageToken) query.set('pageToken', pageToken);
+          return `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?${query.toString()}`;
+        },
+        (res) => res.engines,
+        env.projectId
+      );
     } catch (err: any) {
-      try {
-        const fallbackUrl = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?pageSize=100`;
-        const resFallback = await this.request<{ engines?: AppEngine[] }>(fallbackUrl, 'GET', undefined, env.projectId);
-        return resFallback.engines || [];
-      } catch (e: any) {
-        logger.warn(`Failed to list engines for project ${env.projectId}: ${e.message}`);
-        throw e;
-      }
+      return this.listAllPages<AppEngine>(
+        (pageToken) => {
+          const query = new URLSearchParams({ pageSize: '100' });
+          if (pageToken) query.set('pageToken', pageToken);
+          return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines?${query.toString()}`;
+        },
+        (res) => res.engines,
+        env.projectId
+      );
     }
   }
 
@@ -309,9 +344,15 @@ export class DiscoveryEngineClient {
   async listDataStores(env: EnvironmentConfig): Promise<DataStore[]> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
-    const url = `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/dataStores?pageSize=100`;
-    const res = await this.request<{ dataStores?: DataStore[] }>(url, 'GET', undefined, env.projectId);
-    return res.dataStores || [];
+    return this.listAllPages<DataStore>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/dataStores?${query.toString()}`;
+      },
+      (res) => res.dataStores,
+      env.projectId
+    );
   }
 
   async getDataStore(dataStoreId: string, env: EnvironmentConfig): Promise<DataStore> {
@@ -424,33 +465,24 @@ export class DiscoveryEngineClient {
     const projectNum = await this.resolveProjectNumber(env);
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
-    const url = `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/memories?pageSize=100`;
+    const memories = await this.listAllPages<Memory>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/memories?${query.toString()}`;
+      },
+      (res) => res.memories,
+      env.projectId,
+      forUserEmail
+    );
 
-    const memories: Memory[] = [];
-    let pageToken: string | undefined = undefined;
-
-    do {
-      const currentUrl: string = pageToken ? `${url}&pageToken=${encodeURIComponent(pageToken)}` : url;
-      const res: { memories?: Memory[]; nextPageToken?: string } = await this.request<{ memories?: Memory[]; nextPageToken?: string }>(
-        currentUrl,
-        'GET',
-        undefined,
-        env.projectId,
-        undefined,
-        forUserEmail
-      );
-      if (res.memories && Array.isArray(res.memories)) {
-        for (const m of res.memories) {
-          if (forUserEmail) {
-            m.owner = forUserEmail;
-            m.userEmail = forUserEmail;
-            m.userPseudoId = forUserEmail;
-          }
-          memories.push(m);
-        }
+    if (forUserEmail) {
+      for (const m of memories) {
+        m.owner = forUserEmail;
+        m.userEmail = forUserEmail;
+        m.userPseudoId = forUserEmail;
       }
-      pageToken = res.nextPageToken;
-    } while (pageToken);
+    }
 
     return memories;
   }

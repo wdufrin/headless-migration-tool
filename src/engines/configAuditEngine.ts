@@ -18,6 +18,7 @@ import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { AgentRegistryClient } from '../services/agentRegistry.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
+import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
 import { logger } from '../utils/logger.js';
 
 export interface AuditItem {
@@ -285,7 +286,7 @@ export class ConfigAuditEngine {
         sourceValue: src.appId || 'default_engine',
         targetValue: 'Not Found / Inaccessible',
         details: `Target Engine "${tgt.appId}" does not exist in target project "${tgt.projectId}" or caller lacks access.`,
-        remediationCommand: `curl -s -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" -H "X-Goog-User-Project: ${tgt.projectId}" "https://discoveryengine.googleapis.com/v1alpha/projects/${tgt.projectId}/locations/${tgt.appLocation || 'global'}/collections/${tgt.collectionId || 'default_collection'}/engines?engineId=${tgt.appId}" -d '{"displayName":"${tgt.appId}","solutionType":"SOLUTION_TYPE_CHAT"}'`
+        remediationCommand: `curl -s -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" -H "X-Goog-User-Project: ${tgt.projectId}" "${getSafeDiscoveryEngineUrl(tgt.appLocation)}/v1alpha/projects/${tgt.projectId}/locations/${tgt.appLocation || 'global'}/collections/${tgt.collectionId || 'default_collection'}/engines?engineId=${tgt.appId}" -d '{"displayName":"${tgt.appId}","solutionType":"SOLUTION_TYPE_CHAT"}'`
       });
     }
 
@@ -451,7 +452,7 @@ export class ConfigAuditEngine {
       }
 
       const jsonStr = JSON.stringify(patchPayload);
-      const patchCmd = `curl -s -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" -H "X-Goog-User-Project: ${tgt.projectId}" "https://discoveryengine.googleapis.com/v1alpha/projects/${tgt.projectId}/locations/${tgt.appLocation || 'global'}/collections/${tgt.collectionId || 'default_collection'}/engines/${tgt.appId}?updateMask=${updateMaskParts.join(',')}" -d '${jsonStr.replace(/'/g, `'\\''`)}'`;
+      const patchCmd = `curl -s -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" -H "X-Goog-User-Project: ${tgt.projectId}" "${getSafeDiscoveryEngineUrl(tgt.appLocation)}/v1alpha/projects/${tgt.projectId}/locations/${tgt.appLocation || 'global'}/collections/${tgt.collectionId || 'default_collection'}/engines/${tgt.appId}?updateMask=${updateMaskParts.join(',')}" -d '${jsonStr.replace(/'/g, `'\\''`)}'`;
 
       remediationPlan.push({
         title: `Synchronize Engine Features & Settings (${featureDiffs.length + settingDiffs.length} discrepancy items)`,
@@ -617,7 +618,7 @@ export class ConfigAuditEngine {
 
     if (missingTargetIdsToAttach.length > 0) {
       const allTargetIdsToHaveAttached = Array.from(new Set([...targetAttachedIds, ...missingTargetIdsToAttach]));
-      const patchDataStoresCmd = `curl -s -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" -H "X-Goog-User-Project: ${tgt.projectId}" "https://discoveryengine.googleapis.com/v1alpha/projects/${tgt.projectId}/locations/${tgt.appLocation || 'global'}/collections/${tgt.collectionId || 'default_collection'}/engines/${tgt.appId}?updateMask=dataStoreIds" -d '{"dataStoreIds":${JSON.stringify(allTargetIdsToHaveAttached)}}'`;
+      const patchDataStoresCmd = `curl -s -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" -H "X-Goog-User-Project: ${tgt.projectId}" "${getSafeDiscoveryEngineUrl(tgt.appLocation)}/v1alpha/projects/${tgt.projectId}/locations/${tgt.appLocation || 'global'}/collections/${tgt.collectionId || 'default_collection'}/engines/${tgt.appId}?updateMask=dataStoreIds" -d '{"dataStoreIds":${JSON.stringify(allTargetIdsToHaveAttached)}}'`;
       remediationPlan.push({
         title: `Attach ${missingTargetIdsToAttach.length} Provisioned DataStore(s) to Target Engine`,
         description: `The following DataStores exist in target project "${tgt.projectId}" but are not attached to engine "${tgt.appId}": ${missingTargetIdsToAttach.join(', ')}.`,

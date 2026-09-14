@@ -80,6 +80,7 @@ describe('MemoryMigrator Engine', () => {
   ];
 
   beforeEach(() => {
+    dummyClient.listMemories = vi.fn().mockResolvedValue([]);
     if (fs.existsSync(testOutputDir)) {
       fs.rmSync(testOutputDir, { recursive: true, force: true });
     }
@@ -156,7 +157,9 @@ describe('MemoryMigrator Engine', () => {
 
   it('should import and restore memories from a JSON backup file', async () => {
     const migrator = new MemoryMigrator(sampleConfig, dummyAuth, dummyClient);
-    dummyClient.listMemories = vi.fn().mockResolvedValue(sampleMemories);
+    dummyClient.listMemories = vi.fn().mockImplementation((env: any) =>
+      env?.projectId === 'source-project' ? Promise.resolve(sampleMemories) : Promise.resolve([])
+    );
     dummyClient.generateMemories = vi.fn().mockResolvedValue({ success: true });
 
     // 1. Export first

@@ -38,6 +38,14 @@ export { getDynamicConfig };
 const app = express();
 const port = parseInt(process.env.PORT || '8080', 10);
 const host = process.env.HOST || '127.0.0.1';
+const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+const allowUnauth = process.env.ALLOW_UNAUTHENTICATED === 'true' || process.env.NODE_ENV === 'test';
+const requireAuth = !allowUnauth;
+
+if (!requireAuth && !isLoopback && process.env.NODE_ENV !== 'test') {
+  logger.error(`FATAL SECURITY ERROR: Server is configured without authentication (requireAuth=false) but bound to non-loopback host "${host}". Starting unauthenticated on a network interface is forbidden.`);
+  process.exit(1);
+}
 
 // Mitigation #3: Lock CORS to authorized origin (Localhost & 127.0.0.1)
 const allowedOriginEnv = process.env.CORS_ALLOWED_ORIGIN;
@@ -83,7 +91,7 @@ app.get('/checklist', (_req, res) => {
 
 // Mitigation #2: Server-side token verification & global /api route protection
 const authMiddleware = createTokenAuthMiddleware({
-  requireAuth: process.env.NODE_ENV === 'production'
+  requireAuth
 });
 
 // Apply authMiddleware globally to all /api routes

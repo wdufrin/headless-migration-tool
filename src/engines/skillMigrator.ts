@@ -62,6 +62,10 @@ export class SkillMigrator {
     identityMapping: Record<string, string> = {}
   ): Promise<MigrationItemResult[]> {
     const results: MigrationItemResult[] = [];
+    const pushResult = (item: MigrationItemResult) => {
+      results.push(item);
+      options.onItemCompleted?.(item);
+    };
     const concurrency = options.concurrency ? Math.min(options.concurrency, 4) : 2;
 
     // -------------------------------------------------------------
@@ -112,7 +116,7 @@ export class SkillMigrator {
 
         if (options.dryRun) {
           logger.info(`[DRY RUN] Would migrate Skill "${displayName}" (ID: ${resourceId}) to target Agent Registry`);
-          results.push({
+          pushResult({
             id: resourceId,
             displayName,
             type: 'SKILL',
@@ -188,7 +192,7 @@ export class SkillMigrator {
           }
         }
 
-        results.push({
+        pushResult({
           id: resourceId,
           displayName,
           type: 'SKILL',
@@ -197,7 +201,7 @@ export class SkillMigrator {
         });
       } catch (err: any) {
         logger.error(`Failed to migrate Skill "${displayName}" (${resourceId}): ${err.message}`);
-        results.push({
+        pushResult({
           id: resourceId,
           displayName,
           type: 'SKILL',
@@ -256,7 +260,7 @@ export class SkillMigrator {
 
           if (options.dryRun) {
             logger.info(`[DRY RUN] Would migrate Discovery Engine Skill Agent "${agent.displayName}" (ID: ${agentId}) for owner ${targetOwner}`);
-            results.push({
+            pushResult({
               id: agentId,
               displayName: agent.displayName,
               type: 'SKILL',
@@ -379,7 +383,7 @@ export class SkillMigrator {
               logger.info(`Successfully migrated user Skill Agent "${agent.displayName}" (ID: ${agentId}) into target Discovery Engine.`);
             }
 
-            results.push({
+            pushResult({
               id: agentId,
               displayName: agent.displayName,
               type: 'SKILL',
@@ -390,7 +394,7 @@ export class SkillMigrator {
             });
           } catch (err: any) {
             logger.error(`Failed to migrate user Skill Agent "${agent.displayName}" (${agentId}): ${err.message}`);
-            results.push({
+            pushResult({
               id: agentId,
               displayName: agent.displayName,
               type: 'SKILL',

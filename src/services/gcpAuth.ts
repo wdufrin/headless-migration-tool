@@ -187,12 +187,12 @@ export class GcpAuthService {
     // 1. User Impersonation Flow
     if (cleanEmail) {
       const lower = cleanEmail.toLowerCase();
+      if (lower === 'unknown') {
+        throw new Error(`Cannot obtain access token for unknown user identity ("unknown"). Provide a valid user email or service account.`);
+      }
       const isServiceIdentity = (
         lower.endsWith('.gserviceaccount.com') ||
-        lower.includes('serviceaccount') ||
-        lower.startsWith('service-') ||
-        lower === 'unknown' ||
-        lower === 'admin'
+        lower.startsWith('service-')
       );
 
       if (!isServiceIdentity) {

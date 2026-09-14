@@ -186,6 +186,18 @@ export class MemoryMigrator {
       throw new Error(`Memory ${memory.name} has no valid fact content.`);
     }
 
+    // Probe target memories to prevent duplicate memory generation on retry
+    try {
+      const existing = await this.listTargetMemories(targetUserId);
+      const factMatch = existing.find(m => m.fact && m.fact.trim() === memory.fact.trim());
+      if (factMatch) {
+        logger.info(`Memory fact "${memory.fact.substring(0, 40)}..." already exists in target for ${targetUserId || 'default'}. Skipping duplicate.`);
+        return factMatch;
+      }
+    } catch (probeErr: any) {
+      logger.debug(`Could not probe target memories: ${probeErr.message}`);
+    }
+
     const res = await this.client.generateMemories(target, memory.fact, targetUserId);
     logger.info(`Migrated memory fact "${memory.fact.substring(0, 40)}..." to target for ${targetUserId || 'default'}`);
     return res;

@@ -79,15 +79,39 @@ export class AgentRegistryClient {
     });
   }
 
+  async listAllPages<T>(
+    buildUrl: (pageToken?: string) => string,
+    extractItems: (response: any) => T[] | undefined,
+    projectId: string,
+    forUserEmail?: string
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let pageToken: string | undefined = undefined;
+
+    do {
+      const currentUrl = buildUrl(pageToken);
+      const res = await this.request<any>(currentUrl, 'GET', undefined, projectId, forUserEmail);
+      const batch = extractItems(res);
+      if (batch && Array.isArray(batch)) {
+        items.push(...batch);
+      }
+      pageToken = res?.nextPageToken || undefined;
+    } while (pageToken);
+
+    return items;
+  }
+
   async listSkills(env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill[]> {
-    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills?pageSize=100`;
-    try {
-      const res = await this.request<{ skills?: RegistrySkill[] }>(url, 'GET', undefined, env.projectId, forUserEmail);
-      return res.skills || [];
-    } catch (err: any) {
-      logger.debug(`Could not list Agent Registry skills in ${env.projectId}: ${err.message}`);
-      return [];
-    }
+    return this.listAllPages<RegistrySkill>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills?${query.toString()}`;
+      },
+      (res) => res.skills,
+      env.projectId,
+      forUserEmail
+    );
   }
 
   async getSkill(skillName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill> {
@@ -155,13 +179,16 @@ export class AgentRegistryClient {
     const resourceName = skillName.startsWith('projects/')
       ? skillName
       : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${skillName}`;
-    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}/revisions?pageSize=50`;
-    try {
-      const res = await this.request<{ skillRevisions?: RegistrySkillRevision[] }>(url, 'GET', undefined, env.projectId, forUserEmail);
-      return res.skillRevisions || [];
-    } catch {
-      return [];
-    }
+    return this.listAllPages<RegistrySkillRevision>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '50' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}/revisions?${query.toString()}`;
+      },
+      (res) => res.skillRevisions,
+      env.projectId,
+      forUserEmail
+    );
   }
 
   async createSkillRevision(skillName: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkillRevision> {

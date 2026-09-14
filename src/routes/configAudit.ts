@@ -26,17 +26,50 @@ import { logger } from '../utils/logger.js';
 
 export const configAuditRouter = express.Router();
 
+function resolveAndValidateConfig(req: express.Request): { config?: any; error?: { status: number; body: any } } {
+  if (req.body && (req.body.source || req.body.target)) {
+    const parsed = MigrationConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return {
+        error: {
+          status: 400,
+          body: {
+            error: 'InvalidConfiguration',
+            message: 'Migration configuration payload failed schema validation.',
+            details: parsed.error.issues
+          }
+        }
+      };
+    }
+    return { config: parsed.data };
+  }
+
+  const dynamicConfig = getDynamicConfig(req);
+  const parsed = MigrationConfigSchema.safeParse(dynamicConfig);
+  if (!parsed.success) {
+    return {
+      error: {
+        status: 400,
+        body: {
+          error: 'InvalidConfiguration',
+          message: 'Dynamic configuration failed schema validation.',
+          details: parsed.error.issues
+        }
+      }
+    };
+  }
+  return { config: parsed.data };
+}
+
 /**
  * POST /api/audit/config
  * Executes a configuration parity check and gap analysis between source and target.
  */
 configAuditRouter.post('/audit/config', async (req, res) => {
   try {
-    let validatedConfig: any;
-    try {
-      validatedConfig = MigrationConfigSchema.parse(req.body);
-    } catch {
-      validatedConfig = getDynamicConfig(req);
+    const { config: validatedConfig, error } = resolveAndValidateConfig(req);
+    if (error) {
+      return res.status(error.status).json(error.body);
     }
 
     const callerToken = req.accessToken;
@@ -84,11 +117,9 @@ configAuditRouter.post('/audit/config/markdown', async (req, res) => {
     const auditEngine = new ConfigAuditEngine(authService);
 
     if (!auditData || !Array.isArray(auditData.items)) {
-      let validatedConfig: any;
-      try {
-        validatedConfig = MigrationConfigSchema.parse(req.body);
-      } catch {
-        validatedConfig = getDynamicConfig(req);
+      const { config: validatedConfig, error } = resolveAndValidateConfig(req);
+      if (error) {
+        return res.status(error.status).json(error.body);
       }
       auditData = await auditEngine.runAudit(validatedConfig);
     }
@@ -109,11 +140,9 @@ configAuditRouter.post('/audit/config/markdown', async (req, res) => {
  */
 configAuditRouter.post('/audit/sync-engine-settings', async (req, res) => {
   try {
-    let validatedConfig: any;
-    try {
-      validatedConfig = MigrationConfigSchema.parse(req.body);
-    } catch {
-      validatedConfig = getDynamicConfig(req);
+    const { config: validatedConfig, error } = resolveAndValidateConfig(req);
+    if (error) {
+      return res.status(error.status).json(error.body);
     }
 
     const callerToken = req.accessToken;

@@ -551,6 +551,7 @@ export class AgentMigrator {
           logger.info(`[DRY RUN] Would migrate Agent "${result.displayName}" (ID: ${originalAgentId}) for owner ${targetOwner}`);
           result.status = 'DRY_RUN';
           result.durationMs = Date.now() - startTime;
+          options.onItemCompleted?.(result);
           return result;
         }
 
@@ -559,8 +560,19 @@ export class AgentMigrator {
         
         let createdAgent;
         try {
-          createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, userOwner);
-        } catch (createErr: any) {
+          const existingAgents = await this.client.listAgents(targetEnv, userOwner);
+          createdAgent = existingAgents.find(a => a.displayName === agent.displayName);
+          if (createdAgent) {
+            logger.info(`Agent "${result.displayName}" already exists in target engine (ID: ${createdAgent.name.split('/').pop()}). Skipping duplicate creation.`);
+          }
+        } catch (probeErr: any) {
+          logger.debug(`Could not probe target agents before create: ${probeErr.message}`);
+        }
+
+        if (!createdAgent) {
+          try {
+            createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, userOwner);
+          } catch (createErr: any) {
           if (
             createErr.message.includes('DWD Impersonation Failed') ||
             createErr.message.includes('User does not exist') ||
@@ -590,6 +602,7 @@ export class AgentMigrator {
           } else {
             throw createErr;
           }
+        }
         }
 
         const newAgentName = createdAgent.name;
@@ -695,6 +708,7 @@ export class AgentMigrator {
       }
 
       result.durationMs = Date.now() - startTime;
+      options.onItemCompleted?.(result);
       return result;
     });
   }

@@ -182,31 +182,41 @@ export class SessionMigrator {
       try {
         const token = await this.getAuthToken(email);
         const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-        const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100`;
+        let pageToken = '';
 
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'X-Goog-User-Project': env.projectId
-          }
-        });
+        do {
+          const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+          const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100${pageParam}`;
 
-        if (response.ok) {
-          const data = await response.json() as any;
-          for (const s of (data.sessions || [])) {
-            const sid = s.name.split('/').pop() || s.name;
-            if (!seenSessionIds.has(sid)) {
-              seenSessionIds.add(sid);
-              if (!s.userPseudoId || !s.userPseudoId.includes('@')) {
-                s.userPseudoId = email;
-              }
-              allSessions.push(s);
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'X-Goog-User-Project': env.projectId
             }
+          });
+
+          if (response.ok) {
+            const data = await response.json() as any;
+            for (const s of (data.sessions || [])) {
+              const sid = s.name.split('/').pop() || s.name;
+              if (!seenSessionIds.has(sid)) {
+                seenSessionIds.add(sid);
+                if (!s.userPseudoId || !s.userPseudoId.includes('@')) {
+                  s.userPseudoId = email;
+                }
+                allSessions.push(s);
+              }
+            }
+            pageToken = data.nextPageToken || '';
+          } else {
+            const errText = await response.text();
+            logger.warn(`Could not list sessions for user ${email} (${response.status}): ${errText}`);
+            break;
           }
-        }
+        } while (pageToken);
       } catch (err: any) {
-        logger.debug(`Could not list sessions for user ${email}: ${err.message}`);
+        logger.warn(`Could not list sessions for user ${email}: ${err.message}`);
       }
     }
 
@@ -335,6 +345,22 @@ export class SessionMigrator {
 
     const baseUrl = getSafeDiscoveryEngineUrl(target.appLocation);
     const targetUrl = `${baseUrl}/v1alpha/projects/${target.projectId}/locations/${target.appLocation}/collections/${target.collectionId || 'default_collection'}/engines/${target.appId}/sessions`;
+
+    // Probe target engine to avoid duplicate session creation on retry
+    try {
+      const existingSessions = await this.listTargetSessions(targetUserId.includes('@') ? targetUserId : undefined);
+      const expectedName = session.displayName || 'Restored Chat Session';
+      const match = existingSessions.find(s =>
+        (s.displayName === expectedName) &&
+        (!hydratedTurns.length || (s.turns && s.turns.length === hydratedTurns.length))
+      );
+      if (match) {
+        logger.info(`Session "${session.displayName}" already exists in target engine (Target ID: ${match.name.split('/').pop()}). Skipping duplicate creation.`);
+        return match;
+      }
+    } catch (probeErr: any) {
+      logger.debug(`Could not probe target sessions before create: ${probeErr.message}`);
+    }
 
     const response = await fetch(targetUrl, {
       method: 'POST',

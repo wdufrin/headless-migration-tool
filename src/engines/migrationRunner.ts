@@ -17,7 +17,7 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import path from 'path';
-import { MigrationReport, MigrationItemResult } from '../types/migration.js';
+import { MigrationReport, MigrationItemResult, MigrationOptions } from '../types/migration.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
@@ -189,9 +189,12 @@ export class MigrationRunner {
       activeSkipIds.add(item.id);
       activeSkipIds.add(key);
     }
-    const effectiveOptions = {
+    const effectiveOptions: MigrationOptions = {
       ...config.options,
-      skipIds: Array.from(activeSkipIds)
+      skipIds: Array.from(activeSkipIds),
+      onItemCompleted: (item: MigrationItemResult) => {
+        checkpointManager.recordSuccess(item);
+      }
     };
 
     // Step 3: Migrate Notebooks

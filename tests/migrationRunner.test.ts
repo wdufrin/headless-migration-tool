@@ -72,6 +72,7 @@ describe('MigrationRunner Orchestrator', () => {
     ]);
     (runner as any).client.listMemories = vi.fn().mockResolvedValue([]);
     (runner as any).client.getAgentIamPolicy = vi.fn().mockResolvedValue({ bindings: [] });
+    (runner as any).registryClient.listSkills = vi.fn().mockResolvedValue([]);
 
     const report = await runner.run(sampleConfig);
 
@@ -134,6 +135,7 @@ describe('MigrationRunner Orchestrator', () => {
     ]);
     (runner as any).client.listMemories = vi.fn().mockResolvedValue([]);
     (runner as any).client.getAgentIamPolicy = vi.fn().mockResolvedValue({ bindings: [] });
+    (runner as any).registryClient.listSkills = vi.fn().mockResolvedValue([]);
 
     const resumeConfig: ValidatedMigrationConfig = {
       ...sampleConfig,
@@ -170,6 +172,7 @@ describe('MigrationRunner Orchestrator', () => {
     (runner as any).notebookMigrator.migrateNotebooks = vi.fn().mockRejectedValue(new Error('FATAL_NOTEBOOK_API_ERROR'));
     (runner as any).client.listAgents = vi.fn().mockResolvedValue([]);
     (runner as any).client.listMemories = vi.fn().mockResolvedValue([]);
+    (runner as any).registryClient.listSkills = vi.fn().mockResolvedValue([]);
 
     const report = await runner.run(sampleConfig);
 

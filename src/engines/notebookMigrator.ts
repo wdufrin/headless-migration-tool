@@ -453,6 +453,7 @@ export class NotebookMigrator {
         logger.info(`[DRY RUN] Would migrate Notebook "${result.displayName}" (ID: ${notebookId}) with ${result.details.sourcesCount} sources, ${result.details.notesCount} notes, and ${result.details.artifactsCount} Studio artifacts for owner ${targetOwner}`);
         result.status = 'DRY_RUN';
         result.durationMs = Date.now() - startTime;
+        options.onItemCompleted?.(result);
         return result;
       }
 
@@ -460,7 +461,7 @@ export class NotebookMigrator {
 
         const userOwner = (targetOwner && targetOwner !== 'unknown') ? targetOwner : undefined;
 
-        // 1. Create Target Notebook
+        // 1. Create Target Notebook (with idempotency probe)
         const notebookPayload: any = {
           title: fullNotebook.title || fullNotebook.displayName || 'Restored Notebook'
         };
@@ -468,10 +469,24 @@ export class NotebookMigrator {
           notebookPayload.emoji = fullNotebook.emoji;
         }
 
-        const createdNotebook = await this.client.createNotebook(targetEnv, notebookPayload, userOwner);
+        let createdNotebook: Notebook | undefined;
+        try {
+          const targetNotebooks = await this.client.listNotebooks(targetEnv, userOwner);
+          createdNotebook = targetNotebooks.find(n => (n.title || n.displayName) === notebookPayload.title);
+          if (createdNotebook) {
+            logger.info(`Notebook "${result.displayName}" already exists in target environment (ID: ${createdNotebook.name.split('/').pop()}). Skipping duplicate creation.`);
+          }
+        } catch (probeErr: any) {
+          logger.debug(`Could not probe target notebooks for existing title: ${probeErr.message}`);
+        }
+
+        if (!createdNotebook) {
+          createdNotebook = await this.client.createNotebook(targetEnv, notebookPayload, userOwner);
+          logger.info(`Created target Notebook "${result.displayName}" with new ID "${createdNotebook.name.split('/').pop()}" (Owner: ${userOwner || 'admin'})`);
+        }
+
         const newNotebookId = createdNotebook.name.split('/').pop() || '';
         result.targetId = newNotebookId;
-        logger.info(`Created target Notebook "${result.displayName}" with new ID "${newNotebookId}" (Owner: ${userOwner || 'admin'})`);
 
         const sourceIdMap: Record<string, string> = {};
         const sourceDetails: MigratedSourceItem[] = [];
@@ -655,6 +670,7 @@ export class NotebookMigrator {
       }
 
       result.durationMs = Date.now() - startTime;
+      options.onItemCompleted?.(result);
       return result;
     });
   }

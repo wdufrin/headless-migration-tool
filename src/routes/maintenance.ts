@@ -50,6 +50,7 @@ export interface TargetAssetCleanupParams {
 
 export interface TargetAssetCleanupResult {
   success: boolean;
+  errors?: string[];
   deletedNotebooks: number;
   deletedAgents: number;
   deletedSessions: number;
@@ -188,6 +189,8 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
     logger.warn('Notebook cleanup was requested, but no target users were found or supplied. Gemini Enterprise notebooks are user-scoped and require user impersonation (DWD) to discover and delete.');
   }
 
+  const cleanupErrors: string[] = [];
+
   // 1. Delete all notebooks in target (draining all paginated recently viewed items per user)
   let deletedNotebooks = 0;
   if (cleanNotebooks) {
@@ -214,11 +217,13 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
             logger.info(`Deleted batch of ${names.length} notebook(s) for user "${user || 'default'}" in project "${targetProject}"`);
           }
         } catch (uErr: any) {
-          logger.debug(`User notebook cleanup notice for ${user || 'default'}: ${uErr.message}`);
+          logger.warn(`User notebook cleanup notice for ${user || 'default'}: ${uErr.message}`);
+          cleanupErrors.push(`User ${user || 'default'} notebook cleanup: ${uErr.message}`);
         }
       }
     } catch (e: any) {
       logger.warn(`Notebook cleanup notice: ${e.message}`);
+      cleanupErrors.push(`Notebook cleanup: ${e.message}`);
     }
   }
 
@@ -252,6 +257,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
       }
     } catch (e: any) {
       logger.warn(`Agent cleanup notice: ${e.message}`);
+      cleanupErrors.push(`Agent cleanup: ${e.message}`);
     }
   }
 
@@ -284,14 +290,17 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
               }
             } catch (sErr: any) {
               logger.warn(`Could not delete session ${s.name} for ${userEmail}: ${sErr.message}`);
+              cleanupErrors.push(`Could not delete session ${s.name} for ${userEmail}: ${sErr.message}`);
             }
           }
-        } catch {
+        } catch (uErr: any) {
           // user might not exist in target engine
+          logger.debug(`Target session discovery notice for ${userEmail}: ${uErr.message}`);
         }
       }
     } catch (e: any) {
       logger.warn(`Session cleanup notice: ${e.message}`);
+      cleanupErrors.push(`Session cleanup: ${e.message}`);
     }
   }
 
@@ -317,14 +326,17 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
               deletedMemories++;
             } catch (mErr: any) {
               logger.warn(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
+              cleanupErrors.push(`Could not delete memory ${m.name} for ${userEmail || 'default'}: ${mErr.message}`);
             }
           }
-        } catch {
+        } catch (mErr: any) {
           // user might not have memories in target
+          logger.debug(`Target memory discovery notice for ${userEmail || 'default'}: ${mErr.message}`);
         }
       }
     } catch (e: any) {
       logger.warn(`Memories cleanup notice: ${e.message}`);
+      cleanupErrors.push(`Memories cleanup: ${e.message}`);
     }
   }
 
@@ -345,6 +357,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
       }
     } catch (e: any) {
       logger.warn(`Artifact cleanup notice: ${e.message}`);
+      cleanupErrors.push(`Artifact cleanup: ${e.message}`);
     }
   }
 
@@ -365,6 +378,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
       }
     } catch (e: any) {
       logger.warn(`Reports cleanup notice: ${e.message}`);
+      cleanupErrors.push(`Reports cleanup: ${e.message}`);
     }
 
     // 6. Clear user handover reports folder
@@ -377,6 +391,7 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
       }
     } catch (e: any) {
       logger.warn(`User handover reports cleanup notice: ${e.message}`);
+      cleanupErrors.push(`User handover reports cleanup: ${e.message}`);
     }
   }
 
@@ -387,7 +402,8 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
     : undefined;
 
   return {
-    success: true,
+    success: cleanupErrors.length === 0,
+    errors: cleanupErrors.length > 0 ? cleanupErrors : undefined,
     deletedNotebooks,
     deletedAgents,
     deletedSessions,
@@ -397,7 +413,9 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
     clearedUserHandover,
     targetUsersCleaned: targetUsersToClean,
     warning,
-    message: `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents, ${deletedSessions} chat sessions, ${deletedMemories} user memories, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
+    message: cleanupErrors.length > 0
+      ? `Cleanup completed with ${cleanupErrors.length} error(s): ${cleanupErrors.join('; ')}`
+      : `Cleaned ${deletedNotebooks} notebooks, ${deletedAgents} custom agents, ${deletedSessions} chat sessions, ${deletedMemories} user memories, ${clearedReports} migration reports, and reset all user handover bundles and artifacts.`
   };
 }
 
@@ -605,9 +623,9 @@ maintenanceRouter.post('/maintenance/decommission', async (req, res) => {
       }
     }
 
-    // 2. Reset Overridden Org Policies
+    // 2. Reset Overridden Org Policies (requires explicit opt-in)
     const orgPoliciesReset: Array<{ constraint: string; reset: boolean; error?: string }> = [];
-    if (req.body?.resetOrgPolicies !== false) {
+    if (req.body?.resetOrgPolicies === true) {
       const constraintsToReset = new Set<string>();
       const trackedPolicies = trackedState.overriddenOrgPolicies.filter(p => p.projectId === safeTargetProject);
       for (const p of trackedPolicies) {
@@ -681,12 +699,12 @@ maintenanceRouter.post('/maintenance/decommission', async (req, res) => {
       }
     }
 
-    // 4. Delete the Service Account
+    // 4. Delete the Service Account (requires explicit opt-in)
     let serviceAccountDeleted: { email: string; deleted: boolean; error?: string } = {
       email: saEmail || '',
       deleted: false
     };
-    if (req.body?.deleteServiceAccount !== false && saEmail) {
+    if (req.body?.deleteServiceAccount === true && saEmail) {
       try {
         logger.info(`Deleting service account "${saEmail}" in project "${safeTargetProject}"...`);
         await execFileAsync('gcloud', [

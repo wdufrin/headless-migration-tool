@@ -36,6 +36,7 @@ declare global {
 export interface AuthMiddlewareOptions {
   allowedDomains?: string[];
   requireAuth?: boolean;
+  expectedAudience?: string;
 }
 
 /**
@@ -46,6 +47,7 @@ export function createTokenAuthMiddleware(options: AuthMiddlewareOptions = {}) {
   const allowedDomains = (options.allowedDomains || process.env.ALLOWED_AUTH_DOMAINS?.split(',') || []).map(d =>
     d.trim().toLowerCase().replace(/^@/, '')
   );
+  const expectedAudience = options.expectedAudience || process.env.EXPECTED_OAUTH_CLIENT_ID || process.env.OAUTH_CLIENT_ID;
 
   return async (req: Request, res: Response, next: NextFunction) => {
     // Prohibit passing access tokens in request body
@@ -80,6 +82,17 @@ export function createTokenAuthMiddleware(options: AuthMiddlewareOptions = {}) {
 
       const tokenData: any = await tokenInfoRes.json();
       const userEmail = (tokenData.email || '').toLowerCase();
+
+      // Check expected audience if configured (Mitigation for token misuse across apps)
+      if (expectedAudience) {
+        const tokenAud = tokenData.aud || tokenData.audience;
+        if (!tokenAud || tokenAud !== expectedAudience) {
+          return res.status(403).json({
+            error: 'InvalidAudience',
+            message: `OAuth token audience does not match configured expected audience.`
+          });
+        }
+      }
 
       // Check allowed domain if configured
       if (allowedDomains.length > 0) {

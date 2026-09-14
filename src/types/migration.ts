@@ -47,6 +47,7 @@ export interface MigrationOptions {
   resumeFrom?: string;
   skipIds?: string[];
   logLevel?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+  onItemCompleted?: (item: MigrationItemResult) => void;
 }
 
 export interface MigrationConfig {

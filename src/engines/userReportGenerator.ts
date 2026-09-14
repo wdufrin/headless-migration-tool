@@ -295,15 +295,34 @@ export class UserReportGenerator {
         }).join('\n')
       : '_No research notebooks found for your account._';
 
+    let totalFailedSources = 0;
+    for (const nb of (data.notebooks || [])) {
+      const sources: any[] = nb.details?.sources || [];
+      totalFailedSources += sources.filter((s: any) => s.status === 'FAILED' || s.status === 'MANUAL_REUPLOAD_REQUIRED').length;
+    }
+
+    const failedAgents = (data.agents || []).filter((a: any) => a.status === 'FAILED').length;
+    const totalFailures = totalFailedSources + failedAgents;
+
+    const statusGreeting = totalFailures > 0
+      ? `⚠️ **Migration Warning:** Your Gemini Enterprise workspace items have been **partially transferred with ${totalFailures} item(s) requiring attention or manual verification**. Complete the action checklists below to review and finalize your migration.`
+      : `Your Gemini Enterprise custom agents, research notebooks, and past conversations have been successfully transferred and are ready for you. Complete the action checklists below to finalize your migration.`;
+
     const sourcesAuditSection = allNotebookSources.length > 0
-      ? `\n<details>\n<summary>📋 Technical Reference: Source Documents Audit (${allNotebookSources.length})</summary>\n\n- **Restored Sources:**\n${allNotebookSources.join('\n')}\n</details>\n`
+      ? `
+---
+
+## 📄 Notebook Sources Integrity Audit (${allNotebookSources.length} sources)
+The following research documents and web sources were processed during migration:
+${allNotebookSources.join('\n')}
+`
       : '';
 
     return `# 🚀 Welcome to Your New Gemini Enterprise Workspace
 
 Hello **${data.userEmail}**,
 
-Your Gemini Enterprise custom agents, research notebooks, and past conversations have been successfully transferred and are ready for you. Complete the action checklists below to finalize your migration.
+${statusGreeting}
 
 ---
 
