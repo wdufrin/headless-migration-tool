@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
-## Release Notes — Version 1.4.1
+## Release Notes — Version 1.5.0
 
-**Release Date:** September 9, 2026  
+**Release Date:** September 14, 2026  
 **License:** Apache-2.0  
 **Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
 
@@ -9,41 +9,34 @@
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.4.1** introduces an **Automated Organization Policy Pre-Flight Matrix & Live Scanner** (identifying blocking constraints such as `iam.disableServiceAccountKeyCreation` and `iam.disableCrossProjectServiceAccountUsage`), **1-Click Project-Level Policy Overrides** with ready-to-paste CLI remediation commands, an architectural deep dive and automated verification for **Keyless Workforce Identity Federation (WiF)**, and integrated target project organization policy auditing in the **Permissions & Least-Privilege Auditor**.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.0** delivers an **Interactive Step 2 Config & Parity Audit Environment Selector** with real-time bi-directional synchronization to Migration Studio, safeguards preventing premature blank pre-checks, streamlined execution controls in Step 3, comprehensive forensic SWE audit remediations across Discovery Engine pagination (`listAllPages`) and fail-closed authentication, and an expanded test suite with **105 automated tests passing at 100%**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 🛡️ Organization Policy Pre-Flight Matrix & API (`POST /api/wizard/check-org-policies`)
-* **Proactive Constraint Detection**: Automated pre-flight scanning endpoint and UI component in the **Auth & WiF Wizard** inspecting critical enterprise GCP Organization Policies on the target environment:
-  * `iam.disableServiceAccountKeyCreation`: Verifies whether service account key generation (`gcloud iam service-accounts keys create`) is blocked by organization-level policy.
-  * `iam.disableCrossProjectServiceAccountUsage`: Checks whether service accounts created in external projects can be bound or utilized against target Discovery Engine resources.
-  * `iam.allowedPolicyMemberDomains`: Evaluates domain-sharing restrictions to ensure workforce pool principal sets (`principalSet://iam.googleapis.com/...`) and external user identities are allowed in IAM bindings.
-  * `discoveryengine.managed.allowedDataSources`: Checks whether custom or third-party MCP and connector datastores are restricted by enterprise policy.
-* **Granular Inheritance Auditing**: Reports whether policies are enforced, inherited from parent organization folders, or overridden at the project level, with specific remediation instructions.
-* **Dynamic Visual Alert Banners**: Color-coded banners (`WARNING` amber alert or `READY` green badge) in Step 1 (DWD) of the Auth Wizard immediately display enforcement status and actionable guidance before attempting key creation.
+#### 1. 🎯 Interactive Step 2 Environment Selector & Parity Auditor
+* **Direct Environment Configuration**: Step 2 (Config & Parity Audit) now features interactive Source and Target environment cards allowing administrators to configure Source Project ID, Region, Collection, and Engine ID as well as Target Project ID, Region, Collection, and Engine ID directly before running parity checks.
+* **Bi-Directional State Synchronization**: Any configuration changed in Step 2 automatically synchronizes to Step 3 (Migration Studio), and vice-versa.
+* **Guided Empty-State Guardrail**: Prevents premature API calls when project IDs are unconfigured, guiding the user with actionable instructions instead of false-failure error states.
+* **Next Step Wizard Transition**: Added a prominent `Next: Proceed to Step 3: Migration Studio ➔` transition button at the bottom of the audit report.
 
-#### 2. ⚡ 1-Click Project-Level Organization Policy Override (`POST /api/wizard/override-key-creation-policy`)
-* **Instant Project Exemption**: Added a 1-click override button and dedicated backend endpoint that sets `enforce: false` on `iam.disableServiceAccountKeyCreation` directly on the target project via the Google Cloud Org Policy REST API (for administrators with `roles/orgpolicy.policyAdmin`).
-* **Copyable CLI Remediation**: Generates an exact, copy-ready `gcloud org-policies set-policy` command complete with inline JSON policy definition for terminal administrators who prefer running commands manually.
+#### 2. ⚡ Streamlined Step 3 (Migration Studio) Action Controls
+* **Eliminated Redundancy**: Removed the duplicate `Pre-Check Configurations & Gaps` button from Step 3, focusing the bottom action bar exclusively on migration execution (`⚡ Execute Pre-Flight Dry Run` / `⚡ Execute Live Migration`).
+* **Direct Back Navigation**: Added a clean `← Step 2: Config & Parity Audit` back-link for quick review of parity gaps.
 
-#### 3. 🌐 Workforce Identity Federation (WiF) Keyless Policy & Architecture Assessment
-* **Keyless Architecture Immunity**: Clarifies and validates that WiF token exchanges (`sts.googleapis.com`) mint ephemeral, short-lived tokens via Google Cloud STS and are **100% immune** to `iam.disableServiceAccountKeyCreation` or `iam.disableServiceAccountKeyUpload` constraints.
-* **Zero Stored Secrets**: Eliminates high-risk on-disk `.json` private keys entirely for customers adopting federated identity (Entra ID, Okta, Ping).
-* **Principal Set Verification**: Validates that `iam.allowedPolicyMemberDomains` permits workforce pool principal sets (`principalSet://iam.googleapis.com/organizations/<ORG_ID>/*`).
+#### 3. 🛡️ Forensic SWE Hardening & Security Audit Remediation
+* **Zero Truncation Pagination (`listAllPages`)**: Replaced single-page API calls across Discovery Engine services with recursive `listAllPages` token pagination.
+* **Fail-Closed Authentication**: Strict token verification with caller service account email matching and OAuth2 audience validation.
+* **Explicit Opt-in Decommissioning**: Prevented accidental teardown by requiring explicit `--confirm <PROJECT_ID>` and programmatic verification.
+* **Zod Schema Audit Payloads**: Hardened `/api/audit/config` endpoints with strict Zod schema validation.
 
-#### 4. 🛡️ Permissions & Least-Privilege Auditor Integration (`PermissionAuditor`)
-* **Target Policy Verification**: Expanded `PermissionAuditor.ts` (`auditOrgPolicies`) to evaluate organization policy compliance alongside IAM role bindings and OAuth2 scopes.
-* **Automated Remediation Guidance**: Suggests exact IAM role additions (`roles/orgpolicy.policyAdmin`) and policy reset commands when constraints block migration operations.
-
-#### 5. 🧪 Automated Test Suite Expansion & Typing Fixes (74/74 Tests Passing)
-* Expanded automated test coverage to 74 tests across 10 test suites covering skills migration, configuration pre-checks, memory extraction, session rehydration, reporters, artifact formatting, and bulk email dispatching.
-* Fixed TypeScript test typing in `tests/skillMigrator.test.ts` (added missing `appId` properties in `sourceEnv` and `targetEnv`).
+#### 4. 🧪 Automated Test Suite Expansion (105/105 Tests Passing)
+* Full 105-test automated suite across 14 test suites passing with 100% success rate, verifying all auth types, audit engines, and export formatting pipelines.
 
 ---
 
-### 📦 Upgrade Guide (v1.4.0 &rarr; v1.4.1)
+### 📦 Upgrade Guide (v1.4.1 &rarr; v1.5.0)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -54,7 +47,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.4.1** introdu
    ```bash
    npm run build
    ```
-3. **Run Test Suite (All 74 Tests Passing)**:
+3. **Run Test Suite (All 105 Tests Passing)**:
    ```bash
    npm test
    ```
@@ -71,7 +64,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.4.1** introdu
 
 ### 📜 Version History
 
-* **v1.4.1** *(Current)*: Organization Policy pre-flight matrix, 1-click project-level key creation override, WiF keyless architecture assessment, permission auditor org policy integration, and test suite maintenance.
+* **v1.5.0** *(Current)*: Interactive Step 2 environment selector and bi-directional sync, streamlined Step 3 action bar, forensic SWE pagination and fail-closed auth hardening, and 105 passing tests.
+* **v1.4.1**: Organization Policy pre-flight matrix, 1-click project-level key creation override, WiF keyless architecture assessment, permission auditor org policy integration, and test suite maintenance.
 * **v1.4.0**: Standalone zero-dependency interactive Quiz & Flashcards applications, Explainer Video compression (`ffmpeg`), single-ZIP handover archive (`NotebookLM_Artifacts.zip`), clean notes migration policy, and interactive action checklists.
 * **v1.3.0**: User-created skills migration (`SkillMigrator`), Configuration Pre-Check & Gap Audit engine (`ConfigAuditEngine`), 1-click engine feature sync, attached DataStore filtering, and clipboard resilience.
 * **v1.2.0**: Granular notebook source migration & audit trail, batch-with-fallback ingestion, multi-user target cleanup, quota diagnostics, and enhanced user checklists.

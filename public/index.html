@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.4.0</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.0</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -571,11 +571,11 @@
             <!-- Action Controls -->
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div>
-                <button type="button" onclick="runConfigPreCheck()" id="btnPreCheckGaps" class="px-4 py-2.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-sm">
-                  <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                <button type="button" onclick="switchTab('audit')" class="px-3.5 py-2 text-xs font-medium text-gray-400 hover:text-white bg-gray-900/80 hover:bg-gray-800 border border-gray-800 rounded-xl transition flex items-center gap-1.5 shadow-sm">
+                  <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                   </svg>
-                  <span>🔍 Pre-Check Configurations & Gaps</span>
+                  <span>Step 2: Config & Parity Audit</span>
                 </button>
               </div>
               <div class="flex items-center gap-3">
@@ -695,22 +695,109 @@
             </div>
           </div>
 
-          <!-- Environment Comparison Summary Bar -->
+          <!-- Environment Comparison & Interactive Selector Bar -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-gray-950/70 border border-blue-900/40 rounded-xl p-4 flex items-center gap-3.5">
-              <div class="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-xl shrink-0">🔵</div>
-              <div class="overflow-hidden">
-                <div class="text-[11px] uppercase tracking-wider text-blue-400 font-bold">Source Environment (Current)</div>
-                <div id="auditSourceProjectLabel" class="text-sm font-bold text-white truncate font-mono">Not configured</div>
-                <div id="auditSourceLocationLabel" class="text-xs text-gray-400 font-mono">Location: global | Engine: default_engine</div>
+            <!-- Source Environment Box -->
+            <div class="bg-gray-950/70 border border-blue-900/50 rounded-xl p-4 space-y-3 shadow-sm">
+              <div class="flex items-center justify-between border-b border-blue-900/40 pb-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-6 h-6 rounded-md bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-xs shrink-0">🔵</div>
+                  <span class="text-xs font-bold text-blue-400 uppercase tracking-wider">Source Environment (Current)</span>
+                </div>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 font-semibold">READ-ONLY AUDIT</span>
+              </div>
+              
+              <div class="space-y-2.5">
+                <div>
+                  <label class="block text-[11px] font-medium text-gray-400 mb-1">Source GCP Project ID <span class="text-rose-400">*</span></label>
+                  <input type="text" id="auditSrcProjectId" placeholder="e.g. source-gcp-project-id" oninput="syncAuditEnv('src')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label class="block text-[11px] font-medium text-gray-400 mb-1">Region</label>
+                    <select id="auditSrcLocation" onchange="syncAuditEnv('src')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <option value="global" selected>global (Default)</option>
+                      <option value="eu">eu (European Union)</option>
+                      <option value="us">us (United States)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-[11px] font-medium text-gray-400 mb-1">Collection</label>
+                    <input type="text" id="auditSrcCollectionId" value="default_collection" oninput="syncAuditEnv('src')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 font-mono focus:outline-none focus:border-blue-500">
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[11px] font-medium text-gray-400">Discovery Engine / App ID</label>
+                    <span id="auditSrcAppIdLoadingBadge" class="text-[10px] text-blue-400 font-medium hidden">Loading apps...</span>
+                  </div>
+                  <select id="auditSrcAppId" onchange="handleEngineSelectChange('auditSrcAppId'); syncAuditEnv('src');" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                    <option value="" disabled selected>Select or enter engine...</option>
+                    <option value="custom">✏️ Enter Custom Engine / App ID...</option>
+                  </select>
+                  <div id="auditSrcAppId_custom_container" class="hidden mt-1.5">
+                    <input type="text" id="auditSrcAppId_custom" oninput="syncAuditEnv('src')" placeholder="Enter custom Source Engine / App ID" class="w-full bg-gray-900 border border-blue-500/70 rounded-lg px-2.5 py-1 text-xs text-white font-mono">
+                  </div>
+                </div>
+              </div>
+
+              <div class="pt-2 border-t border-gray-800/80 flex items-center justify-between text-[11px] text-gray-400">
+                <div class="truncate">
+                  <span class="text-gray-500">Active:</span> <span id="auditSourceProjectLabel" class="font-mono text-gray-300 font-semibold">Not configured</span>
+                </div>
+                <div id="auditSourceLocationLabel" class="text-[10px] font-mono text-gray-500 shrink-0">Location: global | Engine: default_engine</div>
               </div>
             </div>
-            <div class="bg-gray-950/70 border border-emerald-900/40 rounded-xl p-4 flex items-center gap-3.5">
-              <div class="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xl shrink-0">🟢</div>
-              <div class="overflow-hidden">
-                <div class="text-[11px] uppercase tracking-wider text-emerald-400 font-bold">Target Environment (Destination)</div>
-                <div id="auditTargetProjectLabel" class="text-sm font-bold text-white truncate font-mono">Not configured</div>
-                <div id="auditTargetLocationLabel" class="text-xs text-gray-400 font-mono">Location: global | Engine: default_engine</div>
+
+            <!-- Target Environment Box -->
+            <div class="bg-gray-950/70 border border-emerald-900/50 rounded-xl p-4 space-y-3 shadow-sm">
+              <div class="flex items-center justify-between border-b border-emerald-900/40 pb-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-6 h-6 rounded-md bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xs shrink-0">🟢</div>
+                  <span class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Target Environment (Destination)</span>
+                </div>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-semibold">TARGET PARITY</span>
+              </div>
+              
+              <div class="space-y-2.5">
+                <div>
+                  <label class="block text-[11px] font-medium text-gray-400 mb-1">Target GCP Project ID <span class="text-rose-400">*</span></label>
+                  <input type="text" id="auditTgtProjectId" placeholder="e.g. target-gcp-project-id" oninput="syncAuditEnv('tgt')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label class="block text-[11px] font-medium text-gray-400 mb-1">Region</label>
+                    <select id="auditTgtLocation" onchange="syncAuditEnv('tgt')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500">
+                      <option value="global" selected>global (Default)</option>
+                      <option value="eu">eu (European Union)</option>
+                      <option value="us">us (United States)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-[11px] font-medium text-gray-400 mb-1">Collection</label>
+                    <input type="text" id="auditTgtCollectionId" value="default_collection" oninput="syncAuditEnv('tgt')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 font-mono focus:outline-none focus:border-emerald-500">
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[11px] font-medium text-gray-400">Discovery Engine / App ID</label>
+                    <span id="auditTgtAppIdLoadingBadge" class="text-[10px] text-emerald-400 font-medium hidden">Loading apps...</span>
+                  </div>
+                  <select id="auditTgtAppId" onchange="handleEngineSelectChange('auditTgtAppId'); syncAuditEnv('tgt');" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500">
+                    <option value="" disabled selected>Select or enter engine...</option>
+                    <option value="custom">✏️ Enter Custom Engine / App ID...</option>
+                  </select>
+                  <div id="auditTgtAppId_custom_container" class="hidden mt-1.5">
+                    <input type="text" id="auditTgtAppId_custom" oninput="syncAuditEnv('tgt')" placeholder="Enter custom Target Engine / App ID" class="w-full bg-gray-900 border border-emerald-500/70 rounded-lg px-2.5 py-1 text-xs text-white font-mono">
+                  </div>
+                </div>
+              </div>
+
+              <div class="pt-2 border-t border-gray-800/80 flex items-center justify-between text-[11px] text-gray-400">
+                <div class="truncate">
+                  <span class="text-gray-500">Active:</span> <span id="auditTargetProjectLabel" class="font-mono text-gray-300 font-semibold">Not configured</span>
+                </div>
+                <div id="auditTargetLocationLabel" class="text-[10px] font-mono text-gray-500 shrink-0">Location: global | Engine: default_engine</div>
               </div>
             </div>
           </div>
@@ -799,6 +886,21 @@
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <!-- Next Step Wizard Transition Banner -->
+          <div class="mt-6 pt-4 border-t border-gray-800 flex flex-col sm:flex-row items-center justify-between gap-4 bg-gray-950/60 p-4 rounded-xl border border-gray-800/80">
+            <div class="flex items-center gap-3">
+              <span class="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg text-lg">👉</span>
+              <div>
+                <div class="text-sm font-semibold text-white">Ready for Migration Execution?</div>
+                <div class="text-xs text-gray-400">Environments selected here are automatically saved and carried over to Step 3: Migration Studio.</div>
+              </div>
+            </div>
+            <button type="button" onclick="switchTab('studio')" class="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-500/20 transition flex items-center gap-2 shrink-0">
+              <span>Proceed to Step 3: Migration Studio</span>
+              <span>➔</span>
+            </button>
           </div>
         </div>
       </section>
@@ -2645,8 +2747,15 @@
       }
 
       if (tabId === 'audit') {
-        if (!activeAuditResult && !isAuditRunning) {
-          runConfigPreCheck();
+        populateAuditEnvFromStudio();
+        const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId');
+        const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId');
+        if (srcProj && tgtProj) {
+          if (!activeAuditResult && !isAuditRunning) {
+            runConfigPreCheck();
+          }
+        } else {
+          showAuditUnconfiguredState();
         }
       } else if (tabId === 'history') {
         loadHistoricalRuns();
@@ -2685,15 +2794,205 @@
       }
     }
 
+    function populateAuditEnvFromStudio() {
+      const srcP = document.getElementById('srcProjectId')?.value?.trim() || '';
+      const srcL = document.getElementById('srcLocation')?.value || 'global';
+      const srcC = document.getElementById('srcCollectionId')?.value?.trim() || 'default_collection';
+      const srcApp = document.getElementById('srcAppId');
+      const srcCustomApp = document.getElementById('srcAppId_custom')?.value || '';
+
+      const auditSrcP = document.getElementById('auditSrcProjectId');
+      const auditSrcL = document.getElementById('auditSrcLocation');
+      const auditSrcC = document.getElementById('auditSrcCollectionId');
+      const auditSrcApp = document.getElementById('auditSrcAppId');
+      const auditSrcCustom = document.getElementById('auditSrcAppId_custom');
+      const auditSrcCustomContainer = document.getElementById('auditSrcAppId_custom_container');
+
+      if (auditSrcP && auditSrcP.value !== srcP) auditSrcP.value = srcP;
+      if (auditSrcL && auditSrcL.value !== srcL) auditSrcL.value = srcL;
+      if (auditSrcC && auditSrcC.value !== srcC) auditSrcC.value = srcC;
+      if (auditSrcApp && srcApp) {
+        if (srcApp.options.length > 0 && auditSrcApp.options.length !== srcApp.options.length) {
+          auditSrcApp.innerHTML = srcApp.innerHTML;
+        }
+        if (srcApp.value) auditSrcApp.value = srcApp.value;
+        if (srcApp.value === 'custom') {
+          auditSrcCustomContainer?.classList.remove('hidden');
+          if (auditSrcCustom) auditSrcCustom.value = srcCustomApp;
+        } else {
+          auditSrcCustomContainer?.classList.add('hidden');
+        }
+      }
+
+      const tgtP = document.getElementById('tgtProjectId')?.value?.trim() || '';
+      const tgtL = document.getElementById('tgtLocation')?.value || 'global';
+      const tgtC = document.getElementById('tgtCollectionId')?.value?.trim() || 'default_collection';
+      const tgtApp = document.getElementById('tgtAppId');
+      const tgtCustomApp = document.getElementById('tgtAppId_custom')?.value || '';
+
+      const auditTgtP = document.getElementById('auditTgtProjectId');
+      const auditTgtL = document.getElementById('auditTgtLocation');
+      const auditTgtC = document.getElementById('auditTgtCollectionId');
+      const auditTgtApp = document.getElementById('auditTgtAppId');
+      const auditTgtCustom = document.getElementById('auditTgtAppId_custom');
+      const auditTgtCustomContainer = document.getElementById('auditTgtAppId_custom_container');
+
+      if (auditTgtP && auditTgtP.value !== tgtP) auditTgtP.value = tgtP;
+      if (auditTgtL && auditTgtL.value !== tgtL) auditTgtL.value = tgtL;
+      if (auditTgtC && auditTgtC.value !== tgtC) auditTgtC.value = tgtC;
+      if (auditTgtApp && tgtApp) {
+        if (tgtApp.options.length > 0 && auditTgtApp.options.length !== tgtApp.options.length) {
+          auditTgtApp.innerHTML = tgtApp.innerHTML;
+        }
+        if (tgtApp.value) auditTgtApp.value = tgtApp.value;
+        if (tgtApp.value === 'custom') {
+          auditTgtCustomContainer?.classList.remove('hidden');
+          if (auditTgtCustom) auditTgtCustom.value = tgtCustomApp;
+        } else {
+          auditTgtCustomContainer?.classList.add('hidden');
+        }
+      }
+
+      // Update summary bar labels
+      const srcProjEl = document.getElementById('auditSourceProjectLabel');
+      if (srcProjEl) srcProjEl.textContent = srcP || 'Not configured';
+      const srcLocEl = document.getElementById('auditSourceLocationLabel');
+      const effectiveSrcApp = (srcApp?.value === 'custom' ? srcCustomApp : srcApp?.value) || 'default_engine';
+      if (srcLocEl) srcLocEl.textContent = `Location: ${srcL} | Engine: ${effectiveSrcApp}`;
+
+      const tgtProjEl = document.getElementById('auditTargetProjectLabel');
+      if (tgtProjEl) tgtProjEl.textContent = tgtP || 'Not configured';
+      const tgtLocEl = document.getElementById('auditTargetLocationLabel');
+      const effectiveTgtApp = (tgtApp?.value === 'custom' ? tgtCustomApp : tgtApp?.value) || 'default_engine';
+      if (tgtLocEl) tgtLocEl.textContent = `Location: ${tgtL} | Engine: ${effectiveTgtApp}`;
+    }
+
+    function syncAuditEnv(envType) {
+      if (envType === 'src') {
+        const p = document.getElementById('auditSrcProjectId')?.value?.trim() || '';
+        const l = document.getElementById('auditSrcLocation')?.value || 'global';
+        const c = document.getElementById('auditSrcCollectionId')?.value?.trim() || 'default_collection';
+        const appEl = document.getElementById('auditSrcAppId');
+        const customAppEl = document.getElementById('auditSrcAppId_custom');
+        const appVal = appEl?.value || '';
+
+        const studioP = document.getElementById('srcProjectId');
+        const studioL = document.getElementById('srcLocation');
+        const studioC = document.getElementById('srcCollectionId');
+        const studioApp = document.getElementById('srcAppId');
+        const studioCustomApp = document.getElementById('srcAppId_custom');
+
+        if (studioP && studioP.value !== p) studioP.value = p;
+        if (studioL && studioL.value !== l) studioL.value = l;
+        if (studioC && studioC.value !== c) studioC.value = c;
+        if (studioApp && appVal) {
+          if (appVal === 'custom') {
+            studioApp.value = 'custom';
+            document.getElementById('srcAppId_custom_container')?.classList.remove('hidden');
+            if (studioCustomApp && customAppEl) studioCustomApp.value = customAppEl.value;
+          } else {
+            studioApp.value = appVal;
+            document.getElementById('srcAppId_custom_container')?.classList.add('hidden');
+          }
+        }
+
+        const srcProjEl = document.getElementById('auditSourceProjectLabel');
+        if (srcProjEl) srcProjEl.textContent = p || 'Not configured';
+        const srcLocEl = document.getElementById('auditSourceLocationLabel');
+        const effectiveApp = (appVal === 'custom' ? customAppEl?.value : appVal) || 'default_engine';
+        if (srcLocEl) srcLocEl.textContent = `Location: ${l} | Engine: ${effectiveApp}`;
+
+        onSourceEnvChanged();
+      } else if (envType === 'tgt') {
+        const p = document.getElementById('auditTgtProjectId')?.value?.trim() || '';
+        const l = document.getElementById('auditTgtLocation')?.value || 'global';
+        const c = document.getElementById('auditTgtCollectionId')?.value?.trim() || 'default_collection';
+        const appEl = document.getElementById('auditTgtAppId');
+        const customAppEl = document.getElementById('auditTgtAppId_custom');
+        const appVal = appEl?.value || '';
+
+        const studioP = document.getElementById('tgtProjectId');
+        const studioL = document.getElementById('tgtLocation');
+        const studioC = document.getElementById('tgtCollectionId');
+        const studioApp = document.getElementById('tgtAppId');
+        const studioCustomApp = document.getElementById('tgtAppId_custom');
+
+        if (studioP && studioP.value !== p) studioP.value = p;
+        if (studioL && studioL.value !== l) studioL.value = l;
+        if (studioC && studioC.value !== c) studioC.value = c;
+        if (studioApp && appVal) {
+          if (appVal === 'custom') {
+            studioApp.value = 'custom';
+            document.getElementById('tgtAppId_custom_container')?.classList.remove('hidden');
+            if (studioCustomApp && customAppEl) studioCustomApp.value = customAppEl.value;
+          } else {
+            studioApp.value = appVal;
+            document.getElementById('tgtAppId_custom_container')?.classList.add('hidden');
+          }
+        }
+
+        const tgtProjEl = document.getElementById('auditTargetProjectLabel');
+        if (tgtProjEl) tgtProjEl.textContent = p || 'Not configured';
+        const tgtLocEl = document.getElementById('auditTargetLocationLabel');
+        const effectiveApp = (appVal === 'custom' ? customAppEl?.value : appVal) || 'default_engine';
+        if (tgtLocEl) tgtLocEl.textContent = `Location: ${l} | Engine: ${effectiveApp}`;
+
+        onTargetEnvChanged();
+      }
+    }
+
+    function showAuditUnconfiguredState() {
+      const scoreEl = document.getElementById('auditReadinessScore');
+      const gaugeEl = document.getElementById('auditGaugeIndicator');
+      if (scoreEl) {
+        scoreEl.textContent = '--%';
+        scoreEl.className = 'text-2xl font-extrabold text-indigo-400 mt-1';
+      }
+      if (gaugeEl) gaugeEl.textContent = '⏳';
+
+      const totalEl = document.getElementById('auditTotalChecks');
+      if (totalEl) totalEl.textContent = '0';
+      const matchEl = document.getElementById('auditMatchesCount');
+      if (matchEl) matchEl.textContent = '0';
+      const gapsEl = document.getElementById('auditGapsCount');
+      if (gapsEl) gapsEl.textContent = '0';
+      const warnEl = document.getElementById('auditWarningsCount');
+      if (warnEl) warnEl.textContent = '0';
+
+      const syncBtn = document.getElementById('btnSyncEngineSettings');
+      if (syncBtn) syncBtn.classList.add('hidden');
+
+      const remContainer = document.getElementById('auditRemediationContainer');
+      if (remContainer) remContainer.classList.add('hidden');
+
+      const tbody = document.getElementById('auditTableBody');
+      if (tbody) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="py-12 text-center text-gray-400">
+              <div class="max-w-md mx-auto space-y-3">
+                <div class="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-2xl mx-auto">⚙️</div>
+                <div class="text-sm font-bold text-white">Select Source & Target Environments Above</div>
+                <div class="text-xs text-gray-400 leading-relaxed">
+                  Enter your <strong>Source Project ID</strong> and <strong>Target Project ID</strong> in the cards above, then click <span class="text-indigo-400 font-semibold">🔄 Run Pre-Check</span> to scan for configuration parity, grounding DataStores, and migration gaps.
+                </div>
+                <div class="pt-2 flex items-center justify-center gap-2">
+                  <span class="text-[11px] font-mono px-2.5 py-1 rounded bg-gray-900 border border-gray-800 text-gray-400">💡 Environments configured here sync directly to Step 3: Migration Studio</span>
+                </div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+    }
+
     async function runConfigPreCheck() {
       if (isAuditRunning) return;
       isAuditRunning = true;
 
-      const btn = document.getElementById('btnPreCheckGaps');
       const btnRerun = document.getElementById('btnAuditRerun');
       const spinner = document.getElementById('auditSpinner');
       const rerunLabel = btnRerun ? btnRerun.querySelector('span:last-child') : null;
-      if (btn) btn.disabled = true;
       if (btnRerun) btnRerun.disabled = true;
       if (spinner) spinner.classList.remove('hidden');
       if (rerunLabel) rerunLabel.textContent = ' Scanning...';
@@ -2712,15 +3011,36 @@
         navEl.classList.remove('text-gray-400', 'hover:bg-gray-800');
       }
 
-      const srcProj = getFieldValue('srcProjectId') || '';
-      const srcLoc = getFieldValue('srcLocation') || 'global';
-      const srcColl = getFieldValue('srcCollectionId') || 'default_collection';
-      const srcApp = getFieldValue('srcAppId') || '';
+      populateAuditEnvFromStudio();
 
-      const tgtProj = getFieldValue('tgtProjectId') || '';
-      const tgtLoc = getFieldValue('tgtLocation') || 'global';
-      const tgtColl = getFieldValue('tgtCollectionId') || 'default_collection';
-      const tgtApp = getFieldValue('tgtAppId') || '';
+      const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || '';
+      const srcLoc = document.getElementById('auditSrcLocation')?.value || getFieldValue('srcLocation') || 'global';
+      const srcColl = getFieldValue('auditSrcCollectionId') || getFieldValue('srcCollectionId') || 'default_collection';
+      const srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || '';
+
+      const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || '';
+      const tgtLoc = document.getElementById('auditTgtLocation')?.value || getFieldValue('tgtLocation') || 'global';
+      const tgtColl = getFieldValue('auditTgtCollectionId') || getFieldValue('tgtCollectionId') || 'default_collection';
+      const tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || '';
+
+      if (!srcProj || !tgtProj) {
+        isAuditRunning = false;
+        if (btnRerun) btnRerun.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+        if (rerunLabel) rerunLabel.textContent = '🔄 Run Pre-Check';
+
+        const missing = [];
+        if (!srcProj) missing.push('Source Project ID');
+        if (!tgtProj) missing.push('Target Project ID');
+        alert(`⚠️ Configuration Required:\nPlease enter ${missing.join(' and ')} above before running the parity pre-check.`);
+        if (!srcProj) {
+          document.getElementById('auditSrcProjectId')?.focus();
+        } else {
+          document.getElementById('auditTgtProjectId')?.focus();
+        }
+        showAuditUnconfiguredState();
+        return;
+      }
 
       // Update summary bar labels
       const srcProjEl = document.getElementById('auditSourceProjectLabel');
@@ -2809,7 +3129,6 @@
         }
       } finally {
         isAuditRunning = false;
-        if (btn) btn.disabled = false;
         if (btnRerun) btnRerun.disabled = false;
         if (spinner) spinner.classList.add('hidden');
         if (rerunLabel) rerunLabel.textContent = '🔄 Run Pre-Check';
@@ -2941,15 +3260,15 @@
     }
 
     function getAuditConfigPayload() {
-      const srcProj = getFieldValue('srcProjectId') || '';
-      const srcLoc = getFieldValue('srcLocation') || 'global';
-      const srcColl = getFieldValue('srcCollectionId') || 'default_collection';
-      const srcApp = getFieldValue('srcAppId') || '';
+      const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || '';
+      const srcLoc = document.getElementById('auditSrcLocation')?.value || getFieldValue('srcLocation') || 'global';
+      const srcColl = getFieldValue('auditSrcCollectionId') || getFieldValue('srcCollectionId') || 'default_collection';
+      const srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || '';
 
-      const tgtProj = getFieldValue('tgtProjectId') || '';
-      const tgtLoc = getFieldValue('tgtLocation') || 'global';
-      const tgtColl = getFieldValue('tgtCollectionId') || 'default_collection';
-      const tgtApp = getFieldValue('tgtAppId') || '';
+      const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || '';
+      const tgtLoc = document.getElementById('auditTgtLocation')?.value || getFieldValue('tgtLocation') || 'global';
+      const tgtColl = getFieldValue('auditTgtCollectionId') || getFieldValue('tgtCollectionId') || 'default_collection';
+      const tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || '';
 
       return {
         source: {
@@ -4783,6 +5102,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const currentVal = preferredId || getFieldValue(targetFieldId);
 
       if (loadingBadge) loadingBadge.classList.remove('hidden');
+      if (envType === 'src') {
+        document.getElementById('auditSrcAppIdLoadingBadge')?.classList.remove('hidden');
+      } else if (envType === 'tgt') {
+        document.getElementById('auditTgtAppIdLoadingBadge')?.classList.remove('hidden');
+      }
 
       try {
         const res = await fetch(`/api/engines/list?projectId=${encodeURIComponent(projectId)}&location=${encodeURIComponent(location)}&collectionId=${encodeURIComponent(collection)}`);
@@ -4854,13 +5178,39 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         }
 
         if (envType === 'src') {
+          const auditSelect = document.getElementById('auditSrcAppId');
+          if (auditSelect) {
+            auditSelect.innerHTML = engineSelect.innerHTML;
+            auditSelect.value = engineSelect.value;
+          }
+          const srcLocEl = document.getElementById('auditSourceLocationLabel');
+          if (srcLocEl) {
+            const effectiveApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || 'default_engine';
+            srcLocEl.textContent = `Location: ${location} | Engine: ${effectiveApp}`;
+          }
           discoverSourceUsers();
+        } else if (envType === 'tgt') {
+          const auditSelect = document.getElementById('auditTgtAppId');
+          if (auditSelect) {
+            auditSelect.innerHTML = engineSelect.innerHTML;
+            auditSelect.value = engineSelect.value;
+          }
+          const tgtLocEl = document.getElementById('auditTargetLocationLabel');
+          if (tgtLocEl) {
+            const effectiveApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || 'default_engine';
+            tgtLocEl.textContent = `Location: ${location} | Engine: ${effectiveApp}`;
+          }
         }
         updateAppQuickLinks();
       } catch (err) {
         console.warn(`Could not load engines for ${projectId}:`, err);
       } finally {
         if (loadingBadge) loadingBadge.classList.add('hidden');
+        if (envType === 'src') {
+          document.getElementById('auditSrcAppIdLoadingBadge')?.classList.add('hidden');
+        } else if (envType === 'tgt') {
+          document.getElementById('auditTgtAppIdLoadingBadge')?.classList.add('hidden');
+        }
         updateAppQuickLinks();
       }
     }
@@ -4884,6 +5234,18 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     let srcEnvDebounce = null;
     function onSourceEnvChanged() {
       updateAppQuickLinks();
+      const p = document.getElementById('srcProjectId')?.value?.trim() || '';
+      const l = document.getElementById('srcLocation')?.value || 'global';
+      const c = document.getElementById('srcCollectionId')?.value?.trim() || 'default_collection';
+      const auditSrcP = document.getElementById('auditSrcProjectId');
+      const auditSrcL = document.getElementById('auditSrcLocation');
+      const auditSrcC = document.getElementById('auditSrcCollectionId');
+      if (auditSrcP && auditSrcP.value !== p) auditSrcP.value = p;
+      if (auditSrcL && auditSrcL.value !== l) auditSrcL.value = l;
+      if (auditSrcC && auditSrcC.value !== c) auditSrcC.value = c;
+      const srcProjEl = document.getElementById('auditSourceProjectLabel');
+      if (srcProjEl) srcProjEl.textContent = p || 'Not configured';
+
       clearTimeout(srcEnvDebounce);
       srcEnvDebounce = setTimeout(() => {
         fetchEngines('src');
@@ -4893,6 +5255,18 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     let tgtEnvDebounce = null;
     function onTargetEnvChanged() {
       updateAppQuickLinks();
+      const p = document.getElementById('tgtProjectId')?.value?.trim() || '';
+      const l = document.getElementById('tgtLocation')?.value || 'global';
+      const c = document.getElementById('tgtCollectionId')?.value?.trim() || 'default_collection';
+      const auditTgtP = document.getElementById('auditTgtProjectId');
+      const auditTgtL = document.getElementById('auditTgtLocation');
+      const auditTgtC = document.getElementById('auditTgtCollectionId');
+      if (auditTgtP && auditTgtP.value !== p) auditTgtP.value = p;
+      if (auditTgtL && auditTgtL.value !== l) auditTgtL.value = l;
+      if (auditTgtC && auditTgtC.value !== c) auditTgtC.value = c;
+      const tgtProjEl = document.getElementById('auditTargetProjectLabel');
+      if (tgtProjEl) tgtProjEl.textContent = p || 'Not configured';
+
       clearTimeout(tgtEnvDebounce);
       tgtEnvDebounce = setTimeout(() => {
         fetchEngines('tgt');
@@ -4936,6 +5310,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         if (tgtProj) tgtProj.value = '';
       }
 
+      populateAuditEnvFromStudio();
       addLog(`Loaded configuration template: ${type}`, 'INFO');
     }
 
@@ -8630,6 +9005,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
     // Auto-fetch available Gemini Enterprise apps on page load
     window.addEventListener('DOMContentLoaded', () => {
+      populateAuditEnvFromStudio();
       fetchEngines('src');
       fetchEngines('tgt');
       fetchEngines('single-src');

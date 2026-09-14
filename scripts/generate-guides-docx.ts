@@ -537,7 +537,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'Gemini Enterprise Admin Migration Platform',
     'Installation, Environment Setup & Pre-Requisites Technical Guide',
     {
-      'Document Version': 'v1.4.1 (Enterprise Release)',
+      'Document Version': 'v1.5.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Platform': 'Google Cloud Discovery Engine & Gemini Enterprise',
       'Execution Profile': 'Headless CLI & Local Workstation Web Console (127.0.0.1:8080)',
@@ -927,7 +927,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     'Gemini Enterprise Admin Migration Platform',
     'Administrator Operations, Asset Restoration, Parity Audit & User Handover Guide',
     {
-      'Document Version': 'v1.4.1 (Enterprise Release)',
+      'Document Version': 'v1.5.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Audience': 'Cloud Architects, Migration Operators & IT Administrators',
       'Supported Assets': 'Notebooks, Sources, Custom Agents, Chat Sessions, Memories & Artifacts',

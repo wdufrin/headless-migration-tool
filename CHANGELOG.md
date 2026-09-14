@@ -5,6 +5,29 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-14
+
+### Added
+- **Step 2 Config & Parity Audit Interactive Environment Selector**:
+  - Replaced static read-only cards in Step 2 with interactive Source and Target environment controls (`auditSrcProjectId`, `auditSrcLocation`, `auditSrcAppId`, `auditTgtProjectId`, `auditTgtLocation`, `auditTgtAppId`).
+  - Added real-time bi-directional synchronization between Step 2 audit inputs and Step 3 studio inputs (`syncAuditEnv` and `populateAuditEnvFromStudio`).
+  - Added safe empty state (`showAuditUnconfiguredState`) to prevent executing configuration audits with empty strings.
+  - Added prominent **"Next: Proceed to Step 3: Migration Studio ➔"** wizard progression button at the bottom of the audit tab.
+- **Forensic SWE Hardening & Security Audit Remediation**:
+  - Implemented `listAllPages` helper across Discovery Engine client methods to prevent silent page truncation.
+  - Enforced fail-closed authentication and explicit authorization headers.
+  - Added service account email verification matching against runtime caller tokens.
+  - Added OAuth2 token audience validation.
+  - Added explicit opt-in confirmation required for decommission operations.
+  - Enforced strict Zod schema validation on `/api/audit/config` payloads.
+  - Added warning indicators to user handover reports when asset migrations are skipped.
+
+### Changed
+- **Streamlined Step 3 (Migration Studio) UI**:
+  - Removed duplicate `Pre-Check Configurations & Gaps` button in Step 3 action bar to avoid redundant pre-checks, replacing it with a clean `← Step 2: Config & Parity Audit` back-link.
+
+---
+
 ## [1.4.1] - 2026-09-09
 
 ### Added

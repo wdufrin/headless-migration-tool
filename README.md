@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.4.1-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.0-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -13,6 +13,22 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
+
+---
+
+## 🚀 What's New in v1.5.0
+
+* **🎯 Interactive Step 2 Config & Parity Environment Selector**:
+  * Direct configuration and selection of Source and Target GCP Project IDs, Regions, Collections, and Discovery Engine / App IDs directly within **Step 2 (Config & Parity Audit)**.
+  * Real-time bi-directional synchronization between Step 2 audit environment cards and Step 3 (Migration Studio) form controls.
+  * Guided empty-state prompt preventing premature, blank pre-check invocations.
+  * Seamless wizard transition button (`Next: Proceed to Step 3: Migration Studio ➔`) carrying configured environments forward.
+* **⚡ Streamlined Step 3 Action Controls**:
+  * Removed redundant pre-check button in Step 3 in favor of unified execution controls (`⚡ Execute Pre-Flight Dry Run` / `⚡ Execute Live Migration`) and direct back-navigation to Step 2.
+* **🛡️ Hardened Enterprise Security & Forensics**:
+  * P0/P1 audit remediations across Discovery Engine pagination (`listAllPages`), truthful error propagation, fail-closed auth, service account identity verification, audience validation, explicit decommissioning opt-in, and Zod audit payload schemas.
+* **🧪 Test Suite Expansion (105/105 Tests Passing)**:
+  * 100% automated test pass rate across 14 test suites covering authentication, parity pre-checks, decommissioning verification, and artifact generation.
 
 ---
 
