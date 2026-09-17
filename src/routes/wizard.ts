@@ -134,18 +134,32 @@ wizardRouter.post('/idp/auto-map', async (req, res) => {
 // Wizard: Inspect local DWD Service Account Key & Client ID
 wizardRouter.get('/wizard/dwd-info', async (_req, res) => {
   try {
+    let sourceProjectId = process.env.SOURCE_PROJECT_ID || process.env.GCP_PROJECT_ID || '';
+    if (!sourceProjectId) {
+      try {
+        const { execFile } = await import('child_process');
+        const { promisify } = await import('util');
+        const execFileAsync = promisify(execFile);
+        const { stdout } = await execFileAsync('gcloud', ['config', 'get-value', 'project']);
+        sourceProjectId = stdout.trim();
+      } catch {}
+    }
+
     const keyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : null);
     if (!keyPath || !fs.existsSync(keyPath)) {
-      return res.status(200).json({ exists: false });
+      return res.status(200).json({ exists: false, sourceProjectId: sourceProjectId || '' });
     }
     const content = fs.readFileSync(keyPath, 'utf-8');
     const parsed = JSON.parse(content);
+    const targetProject = parsed.project_id || '';
     return res.status(200).json({
       exists: true,
       filePath: keyPath,
       clientEmail: parsed.client_email || '',
       clientId: parsed.client_id || '',
-      projectId: parsed.project_id || ''
+      projectId: targetProject,
+      targetProjectId: targetProject,
+      sourceProjectId: sourceProjectId || ''
     });
   } catch (err: any) {
     return res.status(200).json({ exists: false, error: err.message });

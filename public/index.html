@@ -3675,15 +3675,27 @@
 
       if (tabId === 'audit') {
         populateAuditEnvFromStudio();
-        const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId');
-        const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId');
+        const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || localStorage.getItem('gemini_src_project') || '';
+        const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || localStorage.getItem('gemini_tgt_project') || '';
         if (srcProj && tgtProj) {
-          if (!activeAuditResult && !isAuditRunning) {
-            runConfigPreCheck();
+          const srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId');
+          const tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId');
+          if (!srcApp || !tgtApp) {
+            autoRefreshAppIds().then(() => {
+              if (!activeAuditResult && !isAuditRunning) {
+                runConfigPreCheck();
+              }
+            });
+          } else {
+            if (!activeAuditResult && !isAuditRunning) {
+              runConfigPreCheck();
+            }
           }
         } else {
           showAuditUnconfiguredState();
         }
+      } else if (tabId === 'studio') {
+        autoRefreshAppIds();
       } else if (tabId === 'history') {
         loadHistoricalRuns();
       } else if (tabId === 'sessions') {
@@ -3810,29 +3822,156 @@
       }
     }
 
-    function populateAuditEnvFromStudio() {
-      const srcP = document.getElementById('srcProjectId')?.value?.trim() || '';
-      const srcL = document.getElementById('srcLocation')?.value || 'global';
-      const srcC = document.getElementById('srcCollectionId')?.value?.trim() || 'default_collection';
-      const srcApp = document.getElementById('srcAppId');
-      const srcCustomApp = document.getElementById('srcAppId_custom')?.value || '';
+    function saveActiveEnvironmentsToStorage() {
+      try {
+        const srcP = getFieldValue('srcProjectId') || getFieldValue('auditSrcProjectId') || '';
+        const tgtP = getFieldValue('tgtProjectId') || getFieldValue('auditTgtProjectId') || '';
+        const srcL = document.getElementById('srcLocation')?.value || document.getElementById('auditSrcLocation')?.value || '';
+        const tgtL = document.getElementById('tgtLocation')?.value || document.getElementById('auditTgtLocation')?.value || '';
+        const srcApp = getFieldValue('srcAppId') || getFieldValue('auditSrcAppId') || '';
+        const tgtApp = getFieldValue('tgtAppId') || getFieldValue('auditTgtAppId') || '';
 
+        if (srcP) localStorage.setItem('gemini_src_project', srcP);
+        if (tgtP) localStorage.setItem('gemini_tgt_project', tgtP);
+        if (srcL) localStorage.setItem('gemini_src_location', srcL);
+        if (tgtL) localStorage.setItem('gemini_tgt_location', tgtL);
+        if (srcApp && srcApp !== 'custom') localStorage.setItem('gemini_src_app_id', srcApp);
+        if (tgtApp && tgtApp !== 'custom') localStorage.setItem('gemini_tgt_app_id', tgtApp);
+      } catch (err) {
+        console.debug('Failed to save active environments to storage:', err);
+      }
+    }
+
+    function restoreSavedEnvironments() {
+      try {
+        const savedSrcP = localStorage.getItem('gemini_src_project');
+        const savedTgtP = localStorage.getItem('gemini_tgt_project');
+        const savedSrcL = localStorage.getItem('gemini_src_location');
+        const savedTgtL = localStorage.getItem('gemini_tgt_location');
+        const savedSrcApp = localStorage.getItem('gemini_src_app_id');
+        const savedTgtApp = localStorage.getItem('gemini_tgt_app_id');
+
+        if (savedSrcP) {
+          const el = document.getElementById('srcProjectId');
+          if (el && !el.value) el.value = savedSrcP;
+          const auditEl = document.getElementById('auditSrcProjectId');
+          if (auditEl && !auditEl.value) auditEl.value = savedSrcP;
+          const wizEl = document.getElementById('wizDwdSrcProject');
+          if (wizEl && !wizEl.value) wizEl.value = savedSrcP;
+        }
+
+        if (savedTgtP) {
+          const el = document.getElementById('tgtProjectId');
+          if (el && !el.value) el.value = savedTgtP;
+          const auditEl = document.getElementById('auditTgtProjectId');
+          if (auditEl && !auditEl.value) auditEl.value = savedTgtP;
+          const wizEl = document.getElementById('wizDwdProject');
+          if (wizEl && !wizEl.value) wizEl.value = savedTgtP;
+        }
+
+        if (savedSrcL) {
+          const el = document.getElementById('srcLocation');
+          if (el && !el.value) el.value = savedSrcL;
+          const auditEl = document.getElementById('auditSrcLocation');
+          if (auditEl && !auditEl.value) auditEl.value = savedSrcL;
+        }
+
+        if (savedTgtL) {
+          const el = document.getElementById('tgtLocation');
+          if (el && !el.value) el.value = savedTgtL;
+          const auditEl = document.getElementById('auditTgtLocation');
+          if (auditEl && !auditEl.value) auditEl.value = savedTgtL;
+        }
+
+        if (savedSrcApp) {
+          const el = document.getElementById('srcAppId');
+          if (el && !el.value) el.value = savedSrcApp;
+          const auditEl = document.getElementById('auditSrcAppId');
+          if (auditEl && !auditEl.value) auditEl.value = savedSrcApp;
+        }
+
+        if (savedTgtApp) {
+          const el = document.getElementById('tgtAppId');
+          if (el && !el.value) el.value = savedTgtApp;
+          const auditEl = document.getElementById('auditTgtAppId');
+          if (auditEl && !auditEl.value) auditEl.value = savedTgtApp;
+        }
+      } catch (err) {
+        console.debug('Failed to restore saved environments:', err);
+      }
+    }
+
+    async function autoRefreshAppIds(force = false) {
+      populateAuditEnvFromStudio();
+
+      const srcP = getFieldValue('srcProjectId') || getFieldValue('auditSrcProjectId') || getFieldValue('wizDwdSrcProject') || localStorage.getItem('gemini_src_project') || '';
+      const tgtP = getFieldValue('tgtProjectId') || getFieldValue('auditTgtProjectId') || getFieldValue('wizDwdProject') || localStorage.getItem('gemini_tgt_project') || '';
+
+      const srcSelect = document.getElementById('srcAppId');
+      const auditSrcSelect = document.getElementById('auditSrcAppId');
+      const tgtSelect = document.getElementById('tgtAppId');
+      const auditTgtSelect = document.getElementById('auditTgtAppId');
+
+      const srcNeedsLoad = force || !srcSelect || srcSelect.options.length <= 2 || !srcSelect.value || (auditSrcSelect && auditSrcSelect.options.length <= 2);
+      const tgtNeedsLoad = force || !tgtSelect || tgtSelect.options.length <= 2 || !tgtSelect.value || (auditTgtSelect && auditTgtSelect.options.length <= 2);
+
+      const promises = [];
+      if (srcP && srcNeedsLoad) {
+        const savedSrcApp = localStorage.getItem('gemini_src_app_id');
+        promises.push(fetchEngines('src', savedSrcApp));
+      }
+      if (tgtP && tgtNeedsLoad) {
+        const savedTgtApp = localStorage.getItem('gemini_tgt_app_id');
+        promises.push(fetchEngines('tgt', savedTgtApp));
+      }
+
+      if (promises.length > 0) {
+        await Promise.allSettled(promises);
+        saveActiveEnvironmentsToStorage();
+      }
+    }
+
+    function populateAuditEnvFromStudio() {
+      const studioSrcP = document.getElementById('srcProjectId');
       const auditSrcP = document.getElementById('auditSrcProjectId');
+      const effectiveSrcP = studioSrcP?.value?.trim() || auditSrcP?.value?.trim() || localStorage.getItem('gemini_src_project') || '';
+
+      if (studioSrcP && !studioSrcP.value.trim() && effectiveSrcP) studioSrcP.value = effectiveSrcP;
+      if (auditSrcP && !auditSrcP.value.trim() && effectiveSrcP) auditSrcP.value = effectiveSrcP;
+
+      const studioSrcL = document.getElementById('srcLocation');
       const auditSrcL = document.getElementById('auditSrcLocation');
+      const effectiveSrcL = studioSrcL?.value || auditSrcL?.value || localStorage.getItem('gemini_src_location') || 'global';
+      if (studioSrcL && !studioSrcL.value) studioSrcL.value = effectiveSrcL;
+      if (auditSrcL && !auditSrcL.value) auditSrcL.value = effectiveSrcL;
+
+      const studioSrcC = document.getElementById('srcCollectionId');
       const auditSrcC = document.getElementById('auditSrcCollectionId');
+      const effectiveSrcC = studioSrcC?.value?.trim() || auditSrcC?.value?.trim() || 'default_collection';
+      if (studioSrcC && !studioSrcC.value.trim()) studioSrcC.value = effectiveSrcC;
+      if (auditSrcC && !auditSrcC.value.trim()) auditSrcC.value = effectiveSrcC;
+
+      const srcApp = document.getElementById('srcAppId');
       const auditSrcApp = document.getElementById('auditSrcAppId');
+      const srcCustomApp = document.getElementById('srcAppId_custom')?.value || '';
       const auditSrcCustom = document.getElementById('auditSrcAppId_custom');
       const auditSrcCustomContainer = document.getElementById('auditSrcAppId_custom_container');
 
-      if (auditSrcP && auditSrcP.value !== srcP) auditSrcP.value = srcP;
-      if (auditSrcL && auditSrcL.value !== srcL) auditSrcL.value = srcL;
-      if (auditSrcC && auditSrcC.value !== srcC) auditSrcC.value = srcC;
       if (auditSrcApp && srcApp) {
-        if (srcApp.options.length > 0 && auditSrcApp.options.length !== srcApp.options.length) {
+        if (srcApp.options.length > 2 && auditSrcApp.options.length <= 2) {
           auditSrcApp.innerHTML = srcApp.innerHTML;
+          if (srcApp.value) auditSrcApp.value = srcApp.value;
+        } else if (auditSrcApp.options.length > 2 && srcApp.options.length <= 2) {
+          srcApp.innerHTML = auditSrcApp.innerHTML;
+          if (auditSrcApp.value) srcApp.value = auditSrcApp.value;
+        } else if (srcApp.value && !auditSrcApp.value) {
+          auditSrcApp.value = srcApp.value;
+        } else if (auditSrcApp.value && !srcApp.value) {
+          srcApp.value = auditSrcApp.value;
         }
-        if (srcApp.value) auditSrcApp.value = srcApp.value;
-        if (srcApp.value === 'custom') {
+
+        const activeAppVal = auditSrcApp.value || srcApp.value;
+        if (activeAppVal === 'custom') {
           auditSrcCustomContainer?.classList.remove('hidden');
           if (auditSrcCustom) auditSrcCustom.value = srcCustomApp;
         } else {
@@ -3840,28 +3979,47 @@
         }
       }
 
-      const tgtP = document.getElementById('tgtProjectId')?.value?.trim() || '';
-      const tgtL = document.getElementById('tgtLocation')?.value || 'global';
-      const tgtC = document.getElementById('tgtCollectionId')?.value?.trim() || 'default_collection';
-      const tgtApp = document.getElementById('tgtAppId');
-      const tgtCustomApp = document.getElementById('tgtAppId_custom')?.value || '';
-
+      // Target Environment
+      const studioTgtP = document.getElementById('tgtProjectId');
       const auditTgtP = document.getElementById('auditTgtProjectId');
+      const effectiveTgtP = studioTgtP?.value?.trim() || auditTgtP?.value?.trim() || localStorage.getItem('gemini_tgt_project') || '';
+
+      if (studioTgtP && !studioTgtP.value.trim() && effectiveTgtP) studioTgtP.value = effectiveTgtP;
+      if (auditTgtP && !auditTgtP.value.trim() && effectiveTgtP) auditTgtP.value = effectiveTgtP;
+
+      const studioTgtL = document.getElementById('tgtLocation');
       const auditTgtL = document.getElementById('auditTgtLocation');
+      const effectiveTgtL = studioTgtL?.value || auditTgtL?.value || localStorage.getItem('gemini_tgt_location') || 'global';
+      if (studioTgtL && !studioTgtL.value) studioTgtL.value = effectiveTgtL;
+      if (auditTgtL && !auditTgtL.value) auditTgtL.value = effectiveTgtL;
+
+      const studioTgtC = document.getElementById('tgtCollectionId');
       const auditTgtC = document.getElementById('auditTgtCollectionId');
+      const effectiveTgtC = studioTgtC?.value?.trim() || auditTgtC?.value?.trim() || 'default_collection';
+      if (studioTgtC && !studioTgtC.value.trim()) studioTgtC.value = effectiveTgtC;
+      if (auditTgtC && !auditTgtC.value.trim()) auditTgtC.value = effectiveTgtC;
+
+      const tgtApp = document.getElementById('tgtAppId');
       const auditTgtApp = document.getElementById('auditTgtAppId');
+      const tgtCustomApp = document.getElementById('tgtAppId_custom')?.value || '';
       const auditTgtCustom = document.getElementById('auditTgtAppId_custom');
       const auditTgtCustomContainer = document.getElementById('auditTgtAppId_custom_container');
 
-      if (auditTgtP && auditTgtP.value !== tgtP) auditTgtP.value = tgtP;
-      if (auditTgtL && auditTgtL.value !== tgtL) auditTgtL.value = tgtL;
-      if (auditTgtC && auditTgtC.value !== tgtC) auditTgtC.value = tgtC;
       if (auditTgtApp && tgtApp) {
-        if (tgtApp.options.length > 0 && auditTgtApp.options.length !== tgtApp.options.length) {
+        if (tgtApp.options.length > 2 && auditTgtApp.options.length <= 2) {
           auditTgtApp.innerHTML = tgtApp.innerHTML;
+          if (tgtApp.value) auditTgtApp.value = tgtApp.value;
+        } else if (auditTgtApp.options.length > 2 && tgtApp.options.length <= 2) {
+          tgtApp.innerHTML = auditTgtApp.innerHTML;
+          if (auditTgtApp.value) tgtApp.value = auditTgtApp.value;
+        } else if (tgtApp.value && !auditTgtApp.value) {
+          auditTgtApp.value = tgtApp.value;
+        } else if (auditTgtApp.value && !tgtApp.value) {
+          tgtApp.value = auditTgtApp.value;
         }
-        if (tgtApp.value) auditTgtApp.value = tgtApp.value;
-        if (tgtApp.value === 'custom') {
+
+        const activeTgtVal = auditTgtApp.value || tgtApp.value;
+        if (activeTgtVal === 'custom') {
           auditTgtCustomContainer?.classList.remove('hidden');
           if (auditTgtCustom) auditTgtCustom.value = tgtCustomApp;
         } else {
@@ -3871,16 +4029,16 @@
 
       // Update summary bar labels
       const srcProjEl = document.getElementById('auditSourceProjectLabel');
-      if (srcProjEl) srcProjEl.textContent = srcP || 'Not configured';
+      if (srcProjEl) srcProjEl.textContent = effectiveSrcP || 'Not configured';
       const srcLocEl = document.getElementById('auditSourceLocationLabel');
-      const effectiveSrcApp = (srcApp?.value === 'custom' ? srcCustomApp : srcApp?.value) || 'default_engine';
-      if (srcLocEl) srcLocEl.textContent = `Location: ${srcL} | Engine: ${effectiveSrcApp}`;
+      const effectiveSrcApp = (srcApp?.value === 'custom' ? srcCustomApp : (auditSrcApp?.value || srcApp?.value)) || 'default_engine';
+      if (srcLocEl) srcLocEl.textContent = `Location: ${effectiveSrcL} | Engine: ${effectiveSrcApp}`;
 
       const tgtProjEl = document.getElementById('auditTargetProjectLabel');
-      if (tgtProjEl) tgtProjEl.textContent = tgtP || 'Not configured';
+      if (tgtProjEl) tgtProjEl.textContent = effectiveTgtP || 'Not configured';
       const tgtLocEl = document.getElementById('auditTargetLocationLabel');
-      const effectiveTgtApp = (tgtApp?.value === 'custom' ? tgtCustomApp : tgtApp?.value) || 'default_engine';
-      if (tgtLocEl) tgtLocEl.textContent = `Location: ${tgtL} | Engine: ${effectiveTgtApp}`;
+      const effectiveTgtApp = (tgtApp?.value === 'custom' ? tgtCustomApp : (auditTgtApp?.value || tgtApp?.value)) || 'default_engine';
+      if (tgtLocEl) tgtLocEl.textContent = `Location: ${effectiveTgtL} | Engine: ${effectiveTgtApp}`;
     }
 
     function syncAuditEnv(envType) {
@@ -4029,15 +4187,15 @@
 
       populateAuditEnvFromStudio();
 
-      const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || '';
-      const srcLoc = document.getElementById('auditSrcLocation')?.value || getFieldValue('srcLocation') || 'global';
-      const srcColl = getFieldValue('auditSrcCollectionId') || getFieldValue('srcCollectionId') || 'default_collection';
-      const srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || '';
+      let srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || localStorage.getItem('gemini_src_project') || '';
+      let tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || localStorage.getItem('gemini_tgt_project') || '';
 
-      const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || '';
-      const tgtLoc = document.getElementById('auditTgtLocation')?.value || getFieldValue('tgtLocation') || 'global';
-      const tgtColl = getFieldValue('auditTgtCollectionId') || getFieldValue('tgtCollectionId') || 'default_collection';
-      const tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || '';
+      if (!srcProj || !tgtProj) {
+        restoreSavedEnvironments();
+        populateAuditEnvFromStudio();
+        srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || localStorage.getItem('gemini_src_project') || '';
+        tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || localStorage.getItem('gemini_tgt_project') || '';
+      }
 
       if (!srcProj || !tgtProj) {
         isAuditRunning = false;
@@ -4057,6 +4215,20 @@
         showAuditUnconfiguredState();
         return;
       }
+
+      let srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || '';
+      let tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || '';
+
+      if (!srcApp || !tgtApp) {
+        await autoRefreshAppIds();
+        srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || '';
+        tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || '';
+      }
+
+      const srcLoc = document.getElementById('auditSrcLocation')?.value || getFieldValue('srcLocation') || localStorage.getItem('gemini_src_location') || 'global';
+      const srcColl = getFieldValue('auditSrcCollectionId') || getFieldValue('srcCollectionId') || 'default_collection';
+      const tgtLoc = document.getElementById('auditTgtLocation')?.value || getFieldValue('tgtLocation') || localStorage.getItem('gemini_tgt_location') || 'global';
+      const tgtColl = getFieldValue('auditTgtCollectionId') || getFieldValue('tgtCollectionId') || 'default_collection';
 
       // Update summary bar labels
       const srcProjEl = document.getElementById('auditSourceProjectLabel');
@@ -4276,15 +4448,17 @@
     }
 
     function getAuditConfigPayload() {
-      const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || '';
-      const srcLoc = document.getElementById('auditSrcLocation')?.value || getFieldValue('srcLocation') || 'global';
+      const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || localStorage.getItem('gemini_src_project') || '';
+      const srcLoc = document.getElementById('auditSrcLocation')?.value || getFieldValue('srcLocation') || localStorage.getItem('gemini_src_location') || 'global';
       const srcColl = getFieldValue('auditSrcCollectionId') || getFieldValue('srcCollectionId') || 'default_collection';
-      const srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || '';
+      let srcApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || localStorage.getItem('gemini_src_app_id') || '';
+      if (!srcApp || srcApp === 'custom') srcApp = 'default_engine';
 
-      const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || '';
-      const tgtLoc = document.getElementById('auditTgtLocation')?.value || getFieldValue('tgtLocation') || 'global';
+      const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || localStorage.getItem('gemini_tgt_project') || '';
+      const tgtLoc = document.getElementById('auditTgtLocation')?.value || getFieldValue('tgtLocation') || localStorage.getItem('gemini_tgt_location') || 'global';
       const tgtColl = getFieldValue('auditTgtCollectionId') || getFieldValue('tgtCollectionId') || 'default_collection';
-      const tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || '';
+      let tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || localStorage.getItem('gemini_tgt_app_id') || '';
+      if (!tgtApp || tgtApp === 'custom') tgtApp = 'default_engine';
 
       return {
         source: {
@@ -6035,18 +6209,56 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         const cidEl = document.getElementById('wizDetectedClientId');
         const saEl = document.getElementById('wizDetectedSaEmail');
 
-        if (!badge || !cidEl || !saEl) return;
+        if (badge && cidEl && saEl) {
+          if (data.exists && data.clientId) {
+            badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-mono font-semibold';
+            badge.textContent = 'Active Key Found';
+            cidEl.textContent = data.clientId;
+            saEl.textContent = data.clientEmail || 'Service Account Key Loaded';
+          } else {
+            badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/40 font-mono font-semibold';
+            badge.textContent = 'sa-dwd-key.json Not Detected';
+            cidEl.textContent = 'Run Step 1 to generate or upload key';
+            saEl.textContent = 'None';
+          }
+        }
 
-        if (data.exists && data.clientId) {
-          badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-mono font-semibold';
-          badge.textContent = 'Active Key Found';
-          cidEl.textContent = data.clientId;
-          saEl.textContent = data.clientEmail || 'Service Account Key Loaded';
-        } else {
-          badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/40 font-mono font-semibold';
-          badge.textContent = 'sa-dwd-key.json Not Detected';
-          cidEl.textContent = 'Run Step 1 to generate or upload key';
-          saEl.textContent = 'None';
+        let needsRefresh = false;
+        const detectedTgt = data.targetProjectId || data.projectId;
+        if (detectedTgt) {
+          ['tgtProjectId', 'auditTgtProjectId', 'wizDwdProject'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el && !el.value.trim()) {
+              el.value = detectedTgt;
+              needsRefresh = true;
+            }
+          });
+          try {
+            if (!localStorage.getItem('gemini_tgt_project')) {
+              localStorage.setItem('gemini_tgt_project', detectedTgt);
+            }
+          } catch (_) {}
+        }
+
+        const detectedSrc = data.sourceProjectId;
+        if (detectedSrc) {
+          ['srcProjectId', 'auditSrcProjectId', 'wizDwdSrcProject'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el && !el.value.trim()) {
+              el.value = detectedSrc;
+              needsRefresh = true;
+            }
+          });
+          try {
+            if (!localStorage.getItem('gemini_src_project')) {
+              localStorage.setItem('gemini_src_project', detectedSrc);
+            }
+          } catch (_) {}
+        }
+
+        if (needsRefresh) {
+          populateAuditEnvFromStudio();
+          await autoRefreshAppIds();
         }
       } catch (err) {
         console.debug('Failed to load DWD key info:', err);
@@ -6357,8 +6569,17 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         }
       }
       updateAppQuickLinks();
-      if (fieldId === 'srcAppId') {
+
+      const val = selectEl?.value;
+      if (fieldId === 'srcAppId' || fieldId === 'auditSrcAppId') {
+        if (val && val !== 'custom') {
+          try { localStorage.setItem('gemini_src_app_id', val); } catch (_) {}
+        }
         discoverSourceUsers();
+      } else if (fieldId === 'tgtAppId' || fieldId === 'auditTgtAppId') {
+        if (val && val !== 'custom') {
+          try { localStorage.setItem('gemini_tgt_app_id', val); } catch (_) {}
+        }
       }
     }
 
@@ -6403,9 +6624,46 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         targetFieldId = 'singleTgtEngine';
       }
 
-      const projectId = projectInput?.value?.trim();
-      const location = locationSelect?.value || 'global';
-      const collection = collectionInput?.value?.trim() || 'default_collection';
+      let projectId = projectInput?.value?.trim() || '';
+      if (!projectId) {
+        if (envType === 'src') {
+          projectId = document.getElementById('auditSrcProjectId')?.value?.trim() ||
+                      document.getElementById('wizDwdSrcProject')?.value?.trim() ||
+                      localStorage.getItem('gemini_src_project') || '';
+          if (projectId && projectInput) projectInput.value = projectId;
+        } else if (envType === 'tgt') {
+          projectId = document.getElementById('auditTgtProjectId')?.value?.trim() ||
+                      document.getElementById('wizDwdProject')?.value?.trim() ||
+                      localStorage.getItem('gemini_tgt_project') || '';
+          if (projectId && projectInput) projectInput.value = projectId;
+        }
+      }
+
+      let location = locationSelect?.value || '';
+      if (!location) {
+        if (envType === 'src') {
+          location = document.getElementById('auditSrcLocation')?.value || localStorage.getItem('gemini_src_location') || 'global';
+          if (locationSelect) locationSelect.value = location;
+        } else if (envType === 'tgt') {
+          location = document.getElementById('auditTgtLocation')?.value || localStorage.getItem('gemini_tgt_location') || 'global';
+          if (locationSelect) locationSelect.value = location;
+        } else {
+          location = 'global';
+        }
+      }
+
+      let collection = collectionInput?.value?.trim() || '';
+      if (!collection) {
+        if (envType === 'src') {
+          collection = document.getElementById('auditSrcCollectionId')?.value?.trim() || 'default_collection';
+          if (collectionInput) collectionInput.value = collection;
+        } else if (envType === 'tgt') {
+          collection = document.getElementById('auditTgtCollectionId')?.value?.trim() || 'default_collection';
+          if (collectionInput) collectionInput.value = collection;
+        } else {
+          collection = 'default_collection';
+        }
+      }
 
       if (!projectId || !engineSelect) return;
 
@@ -6457,9 +6715,10 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
 
         // Selection logic:
         let matched = false;
-        if (preferredId) {
+        const targetPrefId = preferredId || (envType === 'src' ? localStorage.getItem('gemini_src_app_id') : (envType === 'tgt' ? localStorage.getItem('gemini_tgt_app_id') : null));
+        if (targetPrefId) {
           for (let i = 0; i < engineSelect.options.length; i++) {
-            if (engineSelect.options[i].value === preferredId) {
+            if (engineSelect.options[i].value === targetPrefId) {
               engineSelect.selectedIndex = i;
               matched = true;
               break;
@@ -6498,6 +6757,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             const effectiveApp = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId') || 'default_engine';
             srcLocEl.textContent = `Location: ${location} | Engine: ${effectiveApp}`;
           }
+          if (engineSelect.value && engineSelect.value !== 'custom') {
+            try { localStorage.setItem('gemini_src_app_id', engineSelect.value); } catch (_) {}
+          }
           discoverSourceUsers();
         } else if (envType === 'tgt') {
           const auditSelect = document.getElementById('auditTgtAppId');
@@ -6516,8 +6778,25 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             const effectiveApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || 'default_engine';
             tgtLocEl.textContent = `Location: ${location} | Engine: ${effectiveApp}`;
           }
+          if (engineSelect.value && engineSelect.value !== 'custom') {
+            try { localStorage.setItem('gemini_tgt_app_id', engineSelect.value); } catch (_) {}
+          }
         }
+
+        saveActiveEnvironmentsToStorage();
         updateAppQuickLinks();
+
+        // Check if audit tab is active and can be auto-checked now that engines are loaded
+        const auditTab = document.getElementById('tab-audit');
+        if (auditTab && !auditTab.classList.contains('hidden') && !activeAuditResult && !isAuditRunning) {
+          const sP = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId');
+          const tP = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId');
+          const sA = getFieldValue('auditSrcAppId') || getFieldValue('srcAppId');
+          const tA = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId');
+          if (sP && tP && sA && tA) {
+            runConfigPreCheck();
+          }
+        }
       } catch (err) {
         console.warn(`Could not load engines for ${projectId}:`, err);
       } finally {
@@ -6567,6 +6846,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         if (typeof updateDwdScript === 'function') updateDwdScript();
       }
 
+      saveActiveEnvironmentsToStorage();
+
       clearTimeout(srcEnvDebounce);
       srcEnvDebounce = setTimeout(() => {
         fetchEngines('src');
@@ -6592,6 +6873,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         wizProj.value = p;
         if (typeof updateDwdScript === 'function') updateDwdScript();
       }
+
+      saveActiveEnvironmentsToStorage();
 
       clearTimeout(tgtEnvDebounce);
       tgtEnvDebounce = setTimeout(() => {
@@ -10380,20 +10663,26 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     }
 
     // Auto-fetch available Gemini Enterprise apps on page load
-    window.addEventListener('DOMContentLoaded', () => {
+    async function initApplication() {
+      restoreSavedEnvironments();
       populateAuditEnvFromStudio();
-      fetchEngines('src');
-      fetchEngines('tgt');
+
+      // Load DWD key & detected projects first
+      await loadDwdKeyInfo();
+
+      // Auto-refresh app IDs across all environments
+      await autoRefreshAppIds();
+
       fetchEngines('single-src');
       fetchEngines('single-tgt');
       renderUserSelectionTable();
       updateAppQuickLinks();
       onIdpSelectionChanged();
-      loadDwdKeyInfo();
       autoDiscoverWif();
 
       const params = new URLSearchParams(window.location.search);
-      const targetTab = params.get('tab');
+      const hashTab = window.location.hash.replace(/^#/, '');
+      const targetTab = params.get('tab') || hashTab;
       if (targetTab && typeof switchTab === 'function') {
         switchTab(targetTab);
       }
@@ -10401,6 +10690,15 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       if (wizardSubTab && typeof switchWizardTab === 'function') {
         switchWizardTab(wizardSubTab);
       }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initApplication();
+    });
+
+    window.addEventListener('load', () => {
+      setTimeout(() => autoRefreshAppIds(), 200);
+      setTimeout(() => autoRefreshAppIds(), 800);
     });
   </script>
 </body>
