@@ -36,14 +36,20 @@ export class DiscoveryEngineClient {
     customHeaders?: Record<string, string>,
     forUserEmail?: string
   ): Promise<T> {
-    const token = await this.auth.getAccessToken(forUserEmail);
+    const saHomeProject = this.auth.getServiceAccountProjectId();
+    // If calling the Service Account's home GCP project (e.g., Target Google Workspace project), prefer DWD
+    const initialMode: 'DWD' | 'WIF' | undefined = (forUserEmail && saHomeProject && userProject === saHomeProject)
+      ? 'DWD'
+      : undefined;
+
+    const token = await this.auth.getAccessToken(forUserEmail, undefined, initialMode);
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
       ...customHeaders
     };
 
-    const homeProject = process.env.SOURCE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
+    const homeProject = saHomeProject || process.env.SOURCE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
     if (userProject) {
       headers['X-Goog-User-Project'] = userProject;
     } else if (homeProject) {
@@ -59,7 +65,7 @@ export class DiscoveryEngineClient {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        let errorText = await response.text();
         let parsedError: any;
         try {
           parsedError = JSON.parse(errorText);
@@ -67,12 +73,16 @@ export class DiscoveryEngineClient {
           parsedError = null;
         }
 
-        // If target quota project is denied (caller lacks serviceusage.services.use on target), retry with home project
-        if (response.status === 403 && headers['X-Goog-User-Project'] !== homeProject && homeProject) {
-          const reason = parsedError?.error?.details?.[0]?.reason || '';
-          const msg = parsedError?.error?.message || errorText;
-          if (reason === 'USER_PROJECT_DENIED' || msg.includes('USER_PROJECT_DENIED') || msg.includes('serviceusage.services.use')) {
-            logger.debug(`Target quota project denied; retrying request with home quota project: ${homeProject}`);
+        const isQuotaDenied = (errObj: any, raw: string) => {
+          const r = errObj?.error?.details?.[0]?.reason || '';
+          const m = errObj?.error?.message || raw;
+          return r === 'USER_PROJECT_DENIED' || m.includes('USER_PROJECT_DENIED') || m.includes('serviceusage.services.use');
+        };
+
+        // 1. If target quota project is denied (caller lacks serviceusage.services.use on target), retry with SA home project or without quota header
+        if (response.status === 403 && isQuotaDenied(parsedError, errorText)) {
+          if (homeProject && headers['X-Goog-User-Project'] !== homeProject) {
+            logger.debug(`Target quota project denied; retrying request with SA home quota project: ${homeProject}`);
             headers['X-Goog-User-Project'] = homeProject;
             response = await fetch(url, {
               method,
@@ -83,6 +93,50 @@ export class DiscoveryEngineClient {
               if (response.status === 204) return {} as T;
               return (await response.json()) as T;
             }
+            errorText = await response.text();
+            try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+          }
+
+          if (response.status === 403 && isQuotaDenied(parsedError, errorText) && headers['X-Goog-User-Project']) {
+            logger.debug(`Quota project still denied; retrying request without X-Goog-User-Project header`);
+            delete headers['X-Goog-User-Project'];
+            response = await fetch(url, {
+              method,
+              headers,
+              body: body ? JSON.stringify(body) : undefined
+            });
+            if (response.ok) {
+              if (response.status === 204) return {} as T;
+              return (await response.json()) as T;
+            }
+            errorText = await response.text();
+            try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+          }
+        }
+
+        // 2. If 403 Permission Denied when impersonating a user (e.g., WiF token sent to Google Workspace target project),
+        // automatically retry using the alternate impersonation mechanism (DWD <-> WIF)
+        if (response.status === 403 && forUserEmail) {
+          const alternateMode: 'DWD' | 'WIF' = (initialMode === 'DWD') ? 'WIF' : 'DWD';
+          try {
+            const altToken = await this.auth.getAccessToken(forUserEmail, undefined, alternateMode);
+            if (altToken && altToken !== headers['Authorization']?.replace(/^Bearer\s+/i, '')) {
+              logger.info(`Permission denied with initial token for "${forUserEmail}"; retrying request with ${alternateMode} impersonation token...`);
+              headers['Authorization'] = `Bearer ${altToken}`;
+              response = await fetch(url, {
+                method,
+                headers,
+                body: body ? JSON.stringify(body) : undefined
+              });
+              if (response.ok) {
+                if (response.status === 204) return {} as T;
+                return (await response.json()) as T;
+              }
+              errorText = await response.text();
+              try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+            }
+          } catch (altErr: any) {
+            logger.debug(`Alternate ${alternateMode} token retry skipped for ${forUserEmail}: ${altErr.message}`);
           }
         }
 

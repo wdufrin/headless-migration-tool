@@ -5,6 +5,19 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2026-09-17
+
+### Added
+- **Least-Privilege DWD User Impersonation Scopes**:
+  - Google Workspace DWD user impersonation flow now defaults strictly to Discovery Engine least-privilege OAuth scopes (`discoveryengine.readwrite`, `discoveryengine.assist.readwrite`).
+  - Added resilient multi-tier scope step-down fallback on `unauthorized_client` errors.
+- **Partitioned Token Cache**:
+  - Added explicit auth mode partitioning (`DWD`, `WIF`, `ADMIN`) into internal token cache keys to ensure strict isolation between ambient caller identities, WiF tokens, and human user DWD tokens.
+- **Enterprise Operator Guides & Console Parity**:
+  - Synchronized installation guide, user guide, and web console to version `v1.5.3`.
+
+---
+
 ## [1.5.1] - 2026-09-14
 
 ### Added

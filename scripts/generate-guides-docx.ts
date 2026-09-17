@@ -537,7 +537,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'Gemini Enterprise Admin Migration Platform',
     'Installation, Environment Setup & Pre-Requisites Technical Guide',
     {
-      'Document Version': 'v1.5.1 (Enterprise Release)',
+      'Document Version': 'v1.5.3 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Platform': 'Google Cloud Discovery Engine & Gemini Enterprise',
       'Execution Profile': 'Headless CLI & Local Workstation Web Console (127.0.0.1:8080)',
@@ -645,6 +645,7 @@ gcloud services enable discoveryengine.googleapis.com \\
     [
       ['Source Project', 'roles/discoveryengine.viewer', 'Predefined Role', 'Read-only discovery of custom agents, notebooks, datastores, and chat turns'],
       ['Source Project', 'roles/serviceusage.serviceUsageConsumer', 'Predefined Role', 'Authorizes Discovery Engine API consumption checks on source project'],
+      ['Source Project', 'roles/iam.securityReviewer', 'Predefined Role', 'Allows enumerating project IAM bindings (resourcemanager.projects.getIamPolicy) during User Discovery'],
       ['Target Project', 'roles/discoveryengine.admin', 'Predefined Role', 'Creation and configuration of target engines, datastores, agents, and notebooks'],
       ['Target Project', 'roles/iam.serviceAccountTokenCreator', 'Predefined Role', 'Allows minting user-scoped impersonation tokens via Domain-Wide Delegation'],
       ['Target Project', 'roles/serviceusage.serviceUsageConsumer', 'Predefined Role', 'Authorizes Discovery Engine API consumption checks on target project']
@@ -655,7 +656,7 @@ gcloud services enable discoveryengine.googleapis.com \\
   b.addCallout({
     title: 'Resolution of 403 serviceusage.serviceUsageConsumer Errors',
     type: 'tip',
-    text: 'Granting `roles/serviceusage.serviceUsageConsumer` on both Source and Target projects is mandatory. Administrative pre-flight checks are isolated to the configured Service Account key, ensuring that user-scoped WiF tokens are never erroneously used for administrative engine validation.'
+    text: 'Granting `roles/serviceusage.serviceUsageConsumer` and `roles/iam.securityReviewer` on the Source Project is mandatory. Administrative pre-flight checks and project IAM discovery are isolated to the configured Service Account key, ensuring that user-scoped WiF tokens are never erroneously used for administrative engine validation.'
   });
 
   // Section 4.1
@@ -700,14 +701,32 @@ gcloud services enable discoveryengine.googleapis.com \\
     --display-name="Gemini Enterprise Migration Service Account" \\
     --project=<TARGET_PROJECT_ID>`);
 
-  b.addNumbered('Assign required IAM roles to the service account:', 2);
-  b.addCodeBlock(`gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
+  b.addNumbered('Assign required IAM roles to the service account across BOTH Target and Source Projects:', 2);
+  b.addCodeBlock(`# Grant roles on TARGET Project (Restore & Token Minting)
+gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
     --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \\
     --role="roles/discoveryengine.admin"
 
 gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
     --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \\
-    --role="roles/serviceusage.serviceUsageConsumer"`);
+    --role="roles/iam.serviceAccountTokenCreator"
+
+gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \\
+    --role="roles/serviceusage.serviceUsageConsumer"
+
+# Grant roles on SOURCE Project (MANDATORY for Cross-Project Discovery & Parity Audit)
+gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \\
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \\
+    --role="roles/discoveryengine.admin"
+
+gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \\
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \\
+    --role="roles/serviceusage.serviceUsageConsumer"
+
+gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \\
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \\
+    --role="roles/iam.securityReviewer"`);
 
   b.addNumbered('Export the service account JSON private key:', 3);
   b.addCodeBlock(`gcloud iam service-accounts keys create sa-dwd-key.json \\
@@ -732,9 +751,9 @@ gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
   b.addParagraph(
     'For organizations authenticating via external Identity Providers (Microsoft Entra ID, Okta, Ping Identity), the platform uses Google Cloud Workforce Identity Federation and Security Token Service (STS).'
   );
-  b.addBullet('Place your Workforce Identity Federation pool configuration in `workforce-identity-config.json`.');
-  b.addBullet('Provide RSA signing keys (`wif-migration-key.pem` and `wif-migration-jwks.json`) to sign user subject token assertions.');
-  b.addBullet('When migrating from Entra ID to Google Cloud Identity, the tool mints WiF STS tokens for source discovery and switches to DWD tokens for target restoration.');
+  b.addNumbered('Place your Workforce Identity Federation pool configuration in `workforce-identity-config.json`.', 1);
+  b.addNumbered('Provide RSA signing keys (`wif-migration-key.pem` and `wif-migration-jwks.json`) to sign user subject token assertions.', 2);
+  b.addNumbered('When migrating from Entra ID to Google Cloud Identity, the tool mints WiF STS tokens for source discovery and switches to DWD tokens for target restoration.', 3);
 
   b.addCallout({
     title: 'Keyless Architecture & Organization Policy Immunity',
@@ -753,7 +772,7 @@ gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \\
   b.addHeading1('6. Installation, Local Build & Configuration');
   b.addParagraph('Follow these steps to clone, build, and configure the platform on your administrator workstation:');
 
-  b.addNumbered('Clone the repository to your local machine:', 1);
+  b.addNumbered('Clone the repository:', 1);
   b.addCodeBlock(`git clone https://github.com/your-org/gemini-enterprise-admin-migration-tool.git
 cd gemini-enterprise-admin-migration-tool`);
 
@@ -786,6 +805,7 @@ cd gemini-enterprise-admin-migration-tool`);
     "dryRun": false,
     "migrateNotebooks": true,
     "migrateAgents": true,
+    "migrateSkills": true,
     "migrateSessions": true,
     "migrateMemories": true,
     "exportArtifacts": true,
@@ -817,7 +837,7 @@ npx tsx src/cli.ts --config migration-config.json`);
 
   b.addHeading2('Option 3: Run Automated Test Suite');
   b.addCodeBlock(`npm test
-# Executes 74 unit tests across 10 test suites covering auth, parsing, and export`);
+# Executes 106 automated tests across 14 test suites covering auth, cross-project parity pre-checks, export, decommissioning, and rollback validation`);
 
   b.addHeading2('Command-Line CLI Flag Reference');
   b.addTable(
@@ -927,7 +947,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     'Gemini Enterprise Admin Migration Platform',
     'Administrator Operations, Asset Restoration, Parity Audit & User Handover Guide',
     {
-      'Document Version': 'v1.5.1 (Enterprise Release)',
+      'Document Version': 'v1.5.3 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Audience': 'Cloud Architects, Migration Operators & IT Administrators',
       'Supported Assets': 'Notebooks, Sources, Custom Agents, Chat Sessions, Memories & Artifacts',
@@ -950,9 +970,9 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addBullet('**Automated User Handover Delivery Engine**: Dispatches personalized email notifications with interactive onboarding checklists (`/checklist`) and a consolidated `NotebookLM_Artifacts.zip` archive.');
 
   // Section 2
-  b.addHeading1('2. Pre-Migration Parity Audit & Gap Remediation');
+  b.addHeading1('2. Pre-Migration Parity Audit & Gap Remediation (Step 2)');
   b.addParagraph(
-    'Before executing a migration run, administrators should execute a Configuration Pre-Check to ensure that the target environment has all required feature toggles, security settings, and DataStores configured to support the migrated assets.'
+    'Before executing a migration run, administrators execute a Configuration Pre-Check in **Step 2: Config & Parity Audit** (`#audit`) to ensure that the target environment has all required feature toggles, security settings, and DataStores configured to support the migrated assets.'
   );
 
   b.addCallout({
@@ -961,9 +981,12 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     text: 'Migrating custom agents or notebooks that reference missing DataStores or disabled platform features (such as user memories or skill sharing) can cause silent runtime errors for end users. The Parity Audit catches these gaps beforehand.'
   });
 
-  b.addParagraph(
-    'Navigate to the **Config Pre-Check & Gaps** tab on the left navigation bar and click **Run Pre-Check**. The system analyzes more than 100 configuration points and computes a **Parity Readiness Score** (0–100%).'
-  );
+  b.addHeading2('Interactive Step 2 Environment Selector & Bi-Directional Sync');
+  b.addBullet('**Direct Environment Configuration**: Step 2 features interactive Source and Target environment cards allowing administrators to configure Source Project ID, Region, Collection, and Engine/App ID as well as Target Project ID, Region, Collection, and Engine/App ID directly.');
+  b.addBullet('**Real-Time Bi-Directional Synchronization**: Any configuration changed in Step 2 automatically synchronizes to Step 3 (Migration Studio), and vice-versa.');
+  b.addBullet('**Guided Empty-State Guardrail**: Prevents premature API calls when project IDs are unconfigured, guiding the operator with actionable instructions.');
+  b.addBullet('**Parity Readiness Score (0–100%)**: Analyzes more than 100 configuration points across engine feature flags and attached DataStores.');
+  b.addBullet('**Wizard Progression**: Click **Next: Proceed to Step 3: Migration Studio** at the bottom of the audit report to carry configured environments forward.');
 
   b.addImage(
     'docs/images/03_config_precheck_gaps.png',
@@ -974,7 +997,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
 
   b.addHeading2('Actionable Gap Remediation Plan');
   b.addParagraph(
-    'For any detected discrepancies, the console generates ready-to-run Google Cloud CLI commands. Administrators can copy these commands with a single click and execute them in Cloud Shell or a terminal.'
+    'For any detected discrepancies, the console offers a **1-Click Sync Target Engine Settings** button (`PATCH` API) and generates ready-to-run Google Cloud CLI commands. Administrators can copy these commands with a single click and execute them in Cloud Shell or a terminal.'
   );
 
   b.addImage(
@@ -985,16 +1008,16 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   );
 
   // Section 3
-  b.addHeading1('3. Migration Pipeline Configuration');
+  b.addHeading1('3. Migration Pipeline Configuration (Step 3: Migration Studio)');
   b.addParagraph(
-    'On the **Migration Studio** tab, specify the Source and Target environment parameters:'
+    'On the **Migration Studio** (`#studio`) tab, review or adjust the synchronized Source and Target environment parameters:'
   );
 
   b.addBullet('**Source Project ID**: The GCP project hosting current Gemini Enterprise assets (e.g. `ancient-sandbox-322523`).');
   b.addBullet('**Source Region**: Geographic location (`global`, `eu`, `us-central1`).');
   b.addBullet('**Source Engine / App ID**: Dropdown auto-populated with discovered engines.');
   b.addBullet('**Source Identity Provider**: Select between `Google Workspace / Cloud Identity (DWD)` or `Microsoft Entra ID (Workforce Identity Federation)`.');
-  b.addBullet('**Target Project ID & Region**: The destination environment (e.g. `ancient-sandbox-test-1`).');
+  b.addBullet('**Target Project ID & Region**: The destination environment (e.g. `testgebackupandrestorev3`).');
   b.addBullet('**Target Identity Provider**: Destination authentication provider.');
 
   b.addImage(
@@ -1015,6 +1038,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     [
       ['Migrate Notebooks & Sources', 'Research Notebooks & Grounding Docs', 'Enabled (Checked)', 'Restores notebooks and re-indexes all attached PDFs, URLs, and YouTube videos'],
       ['Migrate Custom Agents', 'Low-Code & Workflow Agents', 'Enabled (Checked)', 'Deep-copies agent instructions, tools, and datastores as native editable drafts'],
+      ['Migrate User Skills', 'User-Created Skills in Agent Registry', 'Enabled (Checked)', 'Migrates custom skills in agentregistry.googleapis.com while ignoring built-in 1P Google templates'],
       ['Migrate Multi-User Chat History', 'Chat Conversation History', 'Enabled (Checked)', 'Rehydrates chronological chat sessions into the target Gemini sidebar'],
       ['Migrate User Memories & Facts', 'Personalized Facts & Profiles', 'Enabled (Checked)', 'Discovers and exports memory facts to local JSON backup and target library'],
       ['Export & Archive User Artifacts', 'Studio Outputs & Presentations', 'Enabled (Checked)', 'Generates `.pptx` decks, `.docx` study guides, `.html` apps, and `.mp4` videos'],
@@ -1049,7 +1073,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   // Section 6
   b.addHeading1('6. Executing the Migration Pipeline');
   b.addParagraph(
-    'Once configured, click **🚀 Run Live Migration** (or **Simulate Dry Run**). The migration pipeline executes across 7 discrete stages:'
+    'Once configured, click **🚀 Execute Live Migration** (or **⚡ Execute Pre-Flight Dry Run**). The migration pipeline executes across 7 discrete stages:'
   );
 
   b.addNumbered('Stage 1: Pre-Flight Infrastructure Checks — Verifies target engine existence, accessibility, and service usage quotas.', 1);
@@ -1061,61 +1085,61 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addNumbered('Stage 7: Studio Artifacts Discovery, Office Generation & Compression — Synthesizes PPTX presentations, Word study guides, interactive HTML5 quiz/flashcard apps, and compresses Explainer Videos.', 7);
 
   // Section 7
-  b.addHeading1('7. Migration Reports & Reconciliation Auditing');
+  b.addHeading1('7. Migration Reports & Reconciliation Auditing (Step 4)');
   b.addParagraph(
     'Upon pipeline completion, the platform generates comprehensive executive and machine-readable audit reports saved in `reports/`:'
   );
   b.addBullet('**Markdown Report** (`reports/migration-report-<ID>-<TIMESTAMP>.md`): Human-readable executive summary with detailed asset breakdown.');
-  b.addHeading1('7. Migration Execution & Live Streaming Telemetry');
-  b.addParagraph(
-    'Initiate migration from the web console or headless CLI. The console provides real-time Server-Sent Events (SSE) telemetry displaying live progress bars and itemized logs.'
-  );
+  b.addBullet('**JSON Report** (`reports/migration-report-<ID>-<TIMESTAMP>.json`): Structured telemetry schema for SIEM or enterprise database logging.');
+  b.addBullet('**User Reconciliation Matrix**: Comprehensive table matching each source user identity with their target Google identity, listing restored vs. failed counts across all asset categories.');
 
   b.addImage(
-    'docs/images/01_pipeline_configuration.png',
-    'Figure 2.6: Real-Time SSE Migration Telemetry and Asset Progress Tracker',
+    'docs/images/05_migration_report_reconciliation.png',
+    'Figure 2.5: Migration Report and User Reconciliation Matrix in Web Console',
     560,
     350
   );
 
   // Section 8
-  b.addHeading1('8. User Handover Delivery & Notification Engine');
+  b.addHeading1('8. User Handover Delivery & Notification Engine (Step 5)');
   b.addParagraph(
     'To deliver a seamless day-one onboarding experience, the platform packages each user\'s assets into a single consolidated `NotebookLM_Artifacts.zip` archive and dispatches an onboarding email.'
   );
 
-  b.addBullet('**Action-Oriented Checklists**: The email features interactive checkboxes `[ ]` guiding users through initial sign-in, connector authorizations (Outlook, OneDrive, Google Drive, Jira), and agent publishing.');
+  b.addBullet('**Action-Oriented Checklists**: The email features interactive checkboxes `[ ]` guiding users through initial sign-in, connector authorizations (Outlook, OneDrive, Google Drive, Jira), and agent publishing, along with explicit warnings if any asset types were skipped.');
   b.addBullet('**Smart Deduplication**: Static HTML document viewers are excluded when authentic Word documents are attached, but interactive quiz and flashcard apps are explicitly preserved alongside Word study guides.');
   b.addBullet('**Multi-Part Email Threading**: If user assets exceed Gmail\'s 14.5 MB unencoded per-message threshold, attachments are automatically bin-packed into sequential parts and delivered within a single threaded conversation (`In-Reply-To`).');
 
   b.addImage(
     'docs/images/09_gmail_user_handover_delivery.png',
-    'Figure 2.7: Migration Handover Notification Received in Gmail with Attachments',
+    'Figure 2.6: Migration Handover Notification Received in Gmail with Attachments',
     560,
     350
   );
 
   b.addImage(
     'docs/images/10_gmail_multipart_thread.png',
-    'Figure 2.8: Multi-Part Handover Thread with Partitioned Attachments in Gmail',
+    'Figure 2.7: Multi-Part Handover Thread with Partitioned Attachments in Gmail',
     560,
     350
   );
 
   b.addImage(
     'docs/images/14_user_handover_console.png',
-    'Figure 2.9: User Handover & Email Delivery Console Tab',
+    'Figure 2.8: User Handover & Email Delivery Console Tab',
     560,
     350
   );
 
   // Section 9
-  b.addHeading1('9. Auth & Identity Provider Configuration Wizard (DWD & WiF)');
+  b.addHeading1('9. Auth & Identity Provider Configuration Wizard (Step 1: DWD & WiF)');
   b.addParagraph(
-    'The **Auth & WiF Wizard** provides an interactive, guided interface to configure and test authentication protocols across Google Workspace and external Identity Providers (Microsoft Entra ID, Okta, Ping).'
+    'The **Auth & WiF Wizard** (`#wizard`) provides an interactive, guided interface to configure and test authentication protocols across Google Workspace and external Identity Providers (Microsoft Entra ID, Okta, Ping).'
   );
 
-  b.addHeading2('9.1 Domain-Wide Delegation (DWD) & Org Policy Inspection');
+  b.addHeading2('9.1 Domain-Wide Delegation (DWD) & Cross-Project IAM Generator');
+  b.addBullet('**Dual Project Topology Input**: Accepts both **Source GCP Project ID** and **Target GCP Project ID** (`wizDwdSrcProject` and `wizDwdProject`), automatically synchronizing with Step 2 and Step 3.');
+  b.addBullet('**Cross-Project IAM Command Generator**: Generates copy-paste ready `gcloud` CLI commands granting `roles/discoveryengine.admin` and `roles/serviceusage.serviceUsageConsumer` across **both** Source and Target environments, along with an Architecture Explainer clarifying user impersonation vs administrative pipeline permissions.');
   b.addBullet('**Check Org Policies**: Performs live inspection of target project organization policies (`iam.disableServiceAccountKeyCreation`, `iam.disableCrossProjectServiceAccountUsage`, and `iam.allowedPolicyMemberDomains`).');
   b.addBullet('**Conflict Detection**: If `iam.disableServiceAccountKeyCreation` is active, an alert banner warns the operator before executing CLI commands that creating `sa-dwd-key.json` will fail.');
   b.addBullet('**1-Click Project Override**: Operators holding `roles/orgpolicy.policyAdmin` can click the 1-Click Project Override button to automatically apply a project-scoped exemption (`enforce: false`) without modifying parent organizational policies.');
@@ -1123,6 +1147,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
 
   b.addHeading2('9.2 Workforce Identity Federation (WiF) — Keyless Enterprise Path');
   b.addBullet('**Keyless Architecture**: WiF exchanges external OIDC/SAML tokens with Google Cloud Security Token Service (`sts.googleapis.com`) to mint short-lived tokens and is **100% exempt from `iam.disableServiceAccountKeyCreation`** and key upload policies.');
+  b.addBullet('**Truthful Live SA Impersonation Verification (`generateAccessToken`)**: When testing WiF impersonation (`/api/wizard/test-wif`), the console performs a live token exchange against the **Google Cloud IAM Credentials API** (`serviceAccounts.generateAccessToken`). If the caller or workforce pool lacks `roles/iam.serviceAccountTokenCreator` on the target service account, the test fails truthfully with actionable error context rather than simulating success.');
   b.addBullet('**Domain Sharing Validation**: Verifies that `iam.allowedPolicyMemberDomains` permits workforce pool principals (`is:principalSet://iam.googleapis.com/organizations/<org-id>`).');
   b.addBullet('**Live GCP Verification**: The Verify Live in GCP button tests workforce pools and OIDC providers directly in Google Cloud.');
 
@@ -1134,7 +1159,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
 
   b.addImage(
     'docs/images/13_auth_wif_wizard.png',
-    'Figure 2.10: Auth & Identity Provider Configuration Wizard with Org Policy Pre-Flight',
+    'Figure 2.9: Auth & Identity Provider Configuration Wizard with Org Policy Pre-Flight',
     560,
     350
   );

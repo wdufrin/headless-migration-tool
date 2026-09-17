@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.1</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.3</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -76,7 +76,11 @@
     </div>
 
     <!-- Active Environment Badge & Health -->
-    <div class="flex items-center space-x-4">
+    <div class="flex items-center space-x-3">
+      <button onclick="switchTab('wizard'); switchWizardTab('audit');" class="flex items-center space-x-1.5 text-xs bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 px-3 py-1.5 rounded-lg transition shadow-sm" title="Open Live Least-Privilege & IAM Permissions Auditor">
+        <span>🛡️</span>
+        <span class="font-medium">Permissions Auditor</span>
+      </button>
       <div id="healthBadge" class="flex items-center space-x-2 text-xs bg-gray-800/80 border border-gray-700 px-3 py-1.5 rounded-lg">
         <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
         <span class="text-gray-300 font-medium">API Service Online</span>
@@ -157,6 +161,13 @@
           </svg>
           <span>Target Maintenance</span>
         </button>
+
+        <button onclick="switchTab('wizard'); switchWizardTab('audit');" id="nav-permissions-auditor" class="nav-btn flex items-center space-x-3 w-full px-3 py-2 rounded-lg text-xs font-medium transition-all text-gray-400 hover:text-white hover:bg-gray-800">
+          <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+          <span>Permissions Auditor</span>
+        </button>
       </div>
 
       <div class="pt-6 border-t border-gray-800 mt-auto">
@@ -199,9 +210,49 @@
               <p class="text-xs text-gray-400 mt-0.5">Specify source and destination GCP environments for Gemini Enterprise</p>
             </div>
             <div class="flex items-center gap-2">
+              <button type="button" onclick="toggleSection('perm-info-studio-env')" class="px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-indigo-300 hover:text-indigo-200 rounded-lg transition border border-indigo-500/30 flex items-center gap-1.5 shadow-sm" title="View Permissions for Environment Discovery">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-studio-env-icon" class="text-[9px]">▼</span>
+              </button>
               <button type="button" onclick="toggleSection('sec-env-config')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-300 rounded-lg transition border border-gray-700 flex items-center gap-1.5">
                 <span id="sec-env-config-icon">▼</span> Toggle Section
               </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Environment Discovery Permissions Guide Card -->
+          <div id="perm-info-studio-env" class="hidden bg-gray-950/90 border border-indigo-500/40 rounded-xl p-4 text-xs space-y-3 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-indigo-500/20 text-indigo-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: Environment & Discovery Engine Access</h4>
+                  <p class="text-[11px] text-gray-400">Permissions required to populate engine dropdowns and verify source/target environments</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                <button type="button" onclick="toggleSection('perm-info-studio-env')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+              <div class="p-2.5 bg-gray-900 rounded-lg border border-gray-800 space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-blue-300 flex items-center gap-1"><span>📤</span> Source Project Discovery</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400"><code class="text-blue-300 font-mono">roles/discoveryengine.viewer</code> or <code class="text-blue-300 font-mono">admin</code> allows listing all engines and data stores to populate the dropdown automatically.</p>
+              </div>
+              <div class="p-2.5 bg-gray-900 rounded-lg border border-gray-800 space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-purple-300 flex items-center gap-1"><span>📥</span> Target Project Verification</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400"><code class="text-purple-300 font-mono">roles/discoveryengine.viewer</code> or <code class="text-purple-300 font-mono">admin</code> allows verifying the target engine exists and is reachable before starting migration.</p>
+              </div>
             </div>
           </div>
 
@@ -372,9 +423,59 @@
                 <div class="text-sm font-semibold text-gray-300 flex items-center gap-2">
                   <span>⚙️</span> Migration Scope, Sharing & Delegation
                 </div>
-                <button type="button" onclick="toggleSection('sec-scope-config')" class="text-xs font-semibold px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition border border-gray-700 flex items-center gap-1">
-                  <span id="sec-scope-config-icon">▼</span>
-                </button>
+                <div class="flex items-center gap-2">
+                  <button type="button" onclick="toggleSection('perm-info-studio-exec')" class="text-xs font-semibold px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-indigo-300 hover:text-indigo-200 rounded-lg transition border border-indigo-500/30 flex items-center gap-1.5 shadow-sm" title="View Migration Execution Permissions Reference">
+                    <span>🛡️</span>
+                    <span>Permissions Guide</span>
+                    <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                    <span id="perm-info-studio-exec-icon" class="text-[9px]">▼</span>
+                  </button>
+                  <button type="button" onclick="toggleSection('sec-scope-config')" class="text-xs font-semibold px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition border border-gray-700 flex items-center gap-1">
+                    <span id="sec-scope-config-icon">▼</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Collapsible Migration Execution Permissions Guide Card -->
+              <div id="perm-info-studio-exec" class="hidden bg-gray-900/90 border border-indigo-500/40 rounded-xl p-4 text-xs space-y-3 shadow-lg">
+                <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="p-1 bg-indigo-500/20 text-indigo-400 rounded-md">🛡️</span>
+                    <div>
+                      <h4 class="font-bold text-white text-xs">Section Permissions Guide: Migration Scope & Asset Restoration</h4>
+                      <p class="text-[11px] text-gray-400">Strictly Required permissions for writing and restoring assets in the destination</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                    <button type="button" onclick="toggleSection('perm-info-studio-exec')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+                  </div>
+                </div>
+
+                <div class="space-y-2 text-[11px]">
+                  <div class="p-2.5 bg-gray-950 rounded-lg border border-gray-800 space-y-1">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-emerald-300">Target Write Permissions (<code class="font-mono text-emerald-400">roles/discoveryengine.admin</code>)</span>
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                    </div>
+                    <p class="text-gray-400">Enables creating destination engines, datastores, custom agents, and restoring user notebooks. If unchecked or running in <strong class="text-amber-300">🧪 Dry Run</strong> mode, write permissions are not exercised.</p>
+                  </div>
+                  <div class="p-2.5 bg-gray-950 rounded-lg border border-gray-800 space-y-1">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-emerald-300">User Identity Impersonation (DWD or WiF STS)</span>
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                    </div>
+                    <p class="text-gray-400">Restoring private NotebookLM notebooks, chat sessions, and user memories under each user's real email identity requires active DWD delegation or Workforce Identity Federation. Without this, user-owned assets cannot be attributed to users.</p>
+                  </div>
+                  <div class="p-2.5 bg-gray-950 rounded-lg border border-gray-800 space-y-1">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-sky-300">Resume from Checkpoint Report</span>
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                    </div>
+                    <p class="text-gray-400">Allows resuming an interrupted migration from an existing report file without requiring re-migration of completed assets.</p>
+                  </div>
+                </div>
               </div>
               
               <div id="sec-scope-config" class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -467,7 +568,13 @@
                     <p class="text-[11px] text-gray-400">Discover active users with assets in source and choose precisely who to migrate</p>
                   </div>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button type="button" onclick="toggleSection('perm-info-studio-discovery')" class="text-xs font-semibold px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-indigo-300 hover:text-indigo-200 rounded-lg transition border border-indigo-500/30 flex items-center gap-1.5 shadow-sm" title="View User Discovery Permissions Reference">
+                    <span>🛡️</span>
+                    <span>Permissions Guide</span>
+                    <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                    <span id="perm-info-studio-discovery-icon" class="text-[9px]">▼</span>
+                  </button>
                   <div class="inline-flex rounded-lg shadow-sm">
                     <button type="button" onclick="discoverSourceUsers(true, 'single')" id="btnDiscoverUsers" title="Discover active users in the selected source app" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-l-lg text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
                       <span id="discoverUsersSpinner" class="hidden animate-spin">🌀</span>
@@ -485,6 +592,49 @@
                 </div>
               </div>
 
+              <!-- Collapsible User Discovery Permissions Guide Card -->
+              <div id="perm-info-studio-discovery" class="hidden bg-gray-900/90 border border-indigo-500/40 rounded-xl p-4 text-xs space-y-3 shadow-lg">
+                <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="p-1 bg-indigo-500/20 text-indigo-400 rounded-md">🛡️</span>
+                    <div>
+                      <h4 class="font-bold text-white text-xs">Section Permissions Guide: User Asset Discovery & Enumeration</h4>
+                      <p class="text-[11px] text-gray-400">Understanding required asset inspection vs. optional project IAM member enumeration</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL (FALLBACK ACTIVE)</span>
+                    <button type="button" onclick="toggleSection('perm-info-studio-discovery')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                  <div class="p-3 bg-gray-950 rounded-lg border border-gray-800 space-y-1.5">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-emerald-300">Discovery Engine Access (<code class="font-mono text-emerald-400">roles/discoveryengine.admin</code>)</span>
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                    </div>
+                    <p class="text-gray-400">Allows scanning all user-owned NotebookLM notebooks, assistant chat sessions, memories, and personal agent drafts in the source project.</p>
+                  </div>
+
+                  <div class="p-3 bg-gray-950 rounded-lg border border-gray-800 space-y-1.5">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-sky-300">Project IAM Enumeration (<code class="font-mono text-sky-300">roles/iam.securityReviewer</code>)</span>
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                    </div>
+                    <p class="text-gray-400">Enumerates project-level IAM bindings. <strong class="text-white">If missing, discovery does NOT fail:</strong> the tool gracefully falls back to discovering users from resource metadata, NotebookLM ownership ACLs, and session logs.</p>
+                  </div>
+                </div>
+
+                <div class="p-2.5 bg-indigo-950/40 border border-indigo-800/60 rounded-lg text-[11px] text-indigo-200 flex items-start gap-2">
+                  <span class="text-sm">💡</span>
+                  <div class="leading-relaxed">
+                    <strong class="text-white">Okta WiF & Enterprise Group Tip:</strong> When migrating from Okta Workforce Identity Federation, users mapped through Okta groups often do not have direct project IAM bindings. Use the <strong class="text-amber-300">📋 Bulk Paste Users</strong> button below to paste a list of user emails exported from Okta or Google Admin to include them in discovery and migration without any GCP IAM role changes!
+                  </div>
+                </div>
+              </div>
+
               <div id="sec-user-selection" class="space-y-3">
                 <!-- Discovery Diagnostics & Warning Banner -->
                 <div id="userDiscoveryWarnings" class="hidden p-3 bg-amber-950/40 border border-amber-800/60 rounded-lg text-xs text-amber-300 space-y-1"></div>
@@ -495,6 +645,26 @@
                   <button type="button" onclick="addCustomUserToSelection()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
                     <span>+</span> Add User
                   </button>
+                  <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.toggle('hidden')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-indigo-300 border border-indigo-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1" title="Paste a list of user emails exported from Okta or Google Admin">
+                    <span>📋</span> Bulk Paste Users
+                  </button>
+                </div>
+
+                <!-- Bulk Paste Users Panel (for Okta WiF / CSV Exports) -->
+                <div id="bulkUserImportPanel" class="hidden p-3 bg-gray-900/90 border border-indigo-500/30 rounded-lg space-y-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-indigo-300">Bulk Import User Emails (Okta WiF / CSV / Line-separated)</span>
+                    <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.add('hidden')" class="text-[11px] text-gray-400 hover:text-white">✕ Close</button>
+                  </div>
+                  <p class="text-[11px] text-gray-400">
+                    When migrating from Okta Workforce Identity Federation (WiF), users with private NotebookLM notebooks or group-mapped IAM policies may not appear in Project IAM enumeration. Paste any list of user emails below (separated by commas, spaces, or newlines) to include them in discovery and migration:
+                  </p>
+                  <textarea id="bulkUserEmailsTextarea" rows="3" placeholder="alice@company.com, bob@company.com&#10;charlie@company.com" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"></textarea>
+                  <div class="flex justify-end gap-2">
+                    <button type="button" onclick="addBulkUsersToSelection()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition">
+                      + Add All Emails to Scope
+                    </button>
+                  </div>
                 </div>
 
                 <!-- Interactive User Table -->
@@ -679,7 +849,13 @@
               </div>
               <p id="auditTimestampText" class="text-xs text-gray-400 mt-1">Compare Discovery Engine settings, Grounding DataStores, custom integrations, and IAM permissions to uncover gaps before migration.</p>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex items-center gap-2 shrink-0 flex-wrap">
+              <button type="button" onclick="toggleSection('perm-info-audit')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-indigo-300 hover:text-indigo-200 border border-indigo-500/30 rounded-lg transition flex items-center gap-1.5 shadow-sm" title="View Permissions for Configuration & Parity Audit">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-audit-icon" class="text-[9px]">▼</span>
+              </button>
               <button type="button" onclick="runConfigPreCheck()" id="btnAuditRerun" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1.5">
                 <span id="auditSpinner" class="hidden animate-spin">🌀</span>
                 <span>🔄 Run Pre-Check</span>
@@ -692,6 +868,101 @@
                 <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 Export JSON
               </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Config & Parity Permissions Guide Card -->
+          <div id="perm-info-audit" class="hidden bg-gray-950/90 border border-indigo-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-indigo-500/20 text-indigo-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: Configuration & Parity Audit</h4>
+                  <p class="text-[11px] text-gray-400">Strictly Required vs. Optional Roles for Read-Only Pre-Check (Zero Mutations)</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL (CONVENIENCE)</span>
+                <button type="button" onclick="toggleSection('perm-info-audit')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <!-- Identity Note -->
+            <div class="p-2.5 bg-blue-950/40 border border-blue-800/60 rounded-lg text-[11px] text-blue-200 flex items-start gap-2">
+              <span class="text-sm">🔒</span>
+              <div class="leading-relaxed">
+                <strong class="text-white">Safety Guarantee & Execution:</strong> 
+                The parity audit is <strong>100% read-only</strong>. It executes zero write operations, creates no resources, and modifies no IAM policies. It uses the credentials in <code class="text-amber-300 font-mono">sa-dwd-key.json</code> or your local workstation ADC.
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <!-- Source Project Requirements -->
+              <div class="border border-gray-800 rounded-lg p-3 bg-gray-900/60 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-blue-300 flex items-center gap-1.5">
+                    <span>📤</span> Source Environment Permissions
+                  </span>
+                  <span class="text-[10px] text-gray-400 font-mono">READ-ONLY</span>
+                </div>
+                <div class="space-y-1.5 text-[11px]">
+                  <div class="p-2 bg-gray-950 rounded border border-gray-800 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                      <code class="text-blue-300 font-mono font-bold">roles/discoveryengine.viewer</code>
+                    </div>
+                    <p class="text-gray-400">Allows reading source engine specifications, configurations, datastores, schemas, and serving controls.</p>
+                  </div>
+                  <div class="p-2 bg-gray-950 rounded border border-gray-800 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                      <code class="text-blue-300 font-mono font-bold">roles/serviceusage.serviceUsageConsumer</code>
+                    </div>
+                    <p class="text-gray-400">Allows consuming API quota when querying the source project.</p>
+                  </div>
+                  <div class="p-2 bg-gray-950 rounded border border-gray-800 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                      <code class="text-sky-300 font-mono font-bold">roles/iam.securityReviewer</code>
+                    </div>
+                    <p class="text-gray-400">Allows comparing IAM role bindings. If missing, IAM comparison is skipped while all resource parity audits run smoothly.</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Target Project Requirements -->
+              <div class="border border-gray-800 rounded-lg p-3 bg-gray-900/60 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-purple-300 flex items-center gap-1.5">
+                    <span>📥</span> Target Environment Permissions
+                  </span>
+                  <span class="text-[10px] text-gray-400 font-mono">READ-ONLY</span>
+                </div>
+                <div class="space-y-1.5 text-[11px]">
+                  <div class="p-2 bg-gray-950 rounded border border-gray-800 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                      <code class="text-purple-300 font-mono font-bold">roles/discoveryengine.viewer</code>
+                    </div>
+                    <p class="text-gray-400">Allows inspecting target engines and datastores to identify parity gaps and missing configurations.</p>
+                  </div>
+                  <div class="p-2 bg-gray-950 rounded border border-gray-800 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                      <code class="text-purple-300 font-mono font-bold">roles/serviceusage.serviceUsageConsumer</code>
+                    </div>
+                    <p class="text-gray-400">Enables API quota consumption on the target project.</p>
+                  </div>
+                  <div class="p-2 bg-gray-950 rounded border border-gray-800 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                      <code class="text-sky-300 font-mono font-bold">roles/iam.securityReviewer</code>
+                    </div>
+                    <p class="text-gray-400">Inspects target project IAM policies. If omitted, target IAM parity is skipped without breaking the audit.</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -913,7 +1184,13 @@
               <h2 class="text-lg font-bold text-white">Migration Certificate & Audit Report</h2>
               <p id="reportTimestamp" class="text-xs text-gray-400">No report loaded yet. Run a migration from the Studio tab.</p>
             </div>
-            <div class="flex items-center gap-2" id="reportActions">
+            <div class="flex items-center gap-2 flex-wrap" id="reportActions">
+              <button type="button" onclick="toggleSection('perm-info-report')" class="px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-blue-300 hover:text-blue-200 rounded-lg transition border border-blue-500/30 flex items-center gap-1.5 shadow-sm" title="View Report Storage & Permissions Reference">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-1.5 py-0.5 rounded font-mono">0 Cloud Perms</span>
+                <span id="perm-info-report-icon" class="text-[9px]">▼</span>
+              </button>
               <button onclick="downloadReport('markdown')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200 border border-gray-700 rounded-lg transition flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 Download Markdown (.md)
@@ -922,6 +1199,32 @@
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 Download JSON (.json)
               </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Report Permissions Guide Card -->
+          <div id="perm-info-report" class="hidden bg-gray-950/90 border border-blue-500/40 rounded-xl p-4 text-xs space-y-3 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-blue-500/20 text-blue-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: Migration Reports & Certificates</h4>
+                  <p class="text-[11px] text-gray-400">Local audit storage architecture and security boundary</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">0 CLOUD PERMISSIONS REQUIRED</span>
+                <button type="button" onclick="toggleSection('perm-info-report')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 text-[11px] text-gray-300 space-y-2">
+              <p>
+                <strong class="text-emerald-300">100% Local Filesystem Execution:</strong> All migration execution certificates, parity audit summaries, and historical logs are persisted directly on your local workstation filesystem under <code class="text-amber-300 font-mono">./reports/</code> and <code class="text-amber-300 font-mono">./artifacts/</code>.
+              </p>
+              <p class="text-gray-400">
+                Viewing, filtering, downloading JSON/Markdown reports, or verifying migration hashes requires <strong>zero Google Cloud Platform (GCP) or Google Workspace permissions</strong>. No outbound API calls are made from this tab.
+              </p>
             </div>
           </div>
 
@@ -1121,8 +1424,50 @@
               </h2>
               <p class="text-xs text-gray-400 mt-1">Isolate, inspect, test, and migrate a specific user between Identity Providers (e.g. Entra ID / Okta ➔ Google Workspace)</p>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 flex-wrap">
+              <button type="button" onclick="toggleSection('perm-info-single-user')" class="px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-indigo-300 hover:text-indigo-200 border border-indigo-500/30 rounded-lg transition flex items-center gap-1.5 shadow-sm" title="View Single User Sandbox Permissions Reference">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-single-user-icon" class="text-[9px]">▼</span>
+              </button>
               <span class="text-xs bg-indigo-950 text-indigo-300 border border-indigo-800 px-3 py-1.5 rounded-lg font-mono">1-to-1 User Isolation Mode</span>
+            </div>
+          </div>
+
+          <!-- Collapsible Single User Sandbox Permissions Guide Card -->
+          <div id="perm-info-single-user" class="hidden bg-gray-950/90 border border-indigo-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-indigo-500/20 text-indigo-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: Single User & IdP Transition Sandbox</h4>
+                  <p class="text-[11px] text-gray-400">Requirements for 1-to-1 cross-identity migration (e.g. Okta / Entra ➔ Google Workspace)</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                <button type="button" onclick="toggleSection('perm-info-single-user')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-blue-300">Source Identity & Discovery</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires <code class="text-blue-300 font-mono">roles/discoveryengine.viewer</code> or <code class="text-blue-300 font-mono">admin</code> on the Source project. If user has private assets, active WiF or Source DWD is required to impersonate their source identity.</p>
+              </div>
+
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-emerald-300">Target Identity & Restoration</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires <code class="text-emerald-400 font-mono">roles/discoveryengine.admin</code> on the Target project. To restore personal notebooks into the destination under the target user's identity, active Target DWD or Target WiF is required.</p>
+              </div>
             </div>
           </div>
 
@@ -1415,7 +1760,13 @@
               </h2>
               <p class="text-xs text-gray-400 mt-1">Discover, preview, and restore user conversation histories and sidebar titles into the target Gemini Enterprise app.</p>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 flex-wrap">
+              <button type="button" onclick="toggleSection('perm-info-sessions')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-cyan-300 hover:text-cyan-200 border border-cyan-500/30 rounded-xl transition flex items-center gap-1.5 shadow-sm" title="View Chat Sessions Permissions Reference">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-sessions-icon" class="text-[9px]">▼</span>
+              </button>
               <button onclick="loadSourceSessions()" id="btnDiscoverSessions" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl text-xs font-semibold border border-gray-700 transition flex items-center gap-2">
                 <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1434,6 +1785,42 @@
                 </svg>
                 <span>🎯 Verify Target Sessions</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Chat Sessions Permissions Guide Card -->
+          <div id="perm-info-sessions" class="hidden bg-gray-950/90 border border-cyan-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-cyan-500/20 text-cyan-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: User Chat History & Sessions</h4>
+                  <p class="text-[11px] text-gray-400">Permissions required to export and restore user multi-turn conversation threads</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                <button type="button" onclick="toggleSection('perm-info-sessions')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-cyan-300">Discover Source Sessions</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires <code class="text-blue-300 font-mono">roles/discoveryengine.viewer</code> or <code class="text-blue-300 font-mono">admin</code> on the Source project to enumerate user chat session IDs and conversation turns.</p>
+              </div>
+
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-emerald-300">Restore Sessions in Target</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires <code class="text-emerald-400 font-mono">roles/discoveryengine.admin</code> on Target project + active DWD/WiF user token delegation so restored chat threads appear in the respective user's history.</p>
+              </div>
             </div>
           </div>
 
@@ -1520,7 +1907,13 @@
               </h2>
               <p class="text-xs text-gray-400 mt-1">Discover, preview, and export all generated slide presentations, interactive Canvas dashboards, and media files across the enterprise.</p>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 flex-wrap">
+              <button type="button" onclick="toggleSection('perm-info-artifacts')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-pink-300 hover:text-pink-200 border border-pink-500/30 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="View Artifacts Gallery Permissions Reference">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-pink-950 text-pink-300 border border-pink-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-artifacts-icon" class="text-[9px]">▼</span>
+              </button>
               <button onclick="loadDiscoveredArtifacts()" id="btnScanArtifacts" class="px-4 py-2 bg-pink-600/20 hover:bg-pink-600 text-pink-300 hover:text-white border border-pink-500/30 rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-pink-600/10">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1533,6 +1926,42 @@
                 </svg>
                 <span>📦 Export All Artifacts to Disk</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Artifacts Permissions Guide Card -->
+          <div id="perm-info-artifacts" class="hidden bg-gray-950/90 border border-pink-500/40 rounded-xl p-4 text-xs space-y-3 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-pink-500/20 text-pink-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: User Artifacts Gallery & Exporter</h4>
+                  <p class="text-[11px] text-gray-400">Permissions for discovering and downloading user-generated canvas docs and slides</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">SCAN: READ REQUIRED</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">EXPORT: LOCAL ONLY</span>
+                <button type="button" onclick="toggleSection('perm-info-artifacts')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-pink-300">🔍 Scan User Artifacts</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires <code class="text-blue-300 font-mono">roles/discoveryengine.viewer</code> or <code class="text-blue-300 font-mono">admin</code> on the Source project to query session turns and extract canvas widgets, slide decks, and generated media.</p>
+              </div>
+
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-emerald-300">📦 Export Artifacts to Disk</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">ZERO GCP WRITE PERMS</span>
+                </div>
+                <p class="text-gray-400">Exports all presentations and canvas documents into the local <code class="text-purple-300 font-mono">./artifacts/</code> directory. Requires local filesystem write access only; zero cloud mutation permissions needed.</p>
+              </div>
             </div>
           </div>
 
@@ -1667,7 +2096,13 @@
               </h2>
               <p class="text-xs text-gray-400 mt-1">Generate personalized post-migration action checklists, bundle user artifacts into local folders, and test email dispatching.</p>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 flex-wrap">
+              <button type="button" onclick="toggleSection('perm-info-handover')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-semibold border border-amber-500/30 transition flex items-center gap-1.5 shadow-sm" title="View Handover & Email Permissions Reference">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-amber-950 text-amber-300 border border-amber-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-handover-icon" class="text-[9px]">▼</span>
+              </button>
               <button onclick="loadUserReports()" id="btnRefreshUserReports" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl text-xs font-semibold border border-gray-700 transition flex items-center gap-2">
                 <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -1680,6 +2115,52 @@
                 </svg>
                 <span>📦 Generate / Update All User Folders</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Handover & Dispatcher Permissions Guide Card -->
+          <div id="perm-info-handover" class="hidden bg-gray-950/90 border border-amber-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-amber-500/20 text-amber-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: Handover & Email Dispatcher</h4>
+                  <p class="text-[11px] text-gray-400">Requirements for local bundle generation, user email notifications, and decommission scripts</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">EMAIL: REQUIRED</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">BUNDLES: ZERO CLOUD PERMS</span>
+                <button type="button" onclick="toggleSection('perm-info-handover')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-amber-300 flex items-center gap-1.5"><span>✉️</span> Automated Email Dispatch</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED FOR EMAIL</span>
+                </div>
+                <p class="text-gray-400">Sending handover emails directly to users requires the Google Workspace DWD scope <code class="text-amber-300 font-mono">https://www.googleapis.com/auth/gmail.send</code> authorized in <code class="text-gray-300 font-mono">admin.google.com</code>.</p>
+                <div class="pt-1">
+                  <button type="button" onclick="copyToClipboardText('https://www.googleapis.com/auth/gmail.send', this)" class="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono">Copy Scope URL</button>
+                </div>
+              </div>
+
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-emerald-300 flex items-center gap-1.5"><span>📦</span> Local Handover Bundles & Folders</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">ZERO GCP PERMISSIONS</span>
+                </div>
+                <p class="text-gray-400">Generating user folders, HTML action checklists, and Markdown reports in <code class="text-purple-300 font-mono">./user_handover_reports/</code> runs entirely on local disk. No cloud credentials or Gmail APIs are required.</p>
+              </div>
+            </div>
+
+            <div class="p-2.5 bg-gray-900 rounded-lg border border-gray-800 text-[11px] text-gray-300 flex items-start gap-2">
+              <span class="text-sm">🛡️</span>
+              <div>
+                <strong class="text-white">Decommissioning Scripts:</strong> The script generator produces copyable <code class="text-cyan-300 font-mono">gcloud</code> terminal commands for administrators to run manually after a grace period. The migration app itself never executes destructive project deletions automatically.
+              </div>
             </div>
           </div>
 
@@ -1932,7 +2413,169 @@
                   <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">1</span>
                   <h3 class="text-sm font-bold text-white">Create GCP Service Account & Key</h3>
                 </div>
-                <span class="text-xs text-gray-400 font-mono">Google Cloud Console / CLI</span>
+                <div class="flex items-center gap-2">
+                  <button type="button" onclick="toggleSection('perm-info-dwd')" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-indigo-300 hover:text-indigo-200 rounded-lg text-xs font-semibold border border-indigo-500/30 transition flex items-center gap-1.5 shadow-sm" title="View Required vs Optional Permissions for Domain-Wide Delegation">
+                    <span>🛡️</span>
+                    <span>Permissions Guide</span>
+                    <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                    <span id="perm-info-dwd-icon" class="text-[9px]">▼</span>
+                  </button>
+                  <span class="text-xs text-gray-400 font-mono">Google Cloud Console / CLI</span>
+                </div>
+              </div>
+
+              <!-- Collapsible DWD Permissions Guide Card -->
+              <div id="perm-info-dwd" class="hidden bg-gray-900/90 border border-indigo-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+                <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="p-1 bg-indigo-500/20 text-indigo-400 rounded-md">🛡️</span>
+                    <div>
+                      <h4 class="font-bold text-white text-xs">Section Permissions Guide: Domain-Wide Delegation (DWD)</h4>
+                      <p class="text-[11px] text-gray-400">Strictly Required vs. Optional IAM Roles and Google Workspace Scopes</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL (CONVENIENCE)</span>
+                    <button type="button" onclick="toggleSection('perm-info-dwd')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+                  </div>
+                </div>
+
+                <!-- Executing Identity Note -->
+                <div class="p-2.5 bg-indigo-950/40 border border-indigo-800/60 rounded-lg text-[11px] text-indigo-200 flex items-start gap-2">
+                  <span class="text-sm">🔑</span>
+                  <div>
+                    <strong class="text-white">Executing Identity:</strong> The migration service account (<code class="text-amber-300 font-mono">sa-dwd-key.json</code>) executes these actions. User impersonation tokens are authorized by a Google Workspace Super Admin via <code class="text-purple-300 font-mono">admin.google.com</code>. Your local user credentials (ADC) are not used for DWD token minting.
+                  </div>
+                </div>
+
+                <div class="space-y-3">
+                  <!-- Target Project IAM -->
+                  <div class="border border-gray-800 rounded-lg p-3 bg-gray-950/70 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-purple-300 flex items-center gap-1.5">
+                        <span>📥</span> Target GCP Project IAM (Destination & Service Account Home)
+                      </span>
+                      <span class="text-[10px] text-gray-400 font-mono">TARGET GCP PROJECT</span>
+                    </div>
+                    <div class="space-y-2 text-[11px]">
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-emerald-400 font-mono font-bold">roles/discoveryengine.admin</code>
+                          </div>
+                          <p class="text-gray-400">Allows service account to create and restore Discovery Engines, Datastores, user-owned NotebookLM notebooks, and chat sessions in the target project.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_TARGET_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/discoveryengine.admin\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-emerald-400 font-mono font-bold">roles/iam.serviceAccountTokenCreator</code>
+                          </div>
+                          <p class="text-gray-400">Allows the service account to sign JWTs and self-generate short-lived access tokens required to impersonate workspace users.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud iam service-accounts add-iam-policy-binding YOUR_SA_EMAIL --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/iam.serviceAccountTokenCreator\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-emerald-400 font-mono font-bold">roles/serviceusage.serviceUsageConsumer</code>
+                          </div>
+                          <p class="text-gray-400">Grants quota access on the target project to invoke Google Cloud Discovery Engine APIs without 403 quota errors.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_TARGET_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/serviceusage.serviceUsageConsumer\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Source Project IAM -->
+                  <div class="border border-gray-800 rounded-lg p-3 bg-gray-950/70 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-blue-300 flex items-center gap-1.5">
+                        <span>📤</span> Source GCP Project IAM (Cross-Project Inspection & Discovery)
+                      </span>
+                      <span class="text-[10px] text-gray-400 font-mono">SOURCE GCP PROJECT</span>
+                    </div>
+                    <div class="space-y-2 text-[11px]">
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-blue-400 font-mono font-bold">roles/discoveryengine.admin</code> <span class="text-gray-400">or</span> <code class="text-blue-400 font-mono font-bold">roles/discoveryengine.viewer</code>
+                          </div>
+                          <p class="text-gray-400">Required for cross-project reading and exporting of source engines, datastores, assistant notebooks, drafts, and session histories.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_SOURCE_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/discoveryengine.admin\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-blue-400 font-mono font-bold">roles/serviceusage.serviceUsageConsumer</code>
+                          </div>
+                          <p class="text-gray-400">Required when source project quota is requested. The tool includes automatic fallback to target project quota if source quota is denied.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_SOURCE_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/serviceusage.serviceUsageConsumer\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                            <code class="text-sky-400 font-mono font-bold">roles/iam.securityReviewer</code>
+                          </div>
+                          <p class="text-gray-400">Enumerates project-level IAM users during discovery. <strong class="text-gray-200">If omitted, the tool automatically falls back to scanning resource ownership metadata, NotebookLM ACLs, and session logs without errors.</strong></p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_SOURCE_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/iam.securityReviewer\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Google Workspace Admin Console DWD Scopes -->
+                  <div class="border border-gray-800 rounded-lg p-3 bg-gray-950/70 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-amber-300 flex items-center gap-1.5">
+                        <span>🏢</span> Google Workspace Admin Console DWD Scopes (admin.google.com)
+                      </span>
+                      <span class="text-[10px] text-gray-400 font-mono">WORKSPACE DOMAIN</span>
+                    </div>
+                    <div class="space-y-2 text-[11px]">
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-amber-300 font-mono">https://www.googleapis.com/auth/discoveryengine.readwrite</code>
+                          </div>
+                          <p class="text-gray-400">Grants permission to impersonate users to restore user-owned NotebookLM notebooks, search apps, and personal datastores.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('https://www.googleapis.com/auth/discoveryengine.readwrite', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Scope</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-amber-300 font-mono">https://www.googleapis.com/auth/discoveryengine.assist.readwrite</code>
+                          </div>
+                          <p class="text-gray-400">Grants permission to access and restore user chat sessions, memories, and personal agent drafts.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('https://www.googleapis.com/auth/discoveryengine.assist.readwrite', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Scope</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                            <code class="text-sky-300 font-mono">https://www.googleapis.com/auth/gmail.send</code>
+                          </div>
+                          <p class="text-gray-400">Only needed if sending automated post-migration handover notification emails directly to users in Step 4. If using local zip export, this scope is not needed.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('https://www.googleapis.com/auth/gmail.send', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Scope</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
               
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
@@ -2104,13 +2747,134 @@
                   <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">2</span>
                   <h3 class="text-sm font-bold text-white">Workforce Identity Pool Parameters</h3>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button type="button" onclick="toggleSection('perm-info-wif')" class="px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-purple-300 hover:text-purple-200 border border-purple-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="View Required vs Optional Permissions for Workforce Identity Federation">
+                    <span>🛡️</span>
+                    <span>Permissions Guide</span>
+                    <span class="text-[10px] bg-purple-950 text-purple-300 border border-purple-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                    <span id="perm-info-wif-icon" class="text-[9px]">▼</span>
+                  </button>
                   <button type="button" onclick="autoDiscoverWif(this)" id="btnAutoDiscoverWif" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
                     <span>⚡</span> Auto-Discover Environment
                   </button>
                   <button type="button" onclick="verifyWifPoolInGcp(this)" id="btnVerifyWifPool" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
                     <span>🔍</span> Verify Live in GCP
                   </button>
+                </div>
+              </div>
+
+              <!-- Collapsible WiF Permissions Guide Card -->
+              <div id="perm-info-wif" class="hidden bg-gray-900/90 border border-purple-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+                <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="p-1 bg-purple-500/20 text-purple-400 rounded-md">🛡️</span>
+                    <div>
+                      <h4 class="font-bold text-white text-xs">Section Permissions Guide: Workforce Identity Federation (WiF)</h4>
+                      <p class="text-[11px] text-gray-400">Strictly Required vs. Optional IAM Roles for Organization, Projects & Runtime STS</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL (CONVENIENCE)</span>
+                    <button type="button" onclick="toggleSection('perm-info-wif')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+                  </div>
+                </div>
+
+                <!-- Executing Identity Note -->
+                <div class="p-2.5 bg-purple-950/40 border border-purple-800/60 rounded-lg text-[11px] text-purple-200 flex items-start gap-2">
+                  <span class="text-sm">💡</span>
+                  <div class="leading-relaxed">
+                    <strong class="text-white">Active Identity Distinction:</strong> 
+                    Auto-discovery in this wizard uses your <strong class="text-purple-300">workstation gcloud user login (ADC)</strong>.
+                    In contrast, <strong class="text-emerald-300">actual migration execution uses Google STS with local RSA keys</strong> (<code class="text-amber-300 font-mono">workforce-identity-config.json</code>). 
+                    <strong class="text-white">Zero Organization-level roles are required during migration runtime!</strong>
+                  </div>
+                </div>
+
+                <div class="space-y-3">
+                  <!-- GCP Organization Level IAM -->
+                  <div class="border border-gray-800 rounded-lg p-3 bg-gray-950/70 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-purple-300 flex items-center gap-1.5">
+                        <span>🏢</span> GCP Organization Level IAM (Setup Wizard Convenience Only)
+                      </span>
+                      <span class="text-[10px] text-gray-400 font-mono">ORGANIZATION LEVEL</span>
+                    </div>
+                    <div class="space-y-2 text-[11px]">
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                            <code class="text-sky-300 font-mono font-bold">roles/resourcemanager.organizationViewer</code>
+                          </div>
+                          <p class="text-gray-400">Allows 1-click auto-discovery of your numeric GCP Organization ID. <strong class="text-gray-200">If omitted, simply type your numeric Org ID directly into the input box below.</strong></p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud organizations add-iam-policy-binding YOUR_ORG_ID --member=\x22user:YOUR_EMAIL\x22 --role=\x22roles/resourcemanager.organizationViewer\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                            <code class="text-sky-300 font-mono font-bold">roles/iam.workforcePoolViewer</code>
+                          </div>
+                          <p class="text-gray-400">Allows auto-populating existing Workforce Pools and Providers in the dropdowns. <strong class="text-gray-200">If omitted, simply type your Workforce Pool ID and Provider ID manually.</strong></p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud organizations add-iam-policy-binding YOUR_ORG_ID --member=\x22user:YOUR_EMAIL\x22 --role=\x22roles/iam.workforcePoolViewer\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                            <code class="text-sky-300 font-mono font-bold">roles/iam.workforcePoolAdmin</code>
+                          </div>
+                          <p class="text-gray-400">Allows 1-click registering the RSA provider from the UI. <strong class="text-gray-200">If omitted, an Organization Admin can copy and run the generated gcloud terminal command once.</strong></p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud organizations add-iam-policy-binding YOUR_ORG_ID --member=\x22user:YOUR_EMAIL\x22 --role=\x22roles/iam.workforcePoolAdmin\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Source & Target GCP Projects IAM -->
+                  <div class="border border-gray-800 rounded-lg p-3 bg-gray-950/70 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-emerald-300 flex items-center gap-1.5">
+                        <span>🎯</span> Project IAM (Discovery & Migration Execution)
+                      </span>
+                      <span class="text-[10px] text-gray-400 font-mono">TARGET & SOURCE PROJECTS</span>
+                    </div>
+                    <div class="space-y-2 text-[11px]">
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-emerald-400 font-mono font-bold">roles/discoveryengine.admin</code>
+                          </div>
+                          <p class="text-gray-400">Bound to the Target Project for restoring engines, datastores, and notebooks. Also bound to Source Project for discovery.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_TARGET_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/discoveryengine.admin\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-emerald-400 font-mono font-bold">roles/serviceusage.serviceUsageConsumer</code>
+                          </div>
+                          <p class="text-gray-400">Allows calling Discovery Engine APIs using target project billing quota.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_TARGET_PROJECT --member=\x22serviceAccount:YOUR_SA_EMAIL\x22 --role=\x22roles/serviceusage.serviceUsageConsumer\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-900 rounded border border-gray-800">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                            <code class="text-emerald-400 font-mono font-bold">principalSet:// Workforce Pool Binding</code>
+                          </div>
+                          <p class="text-gray-400">Grants federated users Discovery Engine access: <code class="text-purple-300 font-mono">principalSet://iam.googleapis.com/locations/global/workforcePools/POOL_ID/attribute.user_id/*</code> bound to <code class="text-emerald-400 font-mono">roles/discoveryengine.admin</code>.</p>
+                        </div>
+                        <button type="button" onclick="copyToClipboardText('gcloud projects add-iam-policy-binding YOUR_TARGET_PROJECT --member=\x22principalSet://iam.googleapis.com/locations/global/workforcePools/YOUR_POOL_ID/attribute.user_id/*\x22 --role=\x22roles/discoveryengine.admin\x22', this)" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[10px] font-mono shrink-0">Copy Command</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -2241,10 +3005,63 @@
                     <p class="text-[11px] text-gray-400">Verifies required discovery & restore permissions, flags over-provisioned risky OAuth scopes, and evaluates Google SAIF compliance.</p>
                   </div>
                 </div>
-                <button type="button" onclick="runPermissionAudit()" id="btnRunPermissionAudit" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-md shadow-emerald-600/20 transition flex items-center gap-1.5 self-start sm:self-auto">
-                  <span id="auditSpinner" class="hidden animate-spin">⏳</span>
-                  <span>🔍 Run Live Security & IAM Audit</span>
-                </button>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button type="button" onclick="toggleSection('perm-info-auditor')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="View Auditor Probes & Permissions Reference">
+                    <span>🛡️</span>
+                    <span>Permissions Guide</span>
+                    <span class="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                    <span id="perm-info-auditor-icon" class="text-[9px]">▼</span>
+                  </button>
+                  <button type="button" onclick="runPermissionAudit()" id="btnRunPermissionAudit" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-md shadow-emerald-600/20 transition flex items-center gap-1.5 self-start sm:self-auto">
+                    <span id="auditSpinner" class="hidden animate-spin">⏳</span>
+                    <span>🔍 Run Live Security & IAM Audit</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Collapsible Auditor Permissions Reference Card -->
+              <div id="perm-info-auditor" class="hidden bg-gray-900/90 border border-emerald-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+                <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="p-1 bg-emerald-500/20 text-emerald-400 rounded-md">🛡️</span>
+                    <div>
+                      <h4 class="font-bold text-white text-xs">Section Permissions Guide: Least-Privilege Probe Matrix</h4>
+                      <p class="text-[11px] text-gray-400">Understanding which audit probes are strictly blocking vs. non-blocking advisory warnings</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL (ADVISORY)</span>
+                    <button type="button" onclick="toggleSection('perm-info-auditor')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div class="p-3 bg-gray-950/80 border border-emerald-800/40 rounded-lg space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-emerald-300">✅ Required Probes (Blocking)</span>
+                      <span class="text-[10px] font-mono text-gray-500">CANNOT MIGRATE WITHOUT</span>
+                    </div>
+                    <ul class="space-y-1.5 text-[11px] text-gray-300">
+                      <li>• <strong class="text-white">Target Write Access:</strong> <code class="text-emerald-400 font-mono">roles/discoveryengine.admin</code> — blocks if target cannot accept restored notebooks, engines, and datastores.</li>
+                      <li>• <strong class="text-white">Source Read Access:</strong> <code class="text-blue-400 font-mono">roles/discoveryengine.viewer</code> or <code class="text-blue-400 font-mono">admin</code> — blocks if source engine configs and datastores cannot be read.</li>
+                      <li>• <strong class="text-white">Service Usage:</strong> <code class="text-emerald-400 font-mono">roles/serviceusage.serviceUsageConsumer</code> — blocks if Google Cloud rejects API calls with quota errors.</li>
+                      <li>• <strong class="text-white">Delegated Token Minting:</strong> DWD private key signature or WiF STS token exchange — blocks if user impersonation is unavailable.</li>
+                    </ul>
+                  </div>
+
+                  <div class="p-3 bg-gray-950/80 border border-sky-800/40 rounded-lg space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-sky-300">ℹ️ Optional Probes (Advisory Only)</span>
+                      <span class="text-[10px] font-mono text-gray-500">GRACEFUL DEGRADATION</span>
+                    </div>
+                    <ul class="space-y-1.5 text-[11px] text-gray-300">
+                      <li>• <strong class="text-white">Project IAM Enumeration:</strong> <code class="text-sky-300 font-mono">roles/iam.securityReviewer</code> — non-blocking! If missing, user discovery automatically scans asset ownership tags, ACLs, and chat logs.</li>
+                      <li>• <strong class="text-white">Workspace Gmail Scope:</strong> <code class="text-sky-300 font-mono">gmail.send</code> — non-blocking! Only needed if dispatching automated email notifications in Step 4.</li>
+                      <li>• <strong class="text-white">Broad Scopes Warning:</strong> If <code class="text-amber-300 font-mono">cloud-platform</code> is detected instead of least-privilege <code class="text-emerald-400 font-mono">discoveryengine.readwrite</code>, the auditor warns against over-scoping per SAIF standards.</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
 
               <!-- Two-Column Environment Audit Configuration -->
@@ -2448,14 +3265,67 @@
       <!-- TAB 6: DESTINATION MAINTENANCE & PLATFORM DECOMMISSION -->
       <section id="tab-maintenance" class="tab-content space-y-6 hidden">
         <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-6">
-          <div class="border-b border-gray-800 pb-4">
-            <h2 class="text-lg font-bold text-white flex items-center gap-2 text-red-400">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              Target Maintenance & Platform Decommission
-            </h2>
-            <p class="text-xs text-gray-400 mt-1">Manage target environment asset resets and complete migration app decommissioning to return Google Cloud and your local workstation to their pre-setup states.</p>
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2 text-red-400">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Target Maintenance & Platform Decommission
+              </h2>
+              <p class="text-xs text-gray-400 mt-1">Manage target environment asset resets and complete migration app decommissioning to return Google Cloud and your local workstation to their pre-setup states.</p>
+            </div>
+            <div>
+              <button type="button" onclick="toggleSection('perm-info-maintenance')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-rose-300 hover:text-rose-200 border border-rose-500/30 rounded-xl transition flex items-center gap-1.5 shadow-sm" title="View Target Maintenance & Rollback Permissions">
+                <span>🛡️</span>
+                <span>Permissions Guide</span>
+                <span class="text-[10px] bg-rose-950 text-rose-300 border border-rose-800 px-1.5 py-0.5 rounded font-mono">Req vs Opt</span>
+                <span id="perm-info-maintenance-icon" class="text-[9px]">▼</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Maintenance Permissions Guide Card -->
+          <div id="perm-info-maintenance" class="hidden bg-gray-950/90 border border-rose-500/40 rounded-xl p-4 text-xs space-y-3.5 shadow-lg">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="p-1 bg-rose-500/20 text-rose-400 rounded-md">🛡️</span>
+                <div>
+                  <h4 class="font-bold text-white text-xs">Section Permissions Guide: Target Maintenance & Rollback</h4>
+                  <p class="text-[11px] text-gray-400">Permissions required to reset target assets, rollback tests, or decommission local credentials</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED (BLOCKING)</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-950 text-sky-300 border border-sky-700/60">OPTIONAL</span>
+                <button type="button" onclick="toggleSection('perm-info-maintenance')" class="text-gray-400 hover:text-white text-xs font-mono ml-2">✕ Close</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-rose-300">Target Asset Deletion & Reset</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires <code class="text-rose-300 font-mono">roles/discoveryengine.admin</code> on the Target Project to purge test engines, data stores, and custom agents during cleanup cycles.</p>
+              </div>
+
+              <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-emerald-300">User Notebook & Session Rollback</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">REQUIRED</span>
+                </div>
+                <p class="text-gray-400">Requires active DWD or WiF STS impersonation to delete restored user-owned NotebookLM notebooks and conversation turns under specific user identities.</p>
+              </div>
+            </div>
+
+            <div class="p-2.5 bg-gray-900 rounded-lg border border-gray-800 text-[11px] text-gray-300 flex items-start gap-2">
+              <span class="text-sm">💻</span>
+              <div>
+                <strong class="text-white">Local Workstation Decommissioning:</strong> Purging local RSA keys (<code class="text-amber-300 font-mono">wif-migration-key.pem</code>), key files (<code class="text-amber-300 font-mono">sa-dwd-key.json</code>), and cache artifacts from disk requires local filesystem write access only.
+              </div>
+            </div>
           </div>
 
           <!-- CARD 1: RESET TARGET PROJECT (WHAT WE HAVE TODAY) -->
@@ -4328,7 +5198,7 @@ gcloud projects add-iam-policy-binding "${tgtProj}" \\
     --role="roles/serviceusage.serviceUsageConsumer"
 
 # ==============================================================================
-# 3. SOURCE PROJECT PERMISSIONS (MANDATORY: Read & discover source engines/datastores)
+# 3. SOURCE PROJECT PERMISSIONS (MANDATORY: Read & discover source engines/datastores/users)
 # ==============================================================================
 gcloud projects add-iam-policy-binding "${srcProj}" \\
     --member="serviceAccount:${saEmail}" \\
@@ -4337,6 +5207,10 @@ gcloud projects add-iam-policy-binding "${srcProj}" \\
 gcloud projects add-iam-policy-binding "${srcProj}" \\
     --member="serviceAccount:${saEmail}" \\
     --role="roles/serviceusage.serviceUsageConsumer"
+
+gcloud projects add-iam-policy-binding "${srcProj}" \\
+    --member="serviceAccount:${saEmail}" \\
+    --role="roles/iam.securityReviewer"
 
 # ==============================================================================
 # 4. GENERATE & DOWNLOAD SA KEY (saved locally as sa-dwd-key.json)
@@ -4415,7 +5289,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       }
 
       try {
-        const res = await fetch('/api/wizard/wif-discovery');
+        const manualOrg = document.getElementById('wizWifOrgId')?.value?.trim() || '';
+        const query = (manualOrg && !manualOrg.includes('<') && manualOrg !== '123456789012')
+          ? `?orgId=${encodeURIComponent(manualOrg)}`
+          : '';
+        const res = await fetch(`/api/wizard/wif-discovery${query}`);
         const data = await res.json();
         discoveredWifData = data;
 
@@ -4601,13 +5479,27 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           </div>
         </div>
 
+        ${(data.warnings && data.warnings.length > 0) ? `
+        <div class="p-2.5 rounded-lg bg-amber-950/40 border border-amber-700/60 text-amber-200 text-[11px] space-y-1">
+          <div class="font-bold flex items-center gap-1.5 text-amber-300">
+            <span>⚠️</span><span>Organization IAM Permissions Notice:</span>
+          </div>
+          <ul class="list-disc list-inside space-y-0.5 pl-1 text-amber-200/90">
+            ${data.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+          </ul>
+          <div class="pt-1 text-[10px] text-amber-300/80 font-mono bg-black/40 p-1.5 rounded border border-amber-900/50">
+            gcloud organizations add-iam-policy-binding &lt;ORG_ID&gt; --member="user:${escapeHtml(data.callerEmail || 'admin@company.com')}" --role="roles/iam.workforcePoolViewer"
+          </div>
+        </div>
+        ` : ''}
+
         <div>
           <div class="text-[11px] font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
             <span>Discovered Workforce Pools in Organization:</span>
             <span class="text-[10px] text-gray-400">Click a pool to select</span>
           </div>
           <div class="flex flex-wrap gap-2">
-            ${poolPills || '<span class="text-gray-400 italic text-[11px]">No workforce pools found in organization. Run terminal command below to create one.</span>'}
+            ${poolPills || '<span class="text-gray-400 italic text-[11px]">No workforce pools found in organization. Enter Organization ID & Pool ID manually below or grant roles/iam.workforcePoolViewer at the Organization level.</span>'}
           </div>
         </div>
 
@@ -6132,6 +7024,39 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         renderUserSelectionTable();
       } else {
         alert(`User ${email} is already in the list.`);
+      }
+    }
+
+    function addBulkUsersToSelection() {
+      const textarea = document.getElementById('bulkUserEmailsTextarea');
+      const raw = textarea?.value || '';
+      const emails = raw
+        .split(/[\s,;]+/)
+        .map(e => e.trim())
+        .filter(e => e.includes('@') && e.length > 3);
+
+      if (emails.length === 0) {
+        alert('No valid email addresses found in the text area.');
+        return;
+      }
+
+      let addedCount = 0;
+      for (const email of emails) {
+        if (!targetedUsersList.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+          targetedUsersList.push({
+            email: email,
+            selected: true,
+            sources: ['Bulk Imported (Admin)']
+          });
+          addedCount++;
+        }
+      }
+
+      if (textarea) textarea.value = '';
+      document.getElementById('bulkUserImportPanel')?.classList.add('hidden');
+      renderUserSelectionTable();
+      if (typeof previewAutoMapping === 'function' && getActiveDomainRules().length > 0) {
+        previewAutoMapping();
       }
     }
 

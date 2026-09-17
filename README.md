@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.5.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.3-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.1-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.3-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -13,6 +13,22 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
+> * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.5.3
+
+* **🔒 Least-Privilege DWD User Impersonation Scopes**:
+  * Upgraded Google Workspace Domain-Wide Delegation (DWD) impersonation flow to default strictly to Discovery Engine least-privilege scopes (`discoveryengine.readwrite`, `discoveryengine.assist.readwrite`).
+  * Prevents `unauthorized_client` errors for customer Google Workspace environments where super-admins have whitelisted Discovery Engine OAuth scopes in `admin.google.com` without granting broad `cloud-platform` scope.
+  * Added resilient multi-tier scope step-down fallback on `unauthorized_client`.
+* **🔑 Resilient Token Cache Partitioning**:
+  * User impersonation token cache now partitions by execution mode (`DWD`, `WIF`, `ADMIN`) and requested scope sets, guaranteeing zero token collision across authentication modes or cross-project boundaries.
+* **📚 Enterprise Documentation & Console Parity**:
+  * Synchronized all installation, user guides, setup schemas, and web console badges to v1.5.3 (Enterprise Release).
+* **🧪 Test Suite Stability (106/106 Tests Passing)**:
+  * Full 106 automated tests passing across 14 test suites with 100% success rate.
 
 ---
 
@@ -74,6 +90,9 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ## 📋 Table of Contents
 
+- [What's New in v1.5.3](#-whats-new-in-v153)
+- [What's New in v1.5.1](#-whats-new-in-v151)
+- [What's New in v1.5.0](#-whats-new-in-v150)
 - [What's New in v1.4.1](#-whats-new-in-v141)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
@@ -82,17 +101,16 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
   - [2. IAM Roles & Permissions](#2-iam-roles--permissions)
   - [3. Service Account & Domain-Wide Delegation (DWD)](#3-service-account--domain-wide-delegation-dwd-setup)
   - [4. Workforce Identity Federation (WiF for Entra ID / Okta)](#4-workforce-identity-federation-wif-setup)
-- [How to Run Locally on Administrator Workstation](#-how-to-run-locally-on-administrator-workstation)
+- [How to Run Locally on Administrator Workstation](#-how-to-run-locally)
   - [Step 1: Installation](#step-1-installation)
   - [Step 2: Authentication Setup](#step-2-authentication-setup)
   - [Step 3: Launch Local Web Console](#step-3-launch-local-web-console)
   - [Step 4: Headless CLI Execution](#step-4-headless-cli-execution)
   - [Step 5: Automated E2E Permutations Test Suite](#step-5-automated-e2e-permutations-test-suite)
-- [Web Console Feature Tour (`http://localhost:8080`)](#-web-console-feature-tour)
+- [Web Console Feature Tour (`http://127.0.0.1:8080`)](#-web-console-feature-tour)
 - [Local Workstation Security & Isolation](#-local-workstation-security--isolation)
 - [Configuration Reference (`migration-config.json`)](#-configuration-reference-migration-configjson)
 - [User Handover, SSO Gateway & Email Notification Engine](#-user-handover-sso-gateway--email-notification-engine)
-- [Architecture & InfoSec Compliance](#-architecture--infosec-compliance)
 - [Google Cloud Quotas & Rate Limiting](#-google-cloud-quotas--rate-limiting)
 - [Automated Testing](#-automated-testing)
 
@@ -159,33 +177,57 @@ gcloud services enable discoveryengine.googleapis.com \
 
 ### 2. IAM Roles & Permissions
 
-The migration administrator or execution service account requires the following roles:
+The migration administrator or execution service account requires roles across **both** the Source and Target environments:
 
 | Project | Required IAM Role | Purpose |
 | :--- | :--- | :--- |
-| **Source Project** | `roles/discoveryengine.viewer` | Read-only discovery of source custom agents, notebooks, datastores, and chat sessions. |
+| **Source Project** | `roles/discoveryengine.admin` *(or `viewer`)* | Read-only discovery of source engines, schemas, custom agents, notebooks, datastores, and chat sessions. |
+| **Source Project** | `roles/serviceusage.serviceUsageConsumer` | Authorizes Discovery Engine API consumption and pre-flight parity checks on the source project. |
+| **Source Project** | `roles/iam.securityReviewer` | Allows enumerating project-level IAM bindings (`resourcemanager.projects.getIamPolicy`) during User Discovery. |
 | **Target Project** | `roles/discoveryengine.admin` | Create and restore target engines, datastores, custom agents, notebooks, and chat sessions. |
-| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Create user-impersonated OAuth2 tokens via Domain-Wide Delegation (DWD). |
+| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Create user-impersonated OAuth2 tokens via Domain-Wide Delegation (DWD) or WiF SA impersonation. |
+| **Target Project** | `roles/serviceusage.serviceUsageConsumer` | Authorizes Discovery Engine API consumption checks on the target project. |
 
 ---
 
 ### 3. Service Account & Domain-Wide Delegation (DWD) Setup
 
-To restore assets and send handover emails on behalf of Google Workspace users:
+To discover source assets, restore target assets, and send handover emails on behalf of users:
 
-#### A. Create the Service Account in GCP:
+#### A. Create the Service Account & Bind Cross-Project IAM Roles in GCP:
 ```bash
-# Create Service Account
+# 1. Create Service Account in Target Project
 gcloud iam service-accounts create gemini-dwd-migrator \
     --display-name="Gemini Enterprise Migration Service Account" \
     --project=<TARGET_PROJECT_ID>
 
-# Grant Discovery Engine Admin role
+# 2. Grant roles on TARGET Project (Restore & Token Minting)
 gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
     --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
     --role="roles/discoveryengine.admin"
 
-# Generate Service Account Key
+gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+    --role="roles/iam.serviceAccountTokenCreator"
+
+gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+    --role="roles/serviceusage.serviceUsageConsumer"
+
+# 3. Grant roles on SOURCE Project (MANDATORY for Cross-Project Discovery & Parity Audit)
+gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+    --role="roles/discoveryengine.admin"
+
+gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+    --role="roles/serviceusage.serviceUsageConsumer"
+
+gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \
+    --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+    --role="roles/iam.securityReviewer"
+
+# 4. Generate Service Account Key
 gcloud iam service-accounts keys create sa-dwd-key.json \
     --iam-account="gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com"
 ```
@@ -351,39 +393,42 @@ npm run test:e2e-matrix
 
 ---
 
-## 🖥️ Web Console Feature Tour
+## 🖥️ Web Console Feature Tour (`http://127.0.0.1:8080`)
 
-The local Web Console provides 6 dedicated modules:
+The local Web Console is structured as a sequential 6-step administrative wizard:
 
-1. **🚀 Migration Studio**:
-   - Interactive engine picker for Source and Target GCP environments.
-   - Dynamic asset discovery with user selection table.
-   - Context-aware Cross-IdP transformation matrix with preset domain rules.
-   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and live progress across Notebooks, Sources, Agents, Skills, Chat Sessions, and Memories.
-2. **🔍 Configuration Pre-Check & Gap Audit**:
+1. **Step 1: 🔐 Auth & Identity Provider Wizard (`#wizard`)**:
+   - **🔑 DWD Wizard**: Multi-project setup accepting Source and Target GCP Project IDs, automated `gcloud` IAM command generator for both environments, OAuth scope clipboard, live impersonation test, automated **🛡️ Org Policy Pre-Flight**, and **⚡ 1-Click Project-Level Policy Override** for `iam.disableServiceAccountKeyCreation`.
+   - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, live IAM Credentials API (`generateAccessToken`) verification, and **Keyless Architecture Assessment** highlighting 100% immunity to key creation blocks.
+   - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, audits target organization policies, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
+2. **Step 2: 🔍 Configuration Pre-Check & Gap Audit (`#audit`)**:
+   - Interactive Source and Target environment selector cards (Project ID, Region, Collection, Engine/App ID) with real-time bi-directional synchronization to Migration Studio.
+   - Guided empty-state guardrail preventing premature blank audits.
    - Pre-flight gap audit dashboard with 0–100% Parity Readiness Score gauge and status badges (`Ready`, `Action Recommended`, `Critical Gaps`).
    - Side-by-side engine feature flag comparison matrix (Memory, Agent Gallery, Skills, Audio, Canvas, Observability, TTL).
    - 1-Click "Sync Target Engine Settings" button to automatically align target feature flags via Discovery Engine PATCH API.
-   - Attached DataStore Parity audit with status badges (`MATCH`, `WARNING` for unattached target stores, and `MISSING_IN_TARGET`).
-   - Automated remediation to attach provisioned DataStores to target engines (`PATCH /engines/${appId}?updateMask=dataStoreIds`).
-   - Deterministic copy-ready CLI remediation snippets with one-click clipboard copying and visual confirmation.
-3. **📊 Latest Report & Historical Runs**:
+   - Attached DataStore Parity audit with automated remediation and copy-ready CLI snippets.
+   - Prominent `Next: Proceed to Step 3: Migration Studio ➔` wizard transition.
+3. **Step 3: 🚀 Migration Studio (`#studio`)**:
+   - Synchronized Source and Target GCP environment pickers and asset scope selectors (Notebooks, Custom Agents, User Skills, Chat Sessions, Memories, Studio Artifacts).
+   - Dynamic asset discovery with user selection table.
+   - Context-aware Cross-IdP transformation matrix with preset domain rules.
+   - Streamlined execution bar (`⚡ Execute Pre-Flight Dry Run` / `⚡ Execute Live Migration` and `← Step 2: Config & Parity Audit` back-link).
+   - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and progress bars.
+4. **Step 4: 📊 Latest Report & Historical Runs (`#reports`)**:
    - View and search comprehensive migration certificates and audit tables.
    - Executive KPIs tracking discovered, migrated, and failed counts for both notebooks and individual sources.
    - Dedicated **Section 5: Notebook Sources Breakdown & Integrity Audit** detailing every source document, parent notebook, type, status, and error logs.
    - Export reports in both human-readable Markdown (`.md`) and structured JSON (`.json`).
-4. **📬 User Handover & Email Dispatch**:
-   - Individual user checklists with deep links to target Gemini Enterprise apps.
+5. **Step 5: 📬 User Handover & Email Dispatch (`#handover`)**:
+   - Individual user checklists with deep links to target Gemini Enterprise apps and skipped-asset warning indicators.
    - Visual status badges (`📄 X Sources Ready`, `⚠️ Y Failed`) with expandable `<details>` accordions listing all source documents.
    - Step 1 First-Time Login and Connector Authorization (Google Workspace, M365, Jira, etc.) walkthroughs.
    - One-click handover dispatch via Gmail API or SMTP with optional staging recipient overrides.
-5. **🔐 Auth & Identity Provider Wizard**:
-   - **🔑 DWD Wizard**: Step-by-step setup, scope clipboard, live impersonation test, automated **🛡️ Org Policy Pre-Flight**, and **⚡ 1-Click Project-Level Policy Override** for `iam.disableServiceAccountKeyCreation`.
-   - **🌐 WiF Wizard**: IdP presets (Entra ID, Okta, Ping), pool parameter generator, live token test, and **Keyless Architecture Assessment** highlighting 100% immunity to key creation blocks.
-   - **🛡️ Permissions & Least-Privilege Auditor**: Evaluates required vs over-provisioned permissions, audits target organization policies, outputs letter grade (A/B/C/F), checks Google SAIF compliance, and provides 1-click IAM policy auto-fix buttons.
-6. **🧹 Dual-Action Target Maintenance & Platform Decommissioning**:
+6. **Step 6: 🧹 Target Maintenance & Platform Decommissioning (`#maintenance`)**:
    - **Button 1: Reset Target Project Assets**: Purges migrated target project assets (notebooks, custom agents, chat history, user memories, reports, artifacts) for test iteration resets.
    - **Button 2: Clean Up Install & Decommission Migration App**: Complete uninstaller that deletes the migration service account, removes GCP IAM roles, resets any overridden organization policies (`iam.disableServiceAccountKeyCreation`) back to inherited parent defaults, automatically invalidates Google Workspace DWD, wipes all local credential/JSON files, and purges output folders to restore the workstation and GCP project to their pre-setup baseline.
+   - **Automated Rollback Verification Engine**: Live 7-dimension audit (`🔍 Verify Rollback State`) proving cloud and local baseline cleanliness.
 
 ---
 
@@ -439,8 +484,8 @@ Designed to run **strictly on the administrator's local machine**:
     "targetIdp": "GOOGLE_CLOUD_IDENTITY",
     "domainRules": [
       {
-        "sourceDomain": "onmicrosoft.com",
-        "targetDomain": "company.com"
+        "fromDomain": "onmicrosoft.com",
+        "toDomain": "company.com"
       }
     ]
   },
@@ -493,10 +538,10 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
-The platform includes an extensive automated test suite with **74 tests across 10 test suites** covering authentication, Agent Registry skills discovery/filtering, configuration gap audits, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, and E2E execution flows:
+The platform includes an extensive automated test suite with **106 automated tests across 14 test suites** covering authentication, cross-project parity audits, Agent Registry skills discovery/filtering, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
 
 ```bash
-# Run complete unit and integration test suite (74 tests across 10 suites)
+# Run complete unit and integration test suite (106 tests across 14 suites)
 npm test
 
 # Run End-to-End matrix permutations test (DWD/WiF permutations)

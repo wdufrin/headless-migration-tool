@@ -1,27 +1,49 @@
 {
   "source": {
-    "projectId": "gemini-enterprise-test-project",
+    "projectId": "gemini-enterprise-source-project",
     "appLocation": "global",
     "collectionId": "default_collection",
-    "appId": "ge-assistant-app",
+    "appId": "ge-assistant-app-source",
     "assistantId": "default_assistant"
   },
   "target": {
-    "projectId": "gemini-enterprise-prod-project",
+    "projectId": "gemini-enterprise-target-project",
     "appLocation": "global",
     "collectionId": "default_collection",
-    "appId": "ge-assistant-app-prod",
+    "appId": "ge-assistant-app-target",
     "assistantId": "default_assistant"
+  },
+  "auth": {
+    "authType": "SERVICE_ACCOUNT_KEY",
+    "serviceAccountKeyPath": "./sa-dwd-key.json"
   },
   "options": {
     "migrateNotebooks": true,
     "migrateAgents": true,
+    "migrateSkills": true,
+    "migrateSessions": true,
+    "migrateMemories": true,
+    "exportMemories": true,
+    "exportArtifacts": true,
+    "agentTypes": ["ALL"],
+    "publishAgents": false,
     "dryRun": false,
     "concurrency": 10,
     "userFilter": ["*@company.com"],
     "preserveOwnership": true,
+    "preserveSharing": true,
     "allowOverwrite": false,
     "logLevel": "INFO"
+  },
+  "idpMapping": {
+    "sourceIdp": "ENTRA_ID",
+    "targetIdp": "GOOGLE_CLOUD_IDENTITY",
+    "domainRules": [
+      {
+        "fromDomain": "onmicrosoft.com",
+        "toDomain": "company.com"
+      }
+    ]
   },
   "datastoreMapping": {
     "test-hr-policy-datastore": "prod-hr-policy-datastore",
@@ -33,5 +55,5 @@
   "identityMapping": {
     "user:john.doe@test-tenant.com": "user:john.doe@company.com"
   },
-  "defaultOwnerFallback": "admin-sa@gemini-enterprise-prod-project.iam.gserviceaccount.com"
+  "defaultOwnerFallback": "admin-sa@gemini-enterprise-target-project.iam.gserviceaccount.com"
 }

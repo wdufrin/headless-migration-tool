@@ -1,7 +1,7 @@
 # 📘 Gemini Enterprise Admin Migration Platform
 ## Administrator & Operator User Guide
 
-**Document Version:** `v1.5.1 (Enterprise Release)`  
+**Document Version:** `v1.5.3 (Enterprise Release)`  
 **Target Audience:** Cloud Architects, Migration Operators & IT Administrators  
 **Supported Assets:** Research Notebooks, Grounding Sources, Custom Agents, Chat Sessions, Personalized Memories & Studio Artifacts  
 **Handover Formats:** Interactive Checklists, Single-ZIP Archives, Office PPTX/DOCX, Offline HTML5 Apps  
@@ -23,35 +23,40 @@ The **Gemini Enterprise Admin Migration Platform** empowers Google Cloud adminis
 
 ---
 
-## 2. Pre-Migration Parity Audit & Gap Remediation
+## 2. Pre-Migration Parity Audit & Gap Remediation (Step 2)
 
-Before executing a migration run, administrators should execute a Configuration Pre-Check to ensure that the target environment has all required feature toggles, security settings, and DataStores configured to support the migrated assets.
+Before executing a migration run, administrators execute a Configuration Pre-Check in **Step 2: Config & Parity Audit** (`#audit`) to verify that the target environment has all required feature toggles, security settings, and DataStores configured to support the migrated assets.
 
 > [!WARNING]
 > **Why Configuration Parity Matters**: Migrating custom agents or notebooks that reference missing DataStores or disabled platform features (such as user memories or skill sharing) can cause silent runtime errors for end users. The Parity Audit catches these gaps beforehand.
 
-Navigate to the **Config Pre-Check & Gaps** tab on the left navigation bar and click **Run Pre-Check**. The system analyzes more than 100 configuration points and computes a **Parity Readiness Score** (0–100%).
+### Interactive Step 2 Environment Selector & Bi-Directional Sync
+* **Direct Environment Configuration**: Step 2 features interactive Source and Target environment cards allowing administrators to directly configure Source Project ID, Region, Collection, and Engine/App ID as well as Target Project ID, Region, Collection, and Engine/App ID.
+* **Real-Time Bi-Directional Synchronization**: Any configuration changed in Step 2 automatically synchronizes to Step 3 (Migration Studio), and vice-versa.
+* **Guided Empty-State Guardrail**: Prevents premature API calls when project IDs are unconfigured, guiding the operator with actionable instructions.
+* **Parity Readiness Score (0–100%)**: Click **Run Pre-Check** to analyze more than 100 configuration points across feature flags and attached DataStores.
+* **Wizard Progression**: Click **`Next: Proceed to Step 3: Migration Studio ➔`** at the bottom of the audit report to carry configured environments directly into Migration Studio.
 
 ![Figure 2.1: Configuration Pre-Check & Gap Audit Screen](images/03_config_precheck_gaps.png)
 *Figure 2.1: Configuration Pre-Check & Gap Audit Screen with Parity Readiness Score*
 
 ### Actionable Gap Remediation Plan
-For any detected discrepancies, the console generates ready-to-run Google Cloud CLI commands. Administrators can copy these commands with a single click and execute them in Cloud Shell or a terminal.
+For any detected discrepancies, the console offers a **1-Click Sync Target Engine Settings** button (`PATCH` API) and generates ready-to-run Google Cloud CLI commands. Administrators can copy these commands with a single click and execute them in Cloud Shell or a terminal.
 
 ![Figure 2.2: Actionable Gap Remediation Plan](images/04_gap_remediation_cli.png)
 *Figure 2.2: Actionable Gap Remediation Plan with 1-Click Copyable CLI Commands*
 
 ---
 
-## 3. Migration Pipeline Configuration
+## 3. Migration Pipeline Configuration (Step 3: Migration Studio)
 
-On the **Migration Studio** tab, specify the Source and Target environment parameters:
+On the **Migration Studio** (`#studio`) tab, review or adjust the synchronized Source and Target environment parameters:
 
 * **Source Project ID**: The GCP project hosting current Gemini Enterprise assets (e.g. `ancient-sandbox-322523`).
 * **Source Region**: Geographic location (`global`, `eu`, `us-central1`).
 * **Source Engine / App ID**: Dropdown auto-populated with discovered engines.
 * **Source Identity Provider**: Select between `Google Workspace / Cloud Identity (DWD)` or `Microsoft Entra ID (Workforce Identity Federation)`.
-* **Target Project ID & Region**: The destination environment (e.g. `ancient-sandbox-test-1`).
+* **Target Project ID & Region**: The destination environment (e.g. `testgebackupandrestorev3`).
 * **Target Identity Provider**: Destination authentication provider.
 
 ![Figure 2.3: Migration Pipeline Configuration](images/01_pipeline_configuration.png)
@@ -67,6 +72,7 @@ Administrators can selectively include or exclude specific asset categories to t
 | :--- | :--- | :--- | :--- |
 | **Migrate Notebooks & Sources** | Research Notebooks & Grounding Docs | Enabled (Checked) | Restores notebooks and re-indexes all attached PDFs, URLs, and YouTube videos |
 | **Migrate Custom Agents** | Low-Code & Workflow Agents | Enabled (Checked) | Deep-copies agent instructions, tools, and datastores as native editable drafts |
+| **Migrate User Skills** | User-Created Skills in Agent Registry | Enabled (Checked) | Migrates custom skills in `agentregistry.googleapis.com` while ignoring built-in 1P Google templates |
 | **Migrate Multi-User Chat History** | Chat Conversation History | Enabled (Checked) | Rehydrates chronological chat sessions into the target Gemini sidebar |
 | **Migrate User Memories & Facts** | Personalized Facts & Profiles | Enabled (Checked) | Discovers and exports memory facts to local JSON backup and target library |
 | **Export & Archive User Artifacts** | Studio Outputs & Presentations | Enabled (Checked) | Generates `.pptx` decks, `.docx` study guides, `.html` apps, and `.mp4` videos |
@@ -138,12 +144,14 @@ To deliver a seamless day-one onboarding experience, the platform packages each 
 
 ---
 
-## 9. Auth & Identity Provider Configuration Wizard (DWD & WiF)
+## 9. Auth & Identity Provider Configuration Wizard (Step 1: DWD & WiF)
 
-The **Auth & WiF Wizard** provides an interactive, guided interface to configure and test authentication protocols across Google Workspace and external Identity Providers (Microsoft Entra ID, Okta, Ping).
+The **Auth & WiF Wizard** (`#wizard`) provides an interactive, guided interface to configure and test authentication protocols across Google Workspace and external Identity Providers (Microsoft Entra ID, Okta, Ping).
 
-### 9.1 Domain-Wide Delegation (DWD) & Org Policy Inspection
+### 9.1 Domain-Wide Delegation (DWD) & Cross-Project IAM Generator
 When configuring Google Workspace Domain-Wide Delegation in Step 1:
+* **Dual Project Topology Input**: Accepts both **Source GCP Project ID** and **Target GCP Project ID** (`wizDwdSrcProject` and `wizDwdProject`), automatically synchronizing with Step 2 and Step 3.
+* **Cross-Project IAM Command Generator**: Generates copy-paste ready `gcloud` CLI commands granting `roles/discoveryengine.admin` and `roles/serviceusage.serviceUsageConsumer` across **both** Source and Target environments, along with an Architecture Explainer clarifying user impersonation vs administrative pipeline permissions.
 * **`🛡️ Check Org Policies`**: Performs live inspection of target project organization policies (`iam.disableServiceAccountKeyCreation`, `iam.disableCrossProjectServiceAccountUsage`, and `iam.allowedPolicyMemberDomains`).
 * **Conflict Detection**: If `iam.disableServiceAccountKeyCreation` is active, an alert banner warns the operator before executing CLI commands that creating `sa-dwd-key.json` will fail.
 * **⚡ 1-Click Project Override**: Operators holding `roles/orgpolicy.policyAdmin` can click the 1-Click Project Override button to automatically apply a project-scoped exemption (`enforce: false`) without modifying parent organizational policies.
@@ -152,6 +160,7 @@ When configuring Google Workspace Domain-Wide Delegation in Step 1:
 ### 9.2 Workforce Identity Federation (WiF) — Keyless Enterprise Path
 For organizations operating under strict Zero-Trust or keyless security baselines:
 * **Keyless Architecture**: WiF exchanges external OIDC/SAML tokens with Google Cloud Security Token Service (`sts.googleapis.com`) to mint short-lived tokens and is **100% exempt from `iam.disableServiceAccountKeyCreation`** and key upload policies.
+* **Truthful Live SA Impersonation Verification (`generateAccessToken`)**: When testing WiF impersonation (`/api/wizard/test-wif`), the console performs a live token exchange against the **Google Cloud IAM Credentials API** (`serviceAccounts.generateAccessToken`). If the caller or workforce pool lacks `roles/iam.serviceAccountTokenCreator` on the target service account, the test fails truthfully with actionable error context rather than simulating success.
 * **Domain Sharing Validation**: Verifies that `iam.allowedPolicyMemberDomains` permits workforce pool principals (`is:principalSet://iam.googleapis.com/organizations/<org-id>`).
 * **Live GCP Verification**: The `🔍 Verify Live in GCP` button tests workforce pools and OIDC providers directly in Google Cloud.
 

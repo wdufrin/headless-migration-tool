@@ -164,24 +164,75 @@ export class GcpAuthService {
   }
 
   /**
+   * Returns the home GCP project_id of the loaded Service Account key (if any).
+   * Used as the fallback quota project (X-Goog-User-Project) when cross-project
+   * requests fail with 403 USER_PROJECT_DENIED.
+   */
+  getServiceAccountProjectId(): string | undefined {
+    return this.serviceAccountKey?.project_id;
+  }
+
+  /**
    * Retrieves an active GCP access token.
    * If forUserEmail is specified and a Service Account with Domain-Wide Delegation is configured,
    * mints a user-impersonated OAuth2 token (subject: forUserEmail) so resources are created
    * with literal user ownership.
    */
-  async getAccessToken(forUserEmail?: string, scopes?: string[]): Promise<string> {
+  async getAccessToken(forUserEmail?: string, scopes?: string[], preferredMode?: 'DWD' | 'WIF'): Promise<string> {
     const cleanEmail = typeof forUserEmail === 'string' ? forUserEmail.replace(/^user:/i, '').trim() : undefined;
     const requestedScopes = scopes && scopes.length > 0 ? scopes : [
       'https://www.googleapis.com/auth/cloud-platform',
       'https://www.googleapis.com/auth/discoveryengine.readwrite',
       'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
     ];
-    const cacheKey = `${cleanEmail || 'default'}_${requestedScopes.slice().sort().join(',')}`;
+    // For Google Workspace DWD user impersonation, default strictly to least-privilege Discovery Engine scopes
+    // so Workspace admins who did not authorize cloud-platform in admin.google.com do not get unauthorized_client.
+    const dwdScopes = scopes && scopes.length > 0 ? scopes : [
+      'https://www.googleapis.com/auth/discoveryengine.readwrite',
+      'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+    ];
+    const effectiveMode = preferredMode || (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' ? 'WIF' : 'DWD');
+    const cacheKey = `${cleanEmail || 'default'}_${cleanEmail ? effectiveMode : 'ADMIN'}_${requestedScopes.slice().sort().join(',')}`;
 
     const cached = this.userTokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now() + 60000) {
       return cached.token;
     }
+
+    // Helper to mint DWD token with automatic scope fallback on unauthorized_client
+    const tryMintDwd = async (emailToImpersonate: string): Promise<string | null> => {
+      if (!this.serviceAccountKey) return null;
+      const scopeSetsToTry = [
+        dwdScopes,
+        ['https://www.googleapis.com/auth/discoveryengine.readwrite', 'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'],
+        ['https://www.googleapis.com/auth/discoveryengine.readwrite'],
+        ['https://www.googleapis.com/auth/cloud-platform']
+      ];
+      let lastErr: any = null;
+      for (const scopeSet of scopeSetsToTry) {
+        try {
+          const jwtClient = new JWT({
+            email: this.serviceAccountKey.client_email,
+            key: this.serviceAccountKey.private_key,
+            subject: emailToImpersonate,
+            scopes: scopeSet
+          });
+          const tokenResponse = await jwtClient.getAccessToken();
+          if (tokenResponse.token) {
+            logger.info(`Minted Google Workspace DWD Token for "${emailToImpersonate}" via ${this.serviceAccountKey.client_email}.`);
+            return tokenResponse.token;
+          }
+        } catch (err: any) {
+          lastErr = err;
+          if (!err.message?.includes('unauthorized_client')) {
+            // If invalid_grant (user does not exist in Google Workspace), break early
+            break;
+          }
+        }
+      }
+      if (lastErr) throw lastErr;
+      return null;
+    };
 
     // 1. User Impersonation Flow
     if (cleanEmail) {
@@ -195,6 +246,56 @@ export class GcpAuthService {
       );
 
       if (!isServiceIdentity) {
+        const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
+        let lastDwdError: Error | null = null;
+
+        if (effectiveMode === 'DWD' && !isExternalDomain && this.serviceAccountKey) {
+          // Try DWD first, then fallback to WiF
+          try {
+            const dwdToken = await tryMintDwd(cleanEmail);
+            if (dwdToken) {
+              this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
+              return dwdToken;
+            }
+          } catch (err: any) {
+            lastDwdError = err;
+            if (!this.failedDwdUsers.has(cleanEmail)) {
+              this.failedDwdUsers.add(cleanEmail);
+              logger.debug(`DWD impersonation note for ${cleanEmail} (${err.message}).`);
+            }
+          }
+          try {
+            const wifToken = await this.mintWorkforceToken(cleanEmail);
+            if (wifToken) {
+              this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
+              return wifToken;
+            }
+          } catch {}
+        } else {
+          // Try WiF first, then fallback to DWD
+          try {
+            const wifToken = await this.mintWorkforceToken(cleanEmail);
+            if (wifToken) {
+              this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
+              return wifToken;
+            }
+          } catch (wifErr: any) {
+            logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
+          }
+          if (this.serviceAccountKey && !isExternalDomain) {
+            try {
+              const dwdToken = await tryMintDwd(cleanEmail);
+              if (dwdToken) {
+                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
+                return dwdToken;
+              }
+            } catch (err: any) {
+              lastDwdError = err;
+            }
+          }
+        }
+
+        // 1.c Fallback: If DWD/WiF is not configured (or failed) AND target user matches active local gcloud caller
         const callerEmail = await this.getCallerIdentity().catch(() => undefined);
         if (callerEmail && callerEmail.toLowerCase() === lower) {
           if (this.staticToken) {
@@ -215,57 +316,6 @@ export class GcpAuthService {
             }
           } catch (err: any) {
             logger.warn(`Failed to obtain caller token via gcloud ADC: ${err.message}`);
-          }
-        }
-
-        // 1.a Workforce Identity Federation Impersonation (active if WIF configured or external domain)
-        const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
-        if (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' || isExternalDomain) {
-          try {
-            const wifToken = await this.mintWorkforceToken(cleanEmail);
-            if (wifToken) {
-              this.userTokenCache.set(cacheKey, {
-                token: wifToken,
-                expiresAt: Date.now() + 3000 * 1000
-              });
-              return wifToken;
-            }
-          } catch (wifErr: any) {
-            logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
-          }
-        }
-
-        // 1.b Domain-Wide Delegation Impersonation
-        let lastDwdError: Error | null = null;
-        if (this.serviceAccountKey && !isExternalDomain) {
-          try {
-            logger.debug(`Minting DWD impersonated token for user: ${cleanEmail} with scopes: ${requestedScopes.join(', ')}`);
-            const jwtClient = new JWT({
-              email: this.serviceAccountKey.client_email,
-              key: this.serviceAccountKey.private_key,
-              subject: cleanEmail,
-              scopes: requestedScopes
-            });
-
-            const tokenResponse = await jwtClient.getAccessToken();
-            if (tokenResponse.token) {
-              this.userTokenCache.set(cacheKey, {
-                token: tokenResponse.token,
-                expiresAt: Date.now() + 3000 * 1000
-              });
-              return tokenResponse.token;
-            }
-          } catch (err: any) {
-            lastDwdError = err;
-            if (!this.failedDwdUsers.has(cleanEmail)) {
-              this.failedDwdUsers.add(cleanEmail);
-              logger.warn(`DWD impersonation failed for ${cleanEmail} (${err.message}).`);
-            }
-            // Try WiF token minting as fallback before giving up
-            try {
-              const fallbackWifToken = await this.mintWorkforceToken(cleanEmail);
-              if (fallbackWifToken) return fallbackWifToken;
-            } catch {}
           }
         }
 

@@ -504,38 +504,93 @@ spec:
 });
 
 // Wizard: Auto-Discover Organizations, Workforce Pools, Providers, and Identities
-wizardRouter.get('/wizard/wif-discovery', async (_req, res) => {
+wizardRouter.get('/wizard/wif-discovery', async (req, res) => {
   try {
     const { execFile } = await import('child_process');
     const { promisify } = await import('util');
     const execFileAsync = promisify(execFile);
 
-    // 1. Caller identity
+    const requestedOrgId = ((req.query.orgId as string) || '').replace(/[^0-9]/g, '');
+    const warnings: string[] = [];
+
+    // Detected Local Service Account
+    let detectedSaEmail = '';
+    let detectedClientId = '';
+    if (fs.existsSync('./sa-dwd-key.json')) {
+      try {
+        const saData = JSON.parse(fs.readFileSync('./sa-dwd-key.json', 'utf-8'));
+        detectedSaEmail = saData.client_email || '';
+        detectedClientId = saData.client_id || '';
+      } catch {}
+    }
+
+    // 1. Caller identity (check active gcloud CLI account + SA key)
     let callerEmail = '';
     try {
       const { stdout } = await execFileAsync('gcloud', ['config', 'get-value', 'account']);
       callerEmail = stdout.trim();
     } catch {}
 
-    // 2. Organization Discovery
+    const authService = new GcpAuthService();
+    const token = await authService.getAccessToken().catch(() => null);
+
+    // 2. Organization Discovery (try gcloud CLI first, then REST API, or use manually provided orgId)
     let organization: { id: string; displayName: string; name: string } | null = null;
+    if (requestedOrgId) {
+      organization = {
+        id: requestedOrgId,
+        displayName: `Org ${requestedOrgId}`,
+        name: `organizations/${requestedOrgId}`
+      };
+    }
+
     try {
       const { stdout: orgsOut } = await execFileAsync('gcloud', ['organizations', 'list', '--format=json']);
       const orgs = JSON.parse(orgsOut || '[]');
       if (orgs.length > 0) {
+        const matched = requestedOrgId ? orgs.find((o: any) => o.name?.includes(requestedOrgId)) || orgs[0] : orgs[0];
         organization = {
-          id: orgs[0].name?.replace('organizations/', '') || '',
-          displayName: orgs[0].displayName || '',
-          name: orgs[0].name || ''
+          id: matched.name?.replace('organizations/', '') || '',
+          displayName: matched.displayName || '',
+          name: matched.name || ''
         };
       }
     } catch (orgErr: any) {
-      logger.debug(`Could not list organizations: ${orgErr.message}`);
+      logger.debug(`gcloud organizations list failed: ${orgErr.message}`);
     }
 
-    // 3. Workforce Pools Discovery
+    // Fallback to Cloud Resource Manager REST API if gcloud CLI returned no org
+    if (!organization && token) {
+      try {
+        const orgRes = await fetch('https://cloudresourcemanager.googleapis.com/v1/organizations:search', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (orgRes.ok) {
+          const orgData: any = await orgRes.json();
+          const orgs = orgData.organizations || [];
+          if (orgs.length > 0) {
+            organization = {
+              id: orgs[0].name?.replace('organizations/', '') || '',
+              displayName: orgs[0].displayName || '',
+              name: orgs[0].name || ''
+            };
+          }
+        } else if (orgRes.status === 403) {
+          warnings.push(`Caller lacks 'resourcemanager.organizations.get' ('roles/resourcemanager.organizationViewer') at the GCP Organization level to auto-discover Organization ID. Enter your Organization ID manually in Step 2 below.`);
+        }
+      } catch {}
+    }
+
+    if (!organization) {
+      warnings.push(`Could not auto-discover Google Cloud Organization ID. Workforce Identity Pools live at the GCP Organization root level—ensure your account has 'roles/resourcemanager.organizationViewer' or enter your 12-digit Organization ID manually.`);
+    }
+
+    // 3. Workforce Pools Discovery (try gcloud CLI first, then IAM REST API)
     const pools: Array<{ id: string; name: string; displayName?: string; description?: string; state?: string }> = [];
     if (organization?.id) {
+      let poolsListed = false;
       try {
         const { stdout: poolsOut } = await execFileAsync('gcloud', [
           'iam',
@@ -556,20 +611,36 @@ wizardRouter.get('/wizard/wif-discovery', async (_req, res) => {
             state: p.state
           });
         }
+        poolsListed = true;
       } catch (poolErr: any) {
-        logger.debug(`Could not list workforce pools: ${poolErr.message}`);
+        logger.debug(`gcloud workforce-pools list failed: ${poolErr.message}`);
+        if (poolErr.message?.includes('PERMISSION_DENIED') || poolErr.message?.includes('403')) {
+          warnings.push(`Caller (${callerEmail || detectedSaEmail || 'active identity'}) lacks 'iam.workforcePools.list' on organization '${organization.id}'. Grant 'roles/iam.workforcePoolViewer' or 'roles/iam.workforcePoolAdmin' at the GCP Organization level (organizations/${organization.id}), or enter your Workforce Pool ID manually.`);
+        }
       }
-    }
 
-    // 4. Detected Local Service Account
-    let detectedSaEmail = '';
-    let detectedClientId = '';
-    if (fs.existsSync('./sa-dwd-key.json')) {
-      try {
-        const saData = JSON.parse(fs.readFileSync('./sa-dwd-key.json', 'utf-8'));
-        detectedSaEmail = saData.client_email || '';
-        detectedClientId = saData.client_id || '';
-      } catch {}
+      if (!poolsListed && token) {
+        try {
+          const poolRes = await fetch(`https://iam.googleapis.com/v1/organizations/${encodeURIComponent(organization.id)}/locations/global/workforcePools`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (poolRes.ok) {
+            const poolData: any = await poolRes.json();
+            for (const p of poolData.workforcePools || []) {
+              const poolId = p.name?.split('/').pop() || '';
+              pools.push({
+                id: poolId,
+                name: p.name,
+                displayName: p.displayName,
+                description: p.description,
+                state: p.state
+              });
+            }
+          } else if (poolRes.status === 403 && warnings.length === 0) {
+            warnings.push(`Caller lacks 'iam.workforcePools.list' ('roles/iam.workforcePoolViewer') on organization '${organization.id}'. Workforce Pools are Organization-level resources.`);
+          }
+        } catch {}
+      }
     }
 
     // 5. Local WIF Key Status
@@ -588,7 +659,8 @@ wizardRouter.get('/wizard/wif-discovery', async (_req, res) => {
       success: true,
       organization,
       pools,
-      callerEmail,
+      warnings,
+      callerEmail: callerEmail || detectedSaEmail || 'Service Account / ADC',
       detectedSaEmail,
       detectedClientId,
       localKeys: {

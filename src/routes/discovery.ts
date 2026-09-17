@@ -131,18 +131,49 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
 
     const token = await authService.getAccessToken().catch(() => null);
     const baseUrl = getSafeDiscoveryEngineUrl(location);
+    const saHomeProject = authService.getServiceAccountProjectId();
+
+    const fetchWithQuotaFallback = async (url: string, init: RequestInit = {}): Promise<Response> => {
+      const headers: Record<string, string> = {
+        ...(init.headers as Record<string, string> || {}),
+        'Authorization': `Bearer ${token}`
+      };
+      if (projectId && !headers['X-Goog-User-Project']) {
+        headers['X-Goog-User-Project'] = projectId;
+      }
+
+      let resp = await fetch(url, { ...init, headers });
+      if (resp.status === 403) {
+        const cloneText = await resp.clone().text().catch(() => '');
+        const isQuotaErr = cloneText.includes('USER_PROJECT_DENIED') || cloneText.includes('serviceusage.services.use');
+        if (isQuotaErr) {
+          // 1. Try Service Account home project quota
+          if (saHomeProject && headers['X-Goog-User-Project'] !== saHomeProject) {
+            headers['X-Goog-User-Project'] = saHomeProject;
+            resp = await fetch(url, { ...init, headers });
+          }
+          // 2. If still quota denied, omit X-Goog-User-Project so GCP uses SA native billing project
+          if (resp.status === 403) {
+            const retryText = await resp.clone().text().catch(() => '');
+            if (retryText.includes('USER_PROJECT_DENIED') || retryText.includes('serviceusage.services.use')) {
+              delete headers['X-Goog-User-Project'];
+              resp = await fetch(url, { ...init, headers });
+            }
+          }
+        }
+      }
+      return resp;
+    };
 
     if (token) {
       // 0. Discover users directly from Google Cloud Project IAM Policy
       if (projectId) {
         try {
           const crmUrl = `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:getIamPolicy`;
-          const crmResp = await fetch(crmUrl, {
+          const crmResp = await fetchWithQuotaFallback(crmUrl, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'X-Goog-User-Project': projectId
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({})
           });
@@ -172,9 +203,16 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
               }
             }
           } else if (crmResp.status === 403) {
-            const warnMsg = `Service account lacks 'resourcemanager.projects.getIamPolicy' or 'roles/iam.securityReviewer' on project '${projectId}'. Project IAM members could not be enumerated.`;
-            logger.warn(warnMsg);
-            warnings.push(warnMsg);
+            const errBody = await crmResp.text().catch(() => '');
+            if (errBody.includes('USER_PROJECT_DENIED') || errBody.includes('serviceusage.services.use')) {
+              const warnMsg = `Service account lacks 'roles/serviceusage.serviceUsageConsumer' on project '${projectId}'. Grant this role on the Source Project to allow cross-project API quota consumption.`;
+              logger.warn(warnMsg);
+              warnings.push(warnMsg);
+            } else {
+              const warnMsg = `Service account lacks 'resourcemanager.projects.getIamPolicy' ('roles/iam.securityReviewer') on project '${projectId}'. Project-level IAM policy enumeration was skipped (Note: Discovery Engine Custom Agents and Chat Sessions are still scanned via 'roles/discoveryengine.admin').`;
+              logger.warn(warnMsg);
+              warnings.push(warnMsg);
+            }
           }
         } catch (crmErr: any) {
           logger.debug(`Project IAM discovery skipped for ${projectId}: ${crmErr.message}`);
@@ -196,7 +234,9 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             }
           }
         } catch (eErr: any) {
-          logger.debug(`Could not list engines for project-wide user discovery: ${eErr.message}`);
+          const errMsg = `Could not list Discovery Engine apps in project '${projectId}': ${eErr.message}`;
+          logger.warn(errMsg);
+          warnings.push(errMsg);
         }
       }
 
@@ -204,12 +244,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       for (const curAppId of enginesToScan) {
         try {
           const agUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/assistants/default_assistant/agents?pageSize=100`;
-          const agResp = await fetch(agUrl, {
-            headers: { 
-              'Authorization': `Bearer ${token}`,
-              'X-Goog-User-Project': projectId
-            }
-          });
+          const agResp = await fetchWithQuotaFallback(agUrl);
           if (agResp.ok) {
             const agData: any = await agResp.json();
             const agents = agData.agents || [];
@@ -239,12 +274,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
               const chunk = agents.slice(i, i + chunkSize);
               await Promise.all(chunk.map(async (a: any) => {
                 try {
-                  const iamRes = await fetch(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`, {
-                    headers: { 
-                      'Authorization': `Bearer ${token}`,
-                      'X-Goog-User-Project': projectId
-                    }
-                  });
+                  const iamRes = await fetchWithQuotaFallback(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`);
                   if (iamRes.ok) {
                     const iamData: any = await iamRes.json();
                     for (const binding of iamData.bindings || []) {
@@ -283,12 +313,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
         // 2. Discover users from Discovery Engine Chat Sessions
         try {
           const url = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/sessions?pageSize=100`;
-          const resp = await fetch(url, {
-            headers: { 
-              'Authorization': `Bearer ${token}`,
-              'X-Goog-User-Project': projectId
-            }
-          });
+          const resp = await fetchWithQuotaFallback(url);
           if (resp.ok) {
             const sessData: any = await resp.json();
             const sessions = sessData.sessions || [];
@@ -318,12 +343,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
         // 3. Discover users from Memories
         try {
           const memUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/memories?pageSize=100`;
-          const memResp = await fetch(memUrl, {
-            headers: { 
-              'Authorization': `Bearer ${token}`,
-              'X-Goog-User-Project': projectId
-            }
-          });
+          const memResp = await fetchWithQuotaFallback(memUrl);
           if (memResp.ok) {
             const memData: any = await memResp.json();
             const memories = memData.memories || [];
@@ -355,12 +375,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       // 4. Discover user owners from Notebooks
       try {
         const nbUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/notebooks:listRecentlyViewed`;
-        const nbResp = await fetch(nbUrl, {
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'X-Goog-User-Project': projectId
-          }
-        });
+        const nbResp = await fetchWithQuotaFallback(nbUrl);
         if (nbResp.ok) {
           const nbData: any = await nbResp.json();
           const notebooks = nbData.notebooks || [];

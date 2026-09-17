@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform
 ## Installation, Environment Setup & Pre-Requisites Technical Guide
 
-**Document Version:** `v1.5.1 (Enterprise Release)`  
+**Document Version:** `v1.5.3 (Enterprise Release)`  
 **Target Platform:** Google Cloud Discovery Engine & Gemini Enterprise  
 **Execution Profile:** Headless CLI & Local Workstation Web Console (`http://127.0.0.1:8080`)  
 **Authentication Protocols:** Google Workspace Domain-Wide Delegation (OAuth2) & Microsoft Entra ID Workforce Identity Federation (STS)  
@@ -110,14 +110,15 @@ The migration administrator or execution identity requires distinct read and wri
 
 | Environment | Role Name / Identifier | Role Type | Justification / Purpose |
 | :--- | :--- | :--- | :--- |
-| **Source Project** | `roles/discoveryengine.viewer` | Predefined Role | Read-only discovery of custom agents, notebooks, datastores, and chat turns |
+| **Source Project** | `roles/discoveryengine.admin` *(or `viewer`)* | Predefined Role | Read-only discovery of engines, schemas, custom agents, notebooks, datastores, and chat turns |
 | **Source Project** | `roles/serviceusage.serviceUsageConsumer` | Predefined Role | Authorizes Discovery Engine API consumption checks on source project |
+| **Source Project** | `roles/iam.securityReviewer` | Predefined Role | Allows enumerating project IAM bindings (`resourcemanager.projects.getIamPolicy`) during User Discovery |
 | **Target Project** | `roles/discoveryengine.admin` | Predefined Role | Creation and configuration of target engines, datastores, agents, and notebooks |
-| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Predefined Role | Allows minting user-scoped impersonation tokens via Domain-Wide Delegation |
+| **Target Project** | `roles/iam.serviceAccountTokenCreator` | Predefined Role | Allows minting user-scoped impersonation tokens via Domain-Wide Delegation or WiF |
 | **Target Project** | `roles/serviceusage.serviceUsageConsumer` | Predefined Role | Authorizes Discovery Engine API consumption checks on target project |
 
 > [!TIP]
-> **Resolution of 403 `serviceusage.serviceUsageConsumer` Errors**: Granting `roles/serviceusage.serviceUsageConsumer` on both Source and Target projects is mandatory. In v1.4.0, administrative pre-flight checks are isolated to the configured Service Account key, ensuring that user-scoped WiF tokens are never erroneously used for administrative engine validation.
+> **Cross-Project IAM Architecture Rule & Resolution of 403 Errors**: Granting `roles/discoveryengine.admin` (or `viewer`), `roles/serviceusage.serviceUsageConsumer`, and `roles/iam.securityReviewer` on **both Source and Target projects** is mandatory. While Google Workspace Domain-Wide Delegation authorizes user token minting at the Workspace domain level, administrative pipeline operations (discovering engines, listing data stores, auditing schemas, and pre-flight parity checks) execute as the Service Account itself against both GCP projects.
 
 ---
 
@@ -136,7 +137,7 @@ Enterprise Google Cloud landing zones frequently enforce organizational constrai
 ### Live Organization Policy Inspection & 1-Click Remediation:
 The web console provides built-in pre-flight inspection in the **Auth & WiF Wizard** (`http://127.0.0.1:8080`):
 1. Navigate to **Auth & WiF Wizard** &rarr; **Domain-Wide Delegation (DWD)**.
-2. Enter your **Target GCP Project ID** and click **`🛡️ Check Org Policies`**.
+2. Enter your **Source GCP Project ID** and **Target GCP Project ID** and click **`🛡️ Check Org Policies`**.
 3. If `iam.disableServiceAccountKeyCreation` is active, click **`⚡ 1-Click Project Override`** to apply a project-scoped exemption without altering the parent organization.
 
 ---
@@ -155,15 +156,33 @@ Domain-Wide Delegation (DWD) enables the migration tool to restore chat history 
        --project=<TARGET_PROJECT_ID>
    ```
 
-2. **Assign required IAM roles to the service account:**
+2. **Assign required IAM roles to the service account across BOTH Target and Source Projects:**
    ```bash
+   # Grant roles on TARGET Project (Restore & Token Minting)
    gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
        --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
        --role="roles/discoveryengine.admin"
 
    gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
        --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+       --role="roles/iam.serviceAccountTokenCreator"
+
+   gcloud projects add-iam-policy-binding <TARGET_PROJECT_ID> \
+       --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
        --role="roles/serviceusage.serviceUsageConsumer"
+
+   # Grant roles on SOURCE Project (MANDATORY for Cross-Project Discovery & Parity Audit)
+   gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \
+       --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+       --role="roles/discoveryengine.admin"
+
+   gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \
+       --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+       --role="roles/serviceusage.serviceUsageConsumer"
+
+   gcloud projects add-iam-policy-binding <SOURCE_PROJECT_ID> \
+       --member="serviceAccount:gemini-dwd-migrator@<TARGET_PROJECT_ID>.iam.gserviceaccount.com" \
+       --role="roles/iam.securityReviewer"
    ```
 
 3. **Export the service account JSON private key:**
@@ -291,7 +310,7 @@ npx tsx src/cli.ts --config migration-config.json
 ### Option 3: Run Automated Test Suite
 ```bash
 npm test
-# Executes 88 unit tests across 11 test suites covering auth, parsing, export, decommissioning, and rollback validation
+# Executes 106 automated tests across 14 test suites covering auth, cross-project parity pre-checks, export, decommissioning, and rollback validation
 ```
 
 ### CLI Command-Line Flag Reference (`src/cli.ts`)
