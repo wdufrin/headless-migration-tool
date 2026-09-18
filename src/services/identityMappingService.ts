@@ -38,6 +38,57 @@ export interface MappedIdentityResult {
   status: 'AUTO_MAPPED' | 'MANUAL_OVERRIDE' | 'FALLBACK_APPLIED' | 'UNCHANGED';
 }
 
+export interface CsvParseOptions {
+  defaultSourceDomain?: string;
+  defaultTargetDomain?: string;
+}
+
+export interface CsvMappingRow {
+  lineNumber: number;
+  sourceIdentity: string;
+  targetIdentity: string;
+}
+
+export interface CsvCollision {
+  type: 'DUPLICATE_SOURCE' | 'DUPLICATE_TARGET';
+  identity: string;
+  conflictingIdentities: string[];
+  lineNumbers: number[];
+}
+
+export interface CsvParseResult {
+  mappings: Record<string, string>;
+  rows: CsvMappingRow[];
+  totalRowsParsed: number;
+  skippedHeaderRows: number;
+  malformedRows: { lineNumber: number; rawLine: string; reason: string }[];
+  collisions: CsvCollision[];
+}
+
+export interface MappingReportEntry {
+  sourceIdentity: string;
+  targetIdentity: string;
+  mappingMethod: 'CSV_MAP' | 'MANUAL_OVERRIDE' | 'DOMAIN_RULE' | 'FALLBACK' | 'UNMAPPED';
+  matchedRule?: string;
+  inDiscoveredScope: boolean;
+  validationStatus: 'VALID' | 'UNMAPPED_WARNING' | 'TARGET_COLLISION' | 'INVALID_EMAIL';
+  validationMessage?: string;
+}
+
+export interface IdentityMappingAuditReport {
+  generatedAt: string;
+  summary: {
+    totalIdentities: number;
+    csvOrExplicitMapped: number;
+    domainRuleMapped: number;
+    unmappedCount: number;
+    collisionCount: number;
+    readyCount: number;
+  };
+  entries: MappingReportEntry[];
+  collisions: CsvCollision[];
+}
+
 export class IdentityMappingService {
   private config: IdpMappingConfig;
   private explicitMappings: Map<string, string> = new Map();
@@ -55,6 +106,207 @@ export class IdentityMappingService {
         this.explicitMappings.set(this.normalizeEmail(src), this.normalizeEmail(tgt));
       }
     }
+  }
+
+  /**
+   * Case-insensitive and prefix-tolerant lookup against an identityMapping dictionary.
+   * Handles "user:First.Last@XXXX.com", "first.last@xxxx.com", and principal:// URIs.
+   */
+  static lookupTargetIdentity(
+    sourceIdentity: string | undefined,
+    identityMapping: Record<string, string> | undefined,
+    fallback?: string
+  ): string {
+    if (!sourceIdentity) return fallback || '';
+    const trimmed = sourceIdentity.trim();
+    const clean = trimmed
+      .replace(/^.*\/subject\//i, '')
+      .replace(/^.*_subject_/i, '')
+      .replace(/^principal(set)?:\/\/.*?\//i, '')
+      .replace(/^user:/i, '')
+      .replace(/^group:/i, '')
+      .replace(/^corp\\/i, '')
+      .trim();
+
+    if (!identityMapping || Object.keys(identityMapping).length === 0) {
+      return fallback || clean;
+    }
+
+    // 1. Direct exact checks
+    if (identityMapping[clean]) return identityMapping[clean];
+    if (identityMapping[trimmed]) return identityMapping[trimmed];
+    if (identityMapping[`user:${clean}`]) return identityMapping[`user:${clean}`];
+
+    // 2. Case-insensitive lookup
+    const lowerClean = clean.toLowerCase();
+    if (identityMapping[lowerClean]) return identityMapping[lowerClean];
+    if (identityMapping[`user:${lowerClean}`]) return identityMapping[`user:${lowerClean}`];
+
+    for (const [k, v] of Object.entries(identityMapping)) {
+      const cleanKey = k
+        .replace(/^.*\/subject\//i, '')
+        .replace(/^user:/i, '')
+        .trim()
+        .toLowerCase();
+      if (cleanKey === lowerClean && v) {
+        return v;
+      }
+    }
+
+    return fallback || clean;
+  }
+
+  /**
+   * Parses CSV / TSV / delimiter-separated user ID mapping content (e.g. first.last@XXXX.com,#####@YYYY.com).
+   * Automatically detects headers, supports optional default domains when bare IDs are given,
+   * and detects source/target collisions.
+   */
+  static parseCsvMappings(csvContent: string, options: CsvParseOptions = {}): CsvParseResult {
+    const mappings: Record<string, string> = {};
+    const rows: CsvMappingRow[] = [];
+    const malformedRows: { lineNumber: number; rawLine: string; reason: string }[] = [];
+    const collisions: CsvCollision[] = [];
+    let skippedHeaderRows = 0;
+
+    if (!csvContent || typeof csvContent !== 'string') {
+      return {
+        mappings,
+        rows,
+        totalRowsParsed: 0,
+        skippedHeaderRows: 0,
+        malformedRows,
+        collisions
+      };
+    }
+
+    const cleanDefaultSrcDomain = (options.defaultSourceDomain || '').trim().toLowerCase().replace(/^@/, '');
+    const cleanDefaultTgtDomain = (options.defaultTargetDomain || '').trim().toLowerCase().replace(/^@/, '');
+
+    const rawLines = csvContent.replace(/^\uFEFF/, '').split(/\r?\n/);
+    const sourceToTargets = new Map<string, { targets: Set<string>; lines: number[] }>();
+    const targetToSources = new Map<string, { sources: Set<string>; lines: number[] }>();
+
+    const headerKeywords = new Set([
+      'source', 'target', 'old_id', 'new_id', 'old_email', 'new_email',
+      'source_email', 'target_email', 'destination_email', 'source_user',
+      'target_user', 'source_user_id', 'target_user_id', 'from', 'to',
+      'source_identity', 'target_identity', 'old_user', 'new_user',
+      'legacy_email', 'google_email', 'upn', 'employee_id'
+    ]);
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const lineNumber = i + 1;
+      const rawLine = rawLines[i].trim();
+      if (!rawLine || rawLine.startsWith('#') || rawLine.startsWith('//')) {
+        continue;
+      }
+
+      // Split by arrow (->, =>), comma, tab, semicolon, or pipe
+      let parts: string[];
+      if (rawLine.includes('->') || rawLine.includes('=>')) {
+        parts = rawLine.split(/->|=>/).map(p => p.trim());
+      } else if (rawLine.includes('\t')) {
+        parts = rawLine.split('\t').map(p => p.trim());
+      } else if (rawLine.includes(';')) {
+        parts = rawLine.split(';').map(p => p.trim());
+      } else if (rawLine.includes('|')) {
+        parts = rawLine.split('|').map(p => p.trim());
+      } else {
+        parts = rawLine.split(',').map(p => p.trim());
+      }
+
+      // Strip surrounding quotes
+      parts = parts.map(p => p.replace(/^["']+|["']+$/g, '').trim()).filter(Boolean);
+
+      if (parts.length < 2) {
+        malformedRows.push({
+          lineNumber,
+          rawLine,
+          reason: 'Expected at least 2 columns (source_id, target_id)'
+        });
+        continue;
+      }
+
+      let rawSrc = parts[0].toLowerCase().replace(/^user:/i, '').trim();
+      let rawTgt = parts[1].toLowerCase().replace(/^user:/i, '').trim();
+
+      // Detect header row on first non-empty line (or if both tokens match header labels without @)
+      if (
+        !rawSrc.includes('@') &&
+        !rawTgt.includes('@') &&
+        (headerKeywords.has(rawSrc.replace(/[\s-]+/g, '_')) || headerKeywords.has(rawTgt.replace(/[\s-]+/g, '_')))
+      ) {
+        skippedHeaderRows++;
+        continue;
+      }
+
+      // Append default domains if bare username / employee number was provided
+      if (!rawSrc.includes('@') && cleanDefaultSrcDomain) {
+        rawSrc = `${rawSrc}@${cleanDefaultSrcDomain}`;
+      }
+      if (!rawTgt.includes('@') && cleanDefaultTgtDomain) {
+        rawTgt = `${rawTgt}@${cleanDefaultTgtDomain}`;
+      }
+
+      if (!rawSrc.includes('@') || !rawTgt.includes('@')) {
+        malformedRows.push({
+          lineNumber,
+          rawLine,
+          reason: `Missing email domain (@) in source "${rawSrc}" or target "${rawTgt}". Provide full emails or set Source/Target domains.`
+        });
+        continue;
+      }
+
+      mappings[rawSrc] = rawTgt;
+      rows.push({
+        lineNumber,
+        sourceIdentity: rawSrc,
+        targetIdentity: rawTgt
+      });
+
+      if (!sourceToTargets.has(rawSrc)) {
+        sourceToTargets.set(rawSrc, { targets: new Set(), lines: [] });
+      }
+      sourceToTargets.get(rawSrc)!.targets.add(rawTgt);
+      sourceToTargets.get(rawSrc)!.lines.push(lineNumber);
+
+      if (!targetToSources.has(rawTgt)) {
+        targetToSources.set(rawTgt, { sources: new Set(), lines: [] });
+      }
+      targetToSources.get(rawTgt)!.sources.add(rawSrc);
+      targetToSources.get(rawTgt)!.lines.push(lineNumber);
+    }
+
+    for (const [src, info] of sourceToTargets.entries()) {
+      if (info.targets.size > 1) {
+        collisions.push({
+          type: 'DUPLICATE_SOURCE',
+          identity: src,
+          conflictingIdentities: Array.from(info.targets),
+          lineNumbers: info.lines
+        });
+      }
+    }
+
+    for (const [tgt, info] of targetToSources.entries()) {
+      if (info.sources.size > 1) {
+        collisions.push({
+          type: 'DUPLICATE_TARGET',
+          identity: tgt,
+          conflictingIdentities: Array.from(info.sources),
+          lineNumbers: info.lines
+        });
+      }
+    }
+
+    return {
+      mappings,
+      rows,
+      totalRowsParsed: rows.length,
+      skippedHeaderRows,
+      malformedRows,
+      collisions
+    };
   }
 
   /**
@@ -92,7 +344,7 @@ export class IdentityMappingService {
       return {
         sourceIdentity,
         targetIdentity: target,
-        matchedRule: 'Explicit Mapping',
+        matchedRule: 'Explicit / CSV Mapping',
         isCustomOverride: true,
         status: 'MANUAL_OVERRIDE'
       };
@@ -168,6 +420,113 @@ export class IdentityMappingService {
     }
 
     return results;
+  }
+
+  /**
+   * Generates a full audit & reconciliation report comparing discovered users,
+   * CSV mappings, manual overrides, and domain rules.
+   */
+  generateMappingAuditReport(
+    discoveredUsers: string[] = [],
+    csvMappedKeys: Set<string> = new Set()
+  ): IdentityMappingAuditReport {
+    const discoveredSet = new Set(discoveredUsers.map(u => this.normalizeEmail(u)).filter(Boolean));
+    const allSources = new Set<string>([
+      ...discoveredSet,
+      ...Array.from(this.explicitMappings.keys())
+    ]);
+
+    const entries: MappingReportEntry[] = [];
+    const targetToSources = new Map<string, string[]>();
+
+    for (const src of allSources) {
+      const resolved = this.resolveIdentity(src);
+      const tgt = this.normalizeEmail(resolved.targetIdentity);
+
+      let method: MappingReportEntry['mappingMethod'] = 'UNMAPPED';
+      if (this.explicitMappings.has(src)) {
+        method = csvMappedKeys.has(src) ? 'CSV_MAP' : 'MANUAL_OVERRIDE';
+      } else if (resolved.status === 'AUTO_MAPPED') {
+        method = 'DOMAIN_RULE';
+      } else if (resolved.status === 'FALLBACK_APPLIED') {
+        method = 'FALLBACK';
+      }
+
+      if (!targetToSources.has(tgt)) {
+        targetToSources.set(tgt, []);
+      }
+      targetToSources.get(tgt)!.push(src);
+
+      entries.push({
+        sourceIdentity: src,
+        targetIdentity: tgt,
+        mappingMethod: method,
+        matchedRule: resolved.matchedRule,
+        inDiscoveredScope: discoveredSet.has(src),
+        validationStatus: 'VALID'
+      });
+    }
+
+    const collisions: CsvCollision[] = [];
+    const collidingTargets = new Set<string>();
+    for (const [tgt, sources] of targetToSources.entries()) {
+      if (sources.length > 1) {
+        collidingTargets.add(tgt);
+        collisions.push({
+          type: 'DUPLICATE_TARGET',
+          identity: tgt,
+          conflictingIdentities: sources,
+          lineNumbers: []
+        });
+      }
+    }
+
+    let csvOrExplicitMapped = 0;
+    let domainRuleMapped = 0;
+    let unmappedCount = 0;
+    let collisionCount = 0;
+    let readyCount = 0;
+
+    for (const entry of entries) {
+      if (entry.mappingMethod === 'CSV_MAP' || entry.mappingMethod === 'MANUAL_OVERRIDE') {
+        csvOrExplicitMapped++;
+      } else if (entry.mappingMethod === 'DOMAIN_RULE') {
+        domainRuleMapped++;
+      } else if (entry.mappingMethod === 'UNMAPPED') {
+        unmappedCount++;
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(entry.sourceIdentity) || !emailRegex.test(entry.targetIdentity)) {
+        entry.validationStatus = 'INVALID_EMAIL';
+        entry.validationMessage = 'Source or destination ID is not a valid email address.';
+      } else if (collidingTargets.has(entry.targetIdentity)) {
+        entry.validationStatus = 'TARGET_COLLISION';
+        const others = (targetToSources.get(entry.targetIdentity) || []).filter(s => s !== entry.sourceIdentity);
+        entry.validationMessage = `Target collision: also mapped from ${others.join(', ')}`;
+        collisionCount++;
+      } else if (entry.mappingMethod === 'UNMAPPED' && (this.explicitMappings.size > 0 || this.domainRules.length > 0)) {
+        entry.validationStatus = 'UNMAPPED_WARNING';
+        entry.validationMessage = 'User discovered in source project but missing from CSV / mapping rules (will remain unchanged).';
+      } else {
+        entry.validationStatus = 'VALID';
+        readyCount++;
+      }
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalIdentities: entries.length,
+        csvOrExplicitMapped,
+        domainRuleMapped,
+        unmappedCount,
+        collisionCount,
+        readyCount
+      },
+      entries,
+      collisions
+    };
   }
 
   /**

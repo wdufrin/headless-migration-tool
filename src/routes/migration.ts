@@ -48,7 +48,7 @@ migrationRouter.post('/migrate', async (req, res) => {
     const report = await runner.run(validatedConfig);
 
     return res.status(200).json({
-      success: report.summary.totalFailed === 0,
+      success: report.summary.totalFailed === 0 && (report.summary.totalSkipped ?? 0) === 0 && (report.summary.totalFailedSources ?? 0) === 0,
       report
     });
   } catch (err: any) {
@@ -93,15 +93,27 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
       serviceAccountKeyPath: saKeyPath,
       wifConfigPath: wifPath
     });
-    const runner = new MigrationRunner({ authService });
+    // Forward real phase transitions from the engine. The browser previously had to
+    // guess progress by substring-matching log text.
+    const runner = new MigrationRunner({
+      authService,
+      onStage: (stage, status) => sendEvent('stage', { stage, status })
+    });
 
     sendEvent('stage', { stage: 'preflight', status: 'active' });
     sendEvent('log', { level: 'INFO', message: `Admin Migration Stream initiated by ${req.user?.email || 'admin'}` });
 
+
     const report = await runner.run(validatedConfig);
     sendEvent('stage', { stage: 'complete', status: 'done' });
     sendEvent('report', report);
-    sendEvent('done', { success: report.summary.totalFailed === 0, durationMs: report.durationMs });
+    sendEvent('done', {
+      success: report.summary.totalFailed === 0 && (report.summary.totalSkipped ?? 0) === 0 && (report.summary.totalFailedSources ?? 0) === 0,
+      totalFailed: report.summary.totalFailed,
+      totalSkipped: report.summary.totalSkipped ?? 0,
+      totalFailedSources: report.summary.totalFailedSources ?? 0,
+      durationMs: report.durationMs
+    });
     res.end();
   } catch (err: any) {
     sendEvent('error', { message: err.message, issues: err.issues || undefined });

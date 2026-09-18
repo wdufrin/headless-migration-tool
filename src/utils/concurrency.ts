@@ -15,31 +15,82 @@
  */
 
 /**
- * Execute an array of async functions with a maximum bounded concurrency limit.
+ * Raised when one or more tasks passed to {@link mapConcurrent} fail.
+ *
+ * Carries the partial results and the per-index failures so a caller can report
+ * exactly which items succeeded and which did not, instead of losing that
+ * information along with the rejection.
+ */
+export class ConcurrentTaskError extends Error {
+  public readonly errors: Array<{ index: number; error: unknown }>;
+  /** Results for the items that succeeded. Failed indices are `undefined`. */
+  public readonly partialResults: unknown[];
+
+  constructor(errors: Array<{ index: number; error: unknown }>, total: number, partialResults: unknown[]) {
+    const first = errors[0]?.error as any;
+    const firstMessage = first?.message || String(first);
+    super(
+      `${errors.length} of ${total} concurrent task(s) failed ` +
+        `(indices: ${errors.map((e) => e.index).join(', ')}). First failure: ${firstMessage}`
+    );
+    this.name = 'ConcurrentTaskError';
+    this.errors = errors;
+    this.partialResults = partialResults;
+  }
+}
+
+/**
+ * Execute an async function over an array with a bounded concurrency limit.
+ *
+ * Every item is attempted. Previously this awaited `Promise.race()` inside the
+ * scheduling loop, so the first rejection propagated out of the loop and any item
+ * that had not yet been scheduled was silently never started -- a failure on one
+ * notebook could skip an arbitrary number of untouched notebooks while the caller
+ * saw only the single underlying error. Completed results were discarded as well,
+ * because the pending `Promise.all` was never reached.
+ *
+ * Now failures are collected and raised together as a {@link ConcurrentTaskError}
+ * once all work has settled, with the successful results attached.
  */
 export async function mapConcurrent<T, R>(
   items: T[],
   concurrency: number,
   fn: (item: T, index: number) => Promise<R>
 ): Promise<R[]> {
-  const results: Promise<R>[] = [];
-  const executing = new Set<Promise<any>>();
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const p = Promise.resolve().then(() => fn(item, i));
-    results.push(p);
-    executing.add(p);
-
-    const clean = () => executing.delete(p);
-    p.then(clean, clean);
-
-    if (executing.size >= concurrency) {
-      await Promise.race(executing);
-    }
+  if (!Array.isArray(items)) {
+    throw new TypeError(`mapConcurrent expected an array of items, received ${typeof items}`);
+  }
+  if (items.length === 0) {
+    return [];
   }
 
-  return Promise.all(results);
+  const limit = Math.max(1, Math.min(Math.floor(concurrency) || 1, items.length));
+  const results = new Array<R>(items.length);
+  const failures: Array<{ index: number; error: unknown }> = [];
+  let cursor = 0;
+
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) {
+        return;
+      }
+      try {
+        results[index] = await fn(items[index], index);
+      } catch (error) {
+        failures.push({ index, error });
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+
+  if (failures.length > 0) {
+    failures.sort((a, b) => a.index - b.index);
+    throw new ConcurrentTaskError(failures, items.length, results);
+  }
+
+  return results;
 }
 
 /**

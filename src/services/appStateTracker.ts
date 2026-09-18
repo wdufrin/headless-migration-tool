@@ -40,10 +40,28 @@ export interface AppliedIamBinding {
   appliedAt: string;
 }
 
+/**
+ * A custom OIDC provider this tool registered inside a Workforce Identity Pool.
+ *
+ * This is the highest-consequence resource the tool creates: the tool holds the
+ * signing key, so the provider can mint assertions for any subject without MFA.
+ * It must be tracked so teardown can remove it and rollback verification can
+ * prove it is gone.
+ */
+export interface CreatedWifProvider {
+  workforcePoolId: string;
+  providerId: string;
+  location: string;
+  issuerUri?: string;
+  attributeCondition?: string;
+  createdAt: string;
+}
+
 export interface MigrationAppState {
   overriddenOrgPolicies: OverriddenOrgPolicy[];
   createdServiceAccounts: CreatedServiceAccount[];
   appliedIamBindings: AppliedIamBinding[];
+  createdWifProviders: CreatedWifProvider[];
 }
 
 export class AppStateTracker {
@@ -65,7 +83,9 @@ export class AppStateTracker {
         return {
           overriddenOrgPolicies: Array.isArray(parsed.overriddenOrgPolicies) ? parsed.overriddenOrgPolicies : [],
           createdServiceAccounts: Array.isArray(parsed.createdServiceAccounts) ? parsed.createdServiceAccounts : [],
-          appliedIamBindings: Array.isArray(parsed.appliedIamBindings) ? parsed.appliedIamBindings : []
+          appliedIamBindings: Array.isArray(parsed.appliedIamBindings) ? parsed.appliedIamBindings : [],
+          // Absent in state files written before provider tracking existed.
+          createdWifProviders: Array.isArray(parsed.createdWifProviders) ? parsed.createdWifProviders : []
         };
       }
     } catch (err: any) {
@@ -88,12 +108,18 @@ export class AppStateTracker {
           });
         }
       }
-    } catch {}
+    } catch (err: any) {
+      // Previously swallowed. If sa-dwd-key.json is corrupt, auto-detection
+      // silently yields no accounts and teardown then has nothing to clean up --
+      // worth a line in the log rather than silence.
+      logger.warn(`Could not auto-detect service account from sa-dwd-key.json: ${err.message}`);
+    }
 
     return {
       overriddenOrgPolicies: [],
       createdServiceAccounts: autoAccounts,
-      appliedIamBindings: []
+      appliedIamBindings: [],
+      createdWifProviders: []
     };
   }
 
@@ -161,6 +187,38 @@ export class AppStateTracker {
       this.saveState(state);
       logger.info(`Tracked IAM role binding: ${role} to ${email} on project ${projectId}`);
     }
+  }
+
+  public static recordWifProvider(
+    workforcePoolId: string,
+    providerId: string,
+    location: string,
+    details?: { issuerUri?: string; attributeCondition?: string }
+  ): void {
+    const state = this.loadState();
+    const existingIdx = state.createdWifProviders.findIndex(
+      p =>
+        p.workforcePoolId === workforcePoolId &&
+        p.providerId === providerId &&
+        p.location === location
+    );
+    const entry: CreatedWifProvider = {
+      workforcePoolId,
+      providerId,
+      location,
+      issuerUri: details?.issuerUri,
+      attributeCondition: details?.attributeCondition,
+      createdAt: new Date().toISOString()
+    };
+    if (existingIdx >= 0) {
+      state.createdWifProviders[existingIdx] = entry;
+    } else {
+      state.createdWifProviders.push(entry);
+    }
+    this.saveState(state);
+    logger.info(
+      `Tracked Workforce Identity provider: ${providerId} in pool ${workforcePoolId} (${location})`
+    );
   }
 
   public static clearTrackedState(): void {

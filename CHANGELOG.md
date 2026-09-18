@@ -5,6 +5,19 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.5] - 2026-09-18
+
+### Added
+- **CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`) & Interactive Mapping Report**:
+  - Added `IdentityMappingService.parseCsvMappings`, `IdentityMappingService.generateMappingAuditReport`, and `IdentityMappingService.lookupTargetIdentity` (`src/services/identityMappingService.ts`).
+  - Added `POST /api/idp/parse-csv` and `POST /api/idp/mapping-report` endpoints (`src/routes/wizard.ts`).
+  - Added `📂 Upload Mapping CSV`, `📋 Paste CSV / Users`, `📊 Mapping Report`, and `📥 Sample CSV` controls plus the collapsible `#userMappingReportPanel` with `.CSV` and `.JSON` export (`public/index.html`).
+  - Added Section `2b. User Identity Mapping Report (Source ID ➔ Destination ID)` to `MigrationReporter.generateMarkdownSummary` (`src/services/reporter.ts`).
+- **Okta 2FA / MFA Compatibility & Browser Session Extractor**:
+  - Added Okta 2FA compatibility callouts and OIDC/SAML interactive token helper (`public/index.html`, `src/auth/authManager.ts`).
+
+---
+
 ## [1.5.3] - 2026-09-17
 
 ### Added

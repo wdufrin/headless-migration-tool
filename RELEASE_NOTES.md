@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
-## Release Notes — Version 1.5.3
+## Release Notes — Version 1.5.5
 
-**Release Date:** September 17, 2026  
+**Release Date:** September 18, 2026  
 **License:** Apache-2.0  
 **Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
 
@@ -9,31 +9,29 @@
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.3** introduces **Least-Privilege Google Workspace DWD Impersonation Scopes with Multi-Tier Fallback**, resilient token cache partitioning across authentication modes, full platform-wide documentation and console version parity, and a verified test suite with **106 automated tests passing at 100%**.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.5** introduces **CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`)**, an interactive **Source-to-Destination User Identity Mapping Report (`📊 Mapping Report`)** with collision and unmapped-user auditing, **Okta 2FA / MFA Compatibility & Browser Session Extractor**, case-insensitive identity lookup across all migration engines, and **285 automated tests passing at 100%**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 🔒 Least-Privilege DWD Impersonation Scopes
-* **Restricted Scope Whitelisting Compatibility**: Upgraded Google Workspace Domain-Wide Delegation (DWD) impersonation to default strictly to Discovery Engine least-privilege OAuth scopes (`discoveryengine.readwrite`, `discoveryengine.assist.readwrite`).
-* **Elimination of `unauthorized_client`**: Prevents token exchange rejections for enterprise Google Workspace domains where super-administrators have authorized Discovery Engine API scopes in the Google Workspace Admin console (`admin.google.com`) without granting the overly broad `cloud-platform` scope.
-* **Resilient Scope Step-Down Fallback**: Added automatic multi-tier fallback that transparently attempts focused scope configurations if the broader permission set returns `unauthorized_client`.
+#### 1. 📊 CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`) & Mapping Report
+* **1-Click CSV Upload & 2-Column Paste**: Upload `.csv`/`.tsv`/`.txt` files or paste 2-column mappings (`first.last@XXXX.com,849201@YYYY.com`) directly in the User Selection & Identity Mapping Table. Supports comma, tab, semicolon, pipe, and arrow (`->`, `=>`) delimiters plus automatic domain appending for bare IDs.
+* **Interactive Mapping Report (`📊 Mapping Report`)**: Displays 5 real-time KPI cards (**Total Users**, **CSV / 1:1 Mapped**, **Domain Rule Mapped**, **Unmapped Warning**, **Target ID Collisions**), filter/search controls, and `.CSV` / `.JSON` audit report exports.
+* **Case-Insensitive Engine Lookup & Final Report Section 2b**: Added `IdentityMappingService.lookupTargetIdentity` across all 5 migration engines (`NotebookMigrator`, `AgentMigrator`, `SessionMigrator`, `MemoryMigrator`, `SkillMigrator`) and Section `2b. User Identity Mapping Report` in the final Markdown report.
 
-#### 2. 🔑 Token Cache Partitioning by Execution Mode
-* **Multi-Mode Cache Isolation**: Extended the internal OAuth token cache keys to explicitly factor in the active impersonation mode (`DWD`, `WIF`, or `ADMIN`) alongside the sanitized principal email and scope array.
-* **Cross-Project & Cross-Mode Collision Prevention**: Guarantees that tokens minted under service account admin credentials or WiF STS exchanges are never erroneously reused during human user DWD impersonation operations.
+#### 2. 🔐 Okta 2FA / MFA Compatibility & Browser Session Extractor
+* **Okta 2FA Guidance & OIDC/SAML Token Helper**: Added built-in support and guidance for Okta/Entra 2FA environments via OAuth 2.0 Client Credentials M2M or interactive browser session token extraction.
 
-#### 3. 📚 Enterprise Documentation & Web Console Parity
-* **Synchronized Operator Guides**: Updated the official DOCX and Markdown [Installation Guide](docs/INSTALLATION_GUIDE.md) and [User Guide](docs/USER_GUIDE.md) to `v1.5.3 (Enterprise Release)`.
-* **Console Badging**: Updated the local administrative web console header to reflect `v1.5.3`.
+#### 3. 🔒 Least-Privilege DWD Impersonation Scopes & Token Cache Partitioning
+* **Restricted Scope Whitelisting Compatibility**: Defaults Google Workspace DWD impersonation to least-privilege Discovery Engine scopes with automatic step-down fallback and auth-mode token cache partitioning (`DWD`, `WIF`, `ADMIN`).
 
-#### 4. 🧪 Automated Test Suite Stability (106/106 Tests Passing)
-* Full 106-test automated suite across 14 test suites running at 100% pass rate.
+#### 4. 🧪 Automated Test Suite Stability (285/285 Tests Passing)
+* Full 285-test automated suite across 26 test suites running at 100% pass rate.
 
 ---
 
-### 📦 Upgrade Guide (v1.5.1 &rarr; v1.5.3)
+### 📦 Upgrade Guide (v1.5.3 &rarr; v1.5.5)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -44,7 +42,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.3** introdu
    ```bash
    npm run build
    ```
-3. **Run Test Suite (All 106 Tests Passing)**:
+3. **Run Test Suite (All 285 Tests Passing)**:
    ```bash
    npm test
    ```
@@ -61,9 +59,10 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.3** introdu
 
 ### 📜 Version History
 
-* **v1.5.3** *(Current)*: Least-privilege DWD impersonation scopes with multi-tier fallback, token cache partitioning by auth mode, documentation and console version parity, and 106 passing tests.
-* **v1.5.1**: Multi-project IAM wizard and setup generator, hardened WiF impersonation live testing, iframe sandbox security fix, and 106 passing tests.
-* **v1.5.0**: Interactive Step 2 environment selector and bi-directional sync, streamlined Step 3 action bar, forensic SWE pagination and fail-closed auth hardening, and 105 passing tests.
+* **v1.5.5** *(Current)*: CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`), interactive Mapping Report panel & CSV/JSON export, Okta 2FA compatibility, case-insensitive identity resolution across all engines, and 285 passing tests.
+* **v1.5.3**: Least-privilege DWD impersonation scopes with multi-tier fallback, token cache partitioning by auth mode, documentation and console version parity.
+* **v1.5.1**: Multi-project IAM wizard and setup generator, hardened WiF impersonation live testing, iframe sandbox security fix.
+* **v1.5.0**: Interactive Step 2 environment selector and bi-directional sync, streamlined Step 3 action bar, forensic SWE pagination and fail-closed auth hardening.
 * **v1.4.1**: Organization Policy pre-flight matrix, 1-click project-level key creation override, WiF keyless architecture assessment, permission auditor org policy integration, and test suite maintenance.
 * **v1.4.0**: Standalone zero-dependency interactive Quiz & Flashcards applications, Explainer Video compression (`ffmpeg`), single-ZIP handover archive (`NotebookLM_Artifacts.zip`), clean notes migration policy, and interactive action checklists.
 * **v1.3.0**: User-created skills migration (`SkillMigrator`), Configuration Pre-Check & Gap Audit engine (`ConfigAuditEngine`), 1-click engine feature sync, attached DataStore filtering, and clipboard resilience.

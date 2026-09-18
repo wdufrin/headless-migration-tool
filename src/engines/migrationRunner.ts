@@ -31,9 +31,31 @@ import { IdentityMappingService } from '../services/identityMappingService.js';
 import { CheckpointManager } from '../services/checkpointManager.js';
 import { logger } from '../utils/logger.js';
 
+/** Phases the runner reports, in the order they execute. */
+export type MigrationStage =
+  | 'preflight'
+  | 'notebooks'
+  | 'skills'
+  | 'agents'
+  | 'sessions'
+  | 'memories'
+  | 'artifacts'
+  | 'reports';
+
 export interface MigrationRunnerOptions {
   authService?: GcpAuthService;
   outputDir?: string;
+  /**
+   * Invoked when a phase starts and finishes. Consumers (the SSE route, the CLI)
+   * use this for progress reporting. Previously the browser inferred progress by
+   * substring-matching log text, which silently broke whenever wording changed.
+   *
+   * NOTE: 'done' means the phase finished EXECUTING, not that every item in it
+   * succeeded. Phases catch and log per-item errors and continue, so the
+   * authoritative success/failure counts are in the MigrationReport summary.
+   */
+  onStage?: (stage: MigrationStage, status: 'active' | 'done') => void;
+
 }
 
 export class MigrationRunner {
@@ -45,6 +67,7 @@ export class MigrationRunner {
   private skillMigrator: SkillMigrator;
   private simulator: DryRunSimulator;
   private outputDir: string;
+  private onStage: (stage: MigrationStage, status: 'active' | 'done') => void;
 
   constructor(options: MigrationRunnerOptions = {}) {
     this.auth = options.authService || new GcpAuthService();
@@ -55,7 +78,18 @@ export class MigrationRunner {
     this.skillMigrator = new SkillMigrator(this.registryClient, this.client);
     this.simulator = new DryRunSimulator(this.client);
     this.outputDir = options.outputDir || './reports';
+    // A progress listener must never be able to abort a migration.
+    const listener = options.onStage;
+    this.onStage = (stage, status) => {
+      if (!listener) return;
+      try {
+        listener(stage, status);
+      } catch (err: any) {
+        logger.warn(`Stage listener threw for "${stage}/${status}": ${err?.message || err}`);
+      }
+    };
   }
+
 
   async run(config: ValidatedMigrationConfig): Promise<MigrationReport> {
     const migrationId = randomUUID().substring(0, 8);
@@ -67,6 +101,7 @@ export class MigrationRunner {
       logger.setLevel(config.options.logLevel);
     }
     logger.clearLogs();
+    this.onStage('preflight', 'active');
 
     logger.info(`Starting Gemini Enterprise Admin Migration Pipeline [ID: ${migrationId}]...`);
     logger.info(`Source: ${config.source.projectId} (${config.source.appLocation}) -> Target: ${config.target.projectId} (${config.target.appLocation})`);
@@ -138,6 +173,20 @@ export class MigrationRunner {
       }
     }
 
+    // Normalize explicit identityMapping keys (e.g. from CSV or config) for case-insensitive matching
+    if (config.identityMapping && typeof config.identityMapping === 'object') {
+      const normalizedMap: Record<string, string> = {};
+      for (const [k, v] of Object.entries(config.identityMapping)) {
+        const cleanK = k.replace(/^user:/i, '').trim();
+        const cleanV = typeof v === 'string' ? v.replace(/^user:/i, '').trim() : '';
+        if (cleanK && cleanV) {
+          normalizedMap[cleanK] = cleanV;
+          normalizedMap[cleanK.toLowerCase()] = cleanV.toLowerCase();
+        }
+      }
+      config.identityMapping = normalizedMap;
+    }
+
     // Step 2b: Apply IdP Domain Rules & Automated Cross-IdP Translations
     if (config.idpMapping) {
       const idpService = new IdentityMappingService({
@@ -153,6 +202,7 @@ export class MigrationRunner {
         const res = idpService.resolveIdentity(u);
         if (res.targetIdentity && !config.identityMapping[u]) {
           config.identityMapping[u] = res.targetIdentity;
+          config.identityMapping[u.toLowerCase()] = res.targetIdentity.toLowerCase();
           logger.info(`[IdP AUTO-MAP] "${u}" -> "${res.targetIdentity}" (${res.matchedRule || 'Default'})`);
         }
       }
@@ -197,8 +247,10 @@ export class MigrationRunner {
       }
     };
 
+    this.onStage('preflight', 'done');
     // Step 3: Migrate Notebooks
     if (config.options?.migrateNotebooks !== false) {
+      this.onStage('notebooks', 'active');
       try {
         const notebookResults = await this.notebookMigrator.migrateNotebooks(
           config.source,
@@ -221,10 +273,12 @@ export class MigrationRunner {
           targetOwner: 'system'
         });
       }
+      this.onStage('notebooks', 'done');
     }
 
     // Step 3b: Directly Migrate User-Created Skills (Agent Registry & Discovery Engine)
     if (config.options?.migrateSkills !== false) {
+      this.onStage('skills', 'active');
       try {
         const skillResults = await this.skillMigrator.migrateSkills(
           config.source,
@@ -256,10 +310,12 @@ export class MigrationRunner {
           targetOwner: 'system'
         });
       }
+      this.onStage('skills', 'done');
     }
 
     // Step 4: Migrate Agents
     if (config.options?.migrateAgents !== false) {
+      this.onStage('agents', 'active');
       try {
         const agentResults = await this.agentMigrator.migrateAgents(
           config.source,
@@ -283,10 +339,12 @@ export class MigrationRunner {
           targetOwner: 'system'
         });
       }
+      this.onStage('agents', 'done');
     }
 
     // Step 5: Migrate Multi-User Chat History Sessions
     if (config.options?.migrateSessions !== false) {
+      this.onStage('sessions', 'active');
       try {
         const { SessionMigrator } = await import('./sessionMigrator.js');
         const sessionMigrator = new SessionMigrator(config, this.auth);
@@ -314,7 +372,7 @@ export class MigrationRunner {
 
           const rawOwner = s.userPseudoId || selectedUser;
           const origOwner = (rawOwner && rawOwner.includes('@')) ? rawOwner : selectedUser;
-          const tgtOwner = config.identityMapping?.[origOwner] || config.identityMapping?.[`user:${origOwner}`] || (selectedUser || origOwner);
+          const tgtOwner = IdentityMappingService.lookupTargetIdentity(origOwner, config.identityMapping, selectedUser || origOwner);
 
           try {
             if (!config.options?.dryRun) {
@@ -354,10 +412,12 @@ export class MigrationRunner {
           targetOwner: 'system'
         });
       }
+      this.onStage('sessions', 'done');
     }
 
     // Step 5b: Migrate User Memories
     if (config.options?.migrateMemories !== false) {
+      this.onStage('memories', 'active');
       try {
         const { MemoryMigrator } = await import('./memoryMigrator.js');
         const memoryMigrator = new MemoryMigrator(config, this.auth, this.client);
@@ -383,7 +443,7 @@ export class MigrationRunner {
 
           const rawOwner = m.owner || m.userEmail || m.userPseudoId || defaultOwner;
           const origOwner = (rawOwner && rawOwner.includes('@')) ? rawOwner : defaultOwner;
-          const tgtOwner = config.identityMapping?.[origOwner] || config.identityMapping?.[`user:${origOwner}`] || (defaultOwner || origOwner);
+          const tgtOwner = IdentityMappingService.lookupTargetIdentity(origOwner, config.identityMapping, defaultOwner || origOwner);
 
           try {
             if (!config.options?.dryRun) {
@@ -437,10 +497,12 @@ export class MigrationRunner {
           targetOwner: 'system'
         });
       }
+      this.onStage('memories', 'done');
     }
 
     // Step 6: Export & Archive Multi-User Canvas & Presentation Artifacts
     if (config.options?.exportArtifacts !== false) {
+      this.onStage('artifacts', 'active');
       try {
         const { ArtifactExtractor } = await import('./artifactExtractor.js');
         const artifactExtractor = new ArtifactExtractor(config, this.auth);
@@ -449,6 +511,7 @@ export class MigrationRunner {
       } catch (artErr: any) {
         logger.warn(`Artifact export skipped: ${artErr.message}`);
       }
+      this.onStage('artifacts', 'done');
     }
 
     // Step 6b: Export & Backup User Memories to JSON (Optional Archive)
@@ -499,9 +562,11 @@ export class MigrationRunner {
       totalMigratedArtifacts: totalArtifactsCount,
       totalFailedSources,
       totalSkipped: allResults.filter(r => r.status === 'SKIPPED').length,
-      totalFailed: allResults.filter(r => r.status === 'FAILED').length
+      totalFailed: allResults.filter(r => r.status === 'FAILED').length,
+      totalOwnershipNotTransferred: allResults.filter(r => r.ownershipTransferred === false).length
     };
 
+    this.onStage('reports', 'active');
     const report: MigrationReport = {
       migrationId,
       startTime,
@@ -513,6 +578,7 @@ export class MigrationRunner {
       summary,
       results: allResults,
       discoveredUsers,
+      identityMapping: config.identityMapping,
       logs: logger.getLogs()
     };
 
@@ -527,6 +593,7 @@ export class MigrationRunner {
       logger.warn(`Could not save report files: ${reportErr.message}`);
     }
 
+    this.onStage('reports', 'done');
     return report;
   }
 }

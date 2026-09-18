@@ -3,7 +3,9 @@ function sendLog(text, level = "info") {
   console.log("[Migration Companion]", text);
   try {
     chrome.runtime.sendMessage({ type: "COMPANION_LOG", text, level });
-  } catch (e) {}
+  } catch (err) {
+    console.debug("[Migration Companion] Extension background port unavailable:", err);
+  }
 }
 
 function sleep(ms) {

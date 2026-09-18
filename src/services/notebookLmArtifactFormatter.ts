@@ -2206,7 +2206,7 @@ export class NotebookLmArtifactFormatter {
 <script>
 window.notebookAppApi = {
   clientType: 'notebooklm-web',
-  addThemeChangeListener: function(cb) { try { cb('light'); } catch(e){} },
+  addThemeChangeListener: function(cb) { try { cb('light'); } catch(err) { console.warn('NotebookLM theme listener error:', err); } },
   notifyAppReady: function() {},
   dispatchLogEvent: function() {}
 };

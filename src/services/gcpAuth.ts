@@ -33,7 +33,59 @@ export interface TokenProviderOptions {
   authType?: 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS';
 }
 
+/**
+ * Controls *implicit* credential discovery from the current working directory
+ * (./sa-dwd-key.json, ./workforce-identity-config.json, ./wif-migration-key.pem).
+ *
+ * Explicitly-configured credentials (serviceAccountKeyPath / wifConfigPath / *Json options)
+ * are ALWAYS honoured and are unaffected by this gate.
+ *
+ * Rationale: implicit CWD pickup meant `vitest` silently loaded live production
+ * credentials from the repo root and performed real DWD mints, real STS exchanges
+ * and real `gcloud` subprocess calls. That made test results depend on the
+ * developer's machine and turned any shared CI runner into a credential
+ * exfiltration surface.
+ */
+export function isCredentialAutoloadDisabled(): boolean {
+  return process.env.MIGRATION_DISABLE_CREDENTIAL_AUTOLOAD === 'true' || process.env.NODE_ENV === 'test';
+}
+
+/**
+ * Discovery Engine scopes. Sufficient for reading/writing notebooks, notes,
+ * artifacts, sessions, memories and agents via discoveryengine.googleapis.com.
+ */
+export const DISCOVERY_ENGINE_SCOPES = [
+  'https://www.googleapis.com/auth/discoveryengine.readwrite',
+  'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+];
+
+export const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+
+/**
+ * Default scopes for the Workforce Identity STS exchange.
+ *
+ * This deliberately includes cloud-platform. Scope narrowing on a workforce token
+ * is defence-in-depth only -- what the principal may actually do is governed by the
+ * IAM bindings on the pool, not by the OAuth scope. Narrowing the default breaks
+ * real call paths: STS returns 200 for a Discovery Engine-only scope, but
+ * iamcredentials.generateAccessToken then rejects that token with
+ * "Request had insufficient authentication scopes".
+ *
+ * Callers that only touch Discovery Engine should pass DISCOVERY_ENGINE_SCOPES
+ * explicitly rather than relying on a narrow default here.
+ */
+export const DEFAULT_WORKFORCE_SCOPES = [CLOUD_PLATFORM_SCOPE, ...DISCOVERY_ENGINE_SCOPES];
+
 export class GcpAuthService {
+  /**
+   * Identities federated from an external IdP (Entra, Okta) have no Google Workspace
+   * account, so Domain-Wide Delegation cannot impersonate them.
+   */
+  public static isExternalIdentityDomain(email: string): boolean {
+    const lower = (email || '').toLowerCase();
+    return lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
+  }
+
   private staticToken?: string;
   private serviceAccountKey?: any;
   private wifConfig?: any;
@@ -59,12 +111,16 @@ export class GcpAuthService {
       } catch (err: any) {
         logger.warn(`Failed to parse WiF config file: ${err.message}`);
       }
-    } else if (fs.existsSync('./workforce-identity-config.json')) {
+    } else if (!isCredentialAutoloadDisabled() && fs.existsSync('./workforce-identity-config.json')) {
       try {
         const content = fs.readFileSync('./workforce-identity-config.json', 'utf-8');
         this.wifConfig = JSON.parse(content);
         logger.info('Auto-loaded Workforce Identity Federation (WiF) Config from ./workforce-identity-config.json');
-      } catch {}
+      } catch (err: any) {
+        // Previously an empty catch: a corrupt config silently became `undefined`,
+        // and the operator only found out via a confusing downstream auth failure.
+        logger.warn(`Failed to parse ./workforce-identity-config.json: ${err.message}. WiF is NOT configured.`);
+      }
     }
 
     if (this.wifConfig?.credential_source?.file) {
@@ -83,7 +139,7 @@ export class GcpAuthService {
       } catch (err: any) {
         logger.warn(`Failed to parse Service Account Key file: ${err.message}`);
       }
-    } else if (fs.existsSync('./sa-dwd-key.json')) {
+    } else if (!isCredentialAutoloadDisabled() && fs.existsSync('./sa-dwd-key.json')) {
       try {
         const content = fs.readFileSync('./sa-dwd-key.json', 'utf-8').trim();
         if (content) {
@@ -246,7 +302,7 @@ export class GcpAuthService {
       );
 
       if (!isServiceIdentity) {
-        const isExternalDomain = lower.endsWith('.onmicrosoft.com') || lower.includes('entra') || lower.includes('okta');
+        const isExternalDomain = GcpAuthService.isExternalIdentityDomain(lower);
         let lastDwdError: Error | null = null;
 
         if (effectiveMode === 'DWD' && !isExternalDomain && this.serviceAccountKey) {
@@ -265,7 +321,7 @@ export class GcpAuthService {
             }
           }
           try {
-            const wifToken = await this.mintWorkforceToken(cleanEmail);
+            const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
             if (wifToken) {
               this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
               return wifToken;
@@ -274,7 +330,7 @@ export class GcpAuthService {
         } else {
           // Try WiF first, then fallback to DWD
           try {
-            const wifToken = await this.mintWorkforceToken(cleanEmail);
+            const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
             if (wifToken) {
               this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
               return wifToken;
@@ -449,9 +505,60 @@ export class GcpAuthService {
   }
 
   /**
-   * Mints a GCP Workforce Identity access token by signing an OIDC JWT and exchanging it with GCP STS.
+   * Reports whether a given user-impersonation mechanism is actually usable for this
+   * user, and if not, why.
+   *
+   * This exists because callers previously inferred "a different mechanism was used"
+   * by comparing access token strings. Two tokens minted by the SAME mechanism differ
+   * (the JWT `iat` changes), so that check reported success for a retry that in
+   * reality re-used the identical credential class and was guaranteed to fail again.
    */
-  public async mintWorkforceToken(userEmail: string, poolName?: string): Promise<string | undefined> {
+  public getImpersonationMechanismStatus(
+    userEmail: string,
+    mode: 'DWD' | 'WIF'
+  ): { available: boolean; reason: string } {
+    const lower = (userEmail || '').replace(/^user:/i, '').trim().toLowerCase();
+
+    if (mode === 'DWD') {
+      if (!this.serviceAccountKey) {
+        return {
+          available: false,
+          reason: 'no Service Account Key is configured for Domain-Wide Delegation'
+        };
+      }
+      if (GcpAuthService.isExternalIdentityDomain(lower)) {
+        return {
+          available: false,
+          reason: `"${lower}" is an external IdP identity, which Google Workspace Domain-Wide Delegation cannot impersonate`
+        };
+      }
+      return { available: true, reason: 'Domain-Wide Delegation service account key is configured' };
+    }
+
+    if (!fs.existsSync('wif-migration-key.pem')) {
+      return {
+        available: false,
+        reason: 'the Workforce Identity signing key "wif-migration-key.pem" is not present'
+      };
+    }
+    if (!this.wifConfig?.audience) {
+      return {
+        available: false,
+        reason: 'no Workforce Identity audience is configured'
+      };
+    }
+    return { available: true, reason: 'Workforce Identity signing key and audience are configured' };
+  }
+
+  /**
+   * Mints a GCP Workforce Identity access token by signing an OIDC JWT and exchanging it with GCP STS.
+   *
+   * Uses DEFAULT_WORKFORCE_SCOPES unless the caller passes `scopes`. If STS rejects the
+   * requested scopes with `invalid_scope`, retries once with cloud-platform. Note that this
+   * retry cannot rescue a token that STS accepts but a downstream API rejects for insufficient
+   * scope -- that must be handled by requesting adequate scopes up front.
+   */
+  public async mintWorkforceToken(userEmail: string, poolName?: string, scopes?: string[]): Promise<string | undefined> {
     const keyPath = 'wif-migration-key.pem';
     if (!fs.existsSync(keyPath)) {
       return undefined;
@@ -490,30 +597,48 @@ export class GcpAuthService {
       const stsUrl = 'https://sts.googleapis.com/v1/token';
       const effectiveAudience = audience || `//iam.googleapis.com/locations/global/workforcePools/${pool}/providers/${provider}`;
 
-      const stsRes = await fetch(stsUrl, {
+      const exchangeForScope = async (scopeStr: string) => fetch(stsUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           audience: effectiveAudience,
           grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
           requestedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
-          scope: 'https://www.googleapis.com/auth/cloud-platform',
+          scope: scopeStr,
           subjectTokenType: 'urn:ietf:params:oauth:token-type:id_token',
           subjectToken: signedJwt
         })
       });
 
+      let usedScopeStr = (scopes && scopes.length > 0 ? scopes : DEFAULT_WORKFORCE_SCOPES).join(' ');
+      let stsRes = await exchangeForScope(usedScopeStr);
+
       if (!stsRes.ok) {
         const errBody = await stsRes.text();
-        logger.debug(`STS workforce token exchange returned ${stsRes.status}: ${errBody}`);
-        return undefined;
+        // Only retry when STS specifically rejected the scope set. Retrying on any other
+        // error (bad audience, unknown provider, bad signature) just repeats the failure.
+        if (/invalid_scope/i.test(errBody) && usedScopeStr !== CLOUD_PLATFORM_SCOPE) {
+          logger.warn(`STS rejected scopes "${usedScopeStr}" as invalid_scope for "${userEmail}"; retrying with cloud-platform.`);
+          usedScopeStr = CLOUD_PLATFORM_SCOPE;
+          stsRes = await exchangeForScope(usedScopeStr);
+          if (!stsRes.ok) {
+            const retryBody = await stsRes.text();
+            logger.warn(`STS workforce token exchange failed for "${userEmail}" after scope retry (HTTP ${stsRes.status}): ${retryBody}`);
+            return undefined;
+          }
+        } else {
+          logger.warn(`STS workforce token exchange failed for "${userEmail}" (HTTP ${stsRes.status}): ${errBody}`);
+          return undefined;
+        }
       }
 
       const stsData: any = await stsRes.json();
-      if (stsData.access_token) {
-        logger.info(`Minted GCP Workforce Identity Token for "${userEmail}" via migration-dwd-provider.`);
-        return stsData.access_token;
+      if (!stsData.access_token) {
+        logger.warn(`STS returned HTTP ${stsRes.status} for "${userEmail}" but no access_token was present in the response.`);
+        return undefined;
       }
+      logger.info(`Minted GCP Workforce Identity Token for "${userEmail}" via ${provider} (scopes: ${usedScopeStr}).`);
+      return stsData.access_token;
     } catch (err: any) {
       logger.debug(`Could not mint workforce token for ${userEmail}: ${err.message}`);
     }
@@ -529,26 +654,52 @@ export class GcpAuthService {
     const tokenFilePath = this.wifConfig?.credential_source?.file || './idp-subject-token.jwt';
     const keyPath = 'wif-migration-key.pem';
 
+    // `keyPath` is an implicit CWD lookup, so it obeys the same gate as the other
+    // credential files. Without this, `vitest` signed real IdP assertions with the
+    // operator's live key and rewrote ./idp-subject-token.jwt in the working tree.
+    if (isCredentialAutoloadDisabled()) {
+      logger.debug('Subject token generation skipped: implicit credential autoload is disabled.');
+      return false;
+    }
+
+    // Not an error: service-account-key and ADC deployments never have this file.
     if (!fs.existsSync(keyPath)) {
+      logger.debug(`No WiF signing key at ${keyPath}; skipping subject token generation.`);
+      return false;
+    }
+
+    // Fail closed. This previously fell back to a hardcoded personal address, so a
+    // misconfigured deployment would mint a valid assertion for a principal the
+    // operator never asked for.
+    const email = userEmail || process.env.WIF_USER_EMAIL || process.env.ADMIN_EMAIL;
+    if (!email) {
+      logger.warn(
+        'Cannot generate subject token: no user email supplied and neither WIF_USER_EMAIL nor ADMIN_EMAIL is set.'
+      );
       return false;
     }
 
     try {
-      const email = userEmail || process.env.WIF_USER_EMAIL || process.env.ADMIN_EMAIL || 'wdufrin@wdufrin.onmicrosoft.com';
       if (fs.existsSync(tokenFilePath)) {
-        try {
-          const existing = fs.readFileSync(tokenFilePath, 'utf8').trim();
-          if (existing) {
-            const parts = existing.split('.');
-            if (parts.length === 3) {
+        const existing = fs.readFileSync(tokenFilePath, 'utf8').trim();
+        if (existing) {
+          const parts = existing.split('.');
+          if (parts.length === 3) {
+            try {
               const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
               const now = Math.floor(Date.now() / 1000);
-              if (payload.exp && payload.exp > now + 300 && (!userEmail || payload.sub === email)) {
+              if (payload.exp && payload.exp > now + 300 && payload.sub === email) {
                 return true;
               }
+            } catch (err: any) {
+              // Deliberately non-fatal, but no longer silent: a corrupt or truncated
+              // token file falls through to regeneration below.
+              logger.debug(
+                `Existing subject token at ${tokenFilePath} is malformed (${err.message}); refreshing.`
+              );
             }
           }
-        } catch {}
+        }
       }
 
       const privateKeyPem = fs.readFileSync(keyPath, 'utf8');
@@ -564,7 +715,7 @@ export class GcpAuthService {
         email: email,
         aud: 'gemini-migration-tool',
         iat: now,
-        exp: now + 86400
+        exp: now + 3600
       };
 
       const encodeBase64Url = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -576,11 +727,21 @@ export class GcpAuthService {
       const signature = sign.sign(privateKeyPem, 'base64url');
       const signedJwt = `${unsignedToken}.${signature}`;
 
-      fs.writeFileSync(tokenFilePath, signedJwt, 'utf8');
-      logger.debug(`Auto-generated/refreshed subject token file at ${tokenFilePath} for ${email}`);
+      // This JWT is a bearer credential: anyone who can read it can exchange it at
+      // STS for a token impersonating `email`. `mode` is ignored when the file already
+      // exists, so chmod explicitly to repair tokens left 0644 by earlier versions.
+      fs.writeFileSync(tokenFilePath, signedJwt, { encoding: 'utf8', mode: 0o600 });
+      try {
+        fs.chmodSync(tokenFilePath, 0o600);
+      } catch (err: any) {
+        logger.warn(
+          `Subject token written but could not be restricted to 0600 at ${tokenFilePath}: ${err.message}`
+        );
+      }
+      logger.info(`Generated new subject token file at ${tokenFilePath} for ${email}`);
       return true;
     } catch (err: any) {
-      logger.warn(`Could not ensure subject token file at ${tokenFilePath}: ${err.message}`);
+      logger.error(`Failed to ensure subject token file at ${tokenFilePath}: ${err.message}`);
       return false;
     }
   }

@@ -18,6 +18,8 @@ import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { EnvironmentConfig, MigrationOptions, MigrationItemResult } from '../types/migration.js';
 import { Agent, IamPolicy } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
+import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
+import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -42,7 +44,7 @@ export function mapIamMember(member: string, identityMapping: Record<string, str
     clean = decodeURIComponent(clean);
   } catch {}
 
-  const mapped = identityMapping[clean] || identityMapping[trimmed] || clean;
+  const mapped = IdentityMappingService.lookupTargetIdentity(clean, identityMapping, clean);
 
   // In Cloud Identity / Workspace IAM policies, user accounts must have the user: prefix.
   if (mapped.includes('@') && !mapped.includes(':')) {
@@ -534,9 +536,13 @@ export class AgentMigrator {
       cleanOwner = cleanOwner.replace(/^user:/i, '').trim();
 
       const originalOwner = cleanOwner;
-      const targetOwner = identityMapping[cleanOwner] || identityMapping[rawOriginalOwner] || cleanOwner;
+      const targetOwner = IdentityMappingService.lookupTargetIdentity(cleanOwner, identityMapping, cleanOwner);
 
       const agentType = this.getAgentType(agent);
+      // Set when impersonation fails and the agent is created by the admin service
+      // account instead of the user, so the result can say so rather than claiming
+      // the user owns it.
+      let serviceAccountOwnershipFallback: string | null = null;
       const result: MigrationItemResult = {
         id: originalAgentId,
         displayName: agent.displayName,
@@ -584,8 +590,9 @@ export class AgentMigrator {
             createErr.message.includes('Permission') ||
             createErr.status === 403
           ) {
-            logger.warn(`DWD impersonation or user permissions not available for "${userOwner}" (${createErr.message}). Restoring Agent "${result.displayName}" directly into target engine via Service Account.`);
+            logger.warn(`DWD impersonation or user permissions not available for "${userOwner}" (${createErr.message}). Restoring Agent "${result.displayName}" directly into target engine via Service Account. It will NOT be owned by "${userOwner}".`);
             createdAgent = await this.client.createAgent(targetEnv, createPayload, agent.targetId, undefined);
+            serviceAccountOwnershipFallback = createErr.message;
           } else if (
             createErr.message.includes('authorization') ||
             createErr.message.includes('Authorization') ||
@@ -695,11 +702,30 @@ export class AgentMigrator {
         };
 
         result.status = 'SUCCESS';
+        if (serviceAccountOwnershipFallback) {
+          // The agent exists in the target, but the ownership transfer this row claims
+          // did not happen. Say so instead of reporting an unqualified success.
+          result.ownershipTransferred = false;
+          result.ownershipNote =
+            `Created by the admin service account, NOT by "${result.targetOwner}", because user impersonation failed: ` +
+            `${serviceAccountOwnershipFallback}. The intended owner does not own this agent and may not see it.`;
+          logger.warn(`Agent "${result.displayName}" migrated WITHOUT ownership transfer to "${result.targetOwner}".`);
+        } else {
+          result.ownershipTransferred = true;
+        }
       } catch (err: any) {
-        if (err.message.includes('DWD Impersonation Failed') || err.message.includes('User does not exist') || err.message.includes('client_is_not_authorized') || err.message.includes('unauthorized_client') || err.message.includes('Invalid impersonation')) {
+        // Only discard the asset when the target user genuinely does not exist.
+        // Matching on the "DWD Impersonation Failed" wrapper alone treated every
+        // configuration error as a missing user and silently dropped real data.
+        const classification = classifyImpersonationFailure(err.message);
+        if (classification.safeToDropData) {
           logger.warn(`[DROPPED / SKIPPED] Agent "${result.displayName}" for offboarded/unmapped user "${originalOwner}" was dropped. Admin account will not be polluted.`);
           result.status = 'SKIPPED';
           result.error = `Skipped: User "${targetOwner || originalOwner}" not found in target Google Identity. Data safely dropped to prevent admin account pollution.`;
+        } else if (classification.kind === 'MISCONFIGURED' || classification.kind === 'UNKNOWN') {
+          logger.error(`Failed to migrate Agent "${result.displayName}" for "${originalOwner}": ${err.message}. ${classification.explanation}`);
+          result.status = 'FAILED';
+          result.error = `${err.message} -- ${classification.explanation}`;
         } else {
           logger.error(`Failed to migrate Agent "${result.displayName}" (${originalAgentId}): ${err.message}`);
           result.status = 'FAILED';

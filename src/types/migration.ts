@@ -71,6 +71,14 @@ export interface MigrationItemResult {
   error?: string;
   details?: Record<string, any>;
   durationMs?: number;
+  /**
+   * False when the asset was created in the target but NOT owned by `targetOwner` --
+   * for example when user impersonation failed and it was created by the admin
+   * service account instead. Undefined means ownership was never in question.
+   */
+  ownershipTransferred?: boolean;
+  /** Explains why ownership differs from `targetOwner`. */
+  ownershipNote?: string;
 }
 
 export interface MigratedSourceItem {
@@ -107,8 +115,11 @@ export interface MigrationReport {
     totalFailedSources?: number;
     totalSkipped: number;
     totalFailed: number;
+    /** Items created in the target but not owned by the intended user. */
+    totalOwnershipNotTransferred?: number;
   };
   results: MigrationItemResult[];
   discoveredUsers: string[];
+  identityMapping?: Record<string, string>;
   logs: string[];
 }

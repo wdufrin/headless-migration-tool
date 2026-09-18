@@ -19,6 +19,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { createTokenAuthMiddleware } from './security/authMiddleware.js';
+import { createHostAllowlistMiddleware } from './security/hostAllowlist.js';
 import { migrationRouter } from './routes/migration.js';
 import { discoveryRouter } from './routes/discovery.js';
 import { reportsRouter } from './routes/reports.js';
@@ -89,6 +90,17 @@ app.get('/checklist', (_req, res) => {
   return res.status(404).send('<h1>Checklist file not found</h1>');
 });
 
+// DNS rebinding protection. This runs BEFORE authentication because when
+// `requireAuth` is false (the loopback default) the Host check is the only thing
+// standing between a malicious web page and this server's destructive endpoints.
+// CORS does not cover this: it gates reading the response, not dispatching the
+// request, and simple requests are not preflighted at all.
+const hostAllowlistMiddleware = createHostAllowlistMiddleware({
+  boundHost: host,
+  additionalHostnames: process.env.MIGRATION_ALLOWED_HOSTNAMES?.split(',')
+});
+app.use('/api', hostAllowlistMiddleware);
+
 // Mitigation #2: Server-side token verification & global /api route protection
 const authMiddleware = createTokenAuthMiddleware({
   requireAuth
@@ -130,7 +142,20 @@ app.use('/api', (err: any, _req: express.Request, res: express.Response, _next: 
 if (process.env.NODE_ENV !== 'test') {
   const server = app.listen(port, host, () => {
     logger.info(`Gemini Enterprise Admin Migration Console running locally on http://${host}:${port}`);
-    logger.info(`🔒 Localhost Isolation active: Bound to ${host} (Local workstation only).`);
+    logger.info(`Bound to ${host} (loopback only). DNS rebinding protection is active on /api.`);
+
+    // Say plainly what the security posture is. The previous message claimed
+    // "Localhost Isolation active" regardless of whether anything was enforced,
+    // which read as reassurance the server had not earned.
+    if (requireAuth) {
+      logger.info('Authentication ENFORCED: /api requires a verified Google OAuth Bearer token.');
+    } else {
+      logger.warn(
+        'Authentication DISABLED: any process or user on this machine can call /api, ' +
+          'including the destructive teardown endpoints. Set REQUIRE_AUTH=true to enforce ' +
+          'OAuth Bearer token verification.'
+      );
+    }
   });
 
   server.on('error', (err: any) => {

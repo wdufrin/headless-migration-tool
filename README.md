@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.5.3-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.5-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.3-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.5-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -17,6 +17,19 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ---
 
+## 🚀 What's New in v1.5.5
+
+* **📊 CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`) & Interactive Mapping Report**:
+  * Added 1-click **CSV Upload (`📂 Upload Mapping CSV`)** and **2-Column Paste (`📋 Paste CSV / Users`)** inside the User Selection & Identity Mapping Table to support customers changing both username/local-part (`first.last` to employee number `#####`) and domain (`@XXXX.com` to `@YYYY.com`).
+  * Added an interactive **Source-to-Destination User Identity Mapping Report (`📊 Mapping Report`)** with 5 KPI cards (Total Users, CSV/1:1 Mapped, Domain Rule, Unmapped Warnings, Target ID Collisions), search/filter controls, and `.CSV` / `.JSON` exports.
+  * Added Section `2b. User Identity Mapping Report (Source ID ➔ Destination ID)` to the Markdown migration report and ensured case-insensitive, prefix-tolerant identity resolution (`IdentityMappingService.lookupTargetIdentity`) across all 5 migration engines.
+* **🔐 Okta 2FA / MFA Compatibility & Browser Session Extractor**:
+  * Added explicit Okta/Entra 2FA guidance and interactive OIDC/SAML Token Helper alongside OAuth 2.0 Client Credentials M2M flow.
+* **🧪 Verified Test Suite (285/285 Tests Passing)**:
+  * Full 285 automated unit and adversarial tests passing across 26 test suites with 100% success rate.
+
+---
+
 ## 🚀 What's New in v1.5.3
 
 * **🔒 Least-Privilege DWD User Impersonation Scopes**:
@@ -26,20 +39,13 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 * **🔑 Resilient Token Cache Partitioning**:
   * User impersonation token cache now partitions by execution mode (`DWD`, `WIF`, `ADMIN`) and requested scope sets, guaranteeing zero token collision across authentication modes or cross-project boundaries.
 * **📚 Enterprise Documentation & Console Parity**:
-  * Synchronized all installation, user guides, setup schemas, and web console badges to v1.5.3 (Enterprise Release).
-* **🧪 Test Suite Stability (106/106 Tests Passing)**:
-  * Full 106 automated tests passing across 14 test suites with 100% success rate.
+  * Synchronized all installation, user guides, setup schemas, and web console badges to v1.5.5 (Enterprise Release).
+* **🧪 Test Suite Stability**:
+  * Full automated test suite passing with 100% success rate.
 
 ---
 
 ## 🚀 What's New in v1.5.1
-
-* **🌐 Multi-Project Architecture & Cross-Project IAM Setup Instructions**:
-  * Full guided support for enterprise migrations across distinct Source and Target Google Cloud projects.
-  * Interactive Setup Wizard (Step 1 Card 1) dynamically prompts for Source and Target GCP project IDs and generates copy-paste ready `gcloud` IAM role binding commands for both environments (`roles/discoveryengine.admin`, `roles/serviceusage.serviceUsageConsumer`).
-  * Permanent Cross-Project Architecture documentation and explainer banners in the console and [JSON Setup Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md).
-* **🔒 Truthful WiF & Impersonation Testing**:
-  * Hardened `/api/wizard/test-wif` with live GCP IAM Credentials API (`generateAccessToken`) validation. Eliminates simulated passes and guarantees truthful failure reporting if impersonation permissions are missing or misconfigured.
 * **🛡️ Web Console Iframe Sandbox Security Fix**:
   * Resolved null-origin `SecurityError` exceptions caused by browser extensions inspecting embedded artifact and handover checklist iframes by adding `allow-same-origin` to iframe sandbox policies.
 * **🧪 Test Suite Expansion (106/106 Tests Passing)**:

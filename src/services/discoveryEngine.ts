@@ -115,28 +115,59 @@ export class DiscoveryEngineClient {
         }
 
         // 2. If 403 Permission Denied when impersonating a user (e.g., WiF token sent to Google Workspace target project),
-        // automatically retry using the alternate impersonation mechanism (DWD <-> WIF)
+        // retry using the alternate impersonation mechanism (DWD <-> WIF) -- but ONLY if that
+        // mechanism is actually configured.
+        //
+        // Previously this compared access token STRINGS to decide whether the alternate
+        // mechanism differed. Re-minting with the same mechanism yields a different string
+        // (the JWT `iat` advances), so the retry fired even when no alternate mechanism
+        // existed, logged that it was using DWD, and re-sent the same class of credential.
         if (response.status === 403 && forUserEmail) {
           const alternateMode: 'DWD' | 'WIF' = (initialMode === 'DWD') ? 'WIF' : 'DWD';
-          try {
-            const altToken = await this.auth.getAccessToken(forUserEmail, undefined, alternateMode);
-            if (altToken && altToken !== headers['Authorization']?.replace(/^Bearer\s+/i, '')) {
-              logger.info(`Permission denied with initial token for "${forUserEmail}"; retrying request with ${alternateMode} impersonation token...`);
-              headers['Authorization'] = `Bearer ${altToken}`;
-              response = await fetch(url, {
-                method,
-                headers,
-                body: body ? JSON.stringify(body) : undefined
-              });
-              if (response.ok) {
-                if (response.status === 204) return {} as T;
-                return (await response.json()) as T;
+          const initialLabel = initialMode || 'WIF';
+          const firstFailureDetail = (parsedError?.error?.message || errorText || '').slice(0, 500);
+          const mechanism = this.auth.getImpersonationMechanismStatus(forUserEmail, alternateMode);
+
+          if (!mechanism.available) {
+            // Do NOT retry. Retrying would re-mint the same credential class and fail identically,
+            // while the log implied a different mechanism had been tried.
+            logger.warn(
+              `Permission denied for "${forUserEmail}" using ${initialLabel} impersonation, and no ${alternateMode} fallback is possible because ${mechanism.reason}. ` +
+              `Not retrying. Original error: ${firstFailureDetail}`
+            );
+          } else {
+            try {
+              const altToken = await this.auth.getAccessToken(forUserEmail, undefined, alternateMode);
+              if (altToken) {
+                logger.info(
+                  `Permission denied for "${forUserEmail}" using ${initialLabel} impersonation; retrying with ${alternateMode} impersonation token. ` +
+                  `Original error: ${firstFailureDetail}`
+                );
+                headers['Authorization'] = `Bearer ${altToken}`;
+                response = await fetch(url, {
+                  method,
+                  headers,
+                  body: body ? JSON.stringify(body) : undefined
+                });
+                if (response.ok) {
+                  if (response.status === 204) return {} as T;
+                  return (await response.json()) as T;
+                }
+                errorText = await response.text();
+                try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+                logger.warn(`${alternateMode} impersonation retry for "${forUserEmail}" also failed with HTTP ${response.status}: ${(parsedError?.error?.message || errorText || '').slice(0, 500)}`);
+              } else {
+                logger.warn(
+                  `Permission denied for "${forUserEmail}" using ${initialLabel} impersonation. ${alternateMode} is configured but returned no token, so no retry was made. ` +
+                  `Original error: ${firstFailureDetail}`
+                );
               }
-              errorText = await response.text();
-              try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+            } catch (altErr: any) {
+              logger.warn(
+                `Permission denied for "${forUserEmail}" using ${initialLabel} impersonation, and the ${alternateMode} fallback failed: ${altErr.message}. ` +
+                `Original error: ${firstFailureDetail}`
+              );
             }
-          } catch (altErr: any) {
-            logger.debug(`Alternate ${alternateMode} token retry skipped for ${forUserEmail}: ${altErr.message}`);
           }
         }
 

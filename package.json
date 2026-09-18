@@ -1,6 +1,6 @@
 {
   "name": "gemini-enterprise-admin-migration-tool",
-  "version": "1.5.3",
+  "version": "1.5.5",
   "description": "Enterprise admin-driven headless application for migrating Gemini Enterprise notebooks, custom agents, and datastores across GCP environments on behalf of users.",
   "main": "dist/index.js",
   "bin": {

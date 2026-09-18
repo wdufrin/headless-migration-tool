@@ -16,8 +16,10 @@
 
 import express from 'express';
 import fs from 'fs';
-import { GcpAuthService } from '../services/gcpAuth.js';
+import { GcpAuthService, CLOUD_PLATFORM_SCOPE } from '../services/gcpAuth.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
+import { buildWorkforcePrincipal } from '../utils/wifPrincipal.js';
+import { checkSubjectMapping } from '../services/wifPreflight.js';
 import { logger } from '../utils/logger.js';
 
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
@@ -128,6 +130,86 @@ wizardRouter.post('/idp/auto-map', async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'AutoMapFailed', message: err.message });
+  }
+});
+
+// CSV Identity Mapping Upload / Parse & Audit Report Endpoint
+wizardRouter.post('/idp/parse-csv', async (req, res) => {
+  try {
+    const {
+      csvContent,
+      defaultSourceDomain,
+      defaultTargetDomain,
+      discoveredUsers = [],
+      domainRules = [],
+      existingExplicitMappings = {}
+    } = req.body || {};
+
+    if (!csvContent || typeof csvContent !== 'string' || !csvContent.trim()) {
+      return res.status(400).json({
+        error: 'EmptyCsvContent',
+        message: 'Please provide non-empty CSV content mapping source user IDs to target user IDs.'
+      });
+    }
+
+    const parseResult = IdentityMappingService.parseCsvMappings(csvContent, {
+      defaultSourceDomain,
+      defaultTargetDomain
+    });
+
+    const mergedMappings: Record<string, string> = {
+      ...(typeof existingExplicitMappings === 'object' ? existingExplicitMappings : {}),
+      ...parseResult.mappings
+    };
+
+    const mappingService = new IdentityMappingService({
+      domainRules: Array.isArray(domainRules) ? domainRules : [],
+      explicitMappings: mergedMappings
+    });
+
+    const csvKeys = new Set(Object.keys(parseResult.mappings));
+    const auditReport = mappingService.generateMappingAuditReport(
+      Array.isArray(discoveredUsers) ? discoveredUsers : [],
+      csvKeys
+    );
+
+    return res.status(200).json({
+      parseResult,
+      mergedMappings,
+      auditReport
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'CsvParseFailed', message: err.message });
+  }
+});
+
+// Generate Identity Mapping Audit & Reconciliation Report
+wizardRouter.post('/idp/mapping-report', async (req, res) => {
+  try {
+    const {
+      discoveredUsers = [],
+      explicitMappings = {},
+      csvMappedKeys = [],
+      domainRules = [],
+      fallbackUserEmail
+    } = req.body || {};
+
+    const mappingService = new IdentityMappingService({
+      domainRules: Array.isArray(domainRules) ? domainRules : [],
+      explicitMappings: typeof explicitMappings === 'object' ? explicitMappings : {},
+      defaultFallbackEmail: fallbackUserEmail
+    });
+
+    const auditReport = mappingService.generateMappingAuditReport(
+      Array.isArray(discoveredUsers) ? discoveredUsers : [],
+      new Set(Array.isArray(csvMappedKeys) ? csvMappedKeys.map((k: string) => String(k).toLowerCase().trim()) : [])
+    );
+
+    return res.status(200).json({
+      auditReport
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'MappingReportFailed', message: err.message });
   }
 });
 
@@ -729,7 +811,8 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
       workforcePoolId = 'wdufrin-okta',
       providerId = 'migration-dwd-provider',
       location = 'global',
-      issuerUri = 'https://gemini-migration.internal'
+      issuerUri = 'https://gemini-migration.internal',
+      attributeCondition
     } = req.body || {};
 
     const safePool = workforcePoolId.replace(/[^a-zA-Z0-9\-_]/g, '');
@@ -770,6 +853,13 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
       ]);
       const existing = JSON.parse(provDescribe || '{}');
       if (existing.name) {
+        // Track it even though we did not create it in this run. Teardown must be
+        // able to remove a provider left behind by an earlier session, otherwise
+        // the Shadow IdP outlives every rollback that follows.
+        AppStateTracker.recordWifProvider(safePool, safeProvider, safeLoc, {
+          issuerUri: existing.oidc?.issuerUri,
+          attributeCondition: existing.attributeCondition
+        });
         return res.status(200).json({
           success: true,
           alreadyExists: true,
@@ -777,9 +867,13 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
           provider: existing
         });
       }
-    } catch {}
+    } catch (describeErr: any) {
+      // A describe failure normally just means "not found", which is the happy
+      // path here. Log at debug so a genuine permission error is still traceable.
+      logger.debug(`Provider describe for "${safeProvider}" did not return an existing provider: ${describeErr.message}`);
+    }
 
-    const { stdout } = await execFileAsync('gcloud', [
+    const gcloudArgs = [
       'iam',
       'workforce-pools',
       'providers',
@@ -794,12 +888,30 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
       '--web-sso-assertion-claims-behavior=only-id-token-claims',
       '--jwk-json-path=./wif-migration-jwks.json',
       '--attribute-mapping=google.subject=assertion.sub,attribute.user_email=assertion.email'
-    ]);
+    ];
+
+    // Enterprise Security: Apply Attribute Condition to restrict token minting blast radius
+    const condition = typeof attributeCondition === 'string' && attributeCondition.trim()
+      ? attributeCondition.trim()
+      : 'assertion.email != "" && !assertion.sub.startsWith("service-")';
+
+    if (condition && condition.toLowerCase() !== 'none') {
+      gcloudArgs.push(`--attribute-condition=${condition}`);
+    }
+
+    const { stdout } = await execFileAsync('gcloud', gcloudArgs);
+
+    // Record before responding: an untracked provider is one teardown cannot remove.
+    AppStateTracker.recordWifProvider(safePool, safeProvider, safeLoc, {
+      issuerUri,
+      attributeCondition: condition && condition.toLowerCase() !== 'none' ? condition : undefined
+    });
 
     return res.status(200).json({
       success: true,
       message: `Successfully created workforce pool provider "${safeProvider}" in pool "${safePool}".`,
-      stdout
+      stdout,
+      attributeCondition: condition && condition.toLowerCase() !== 'none' ? condition : undefined
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'RegisterProviderFailed', message: err.message });
@@ -958,7 +1070,9 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       });
 
       try {
-        stsToken = await authService.mintWorkforceToken(targetUser);
+        // iamcredentials.generateAccessToken (used below to verify impersonation) rejects
+        // tokens scoped only to Discovery Engine, so request cloud-platform explicitly.
+        stsToken = await authService.mintWorkforceToken(targetUser, undefined, [CLOUD_PLATFORM_SCOPE]);
       } catch (mintErr: any) {
         return res.status(200).json({
           success: false,
@@ -1019,7 +1133,23 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
     }
 
     // 2. LIVE VERIFICATION OF IMPERSONATION & AUTHORIZATION (NO STUBS, NO FAKE SUCCESS)
-    const principalString = `principal://${audience.replace(/^\/\//, '')}/subject/${targetUser}`;
+    //
+    // The principal must be POOL-scoped. Appending "/subject/<user>" to the raw audience
+    // leaves the "/providers/<provider>" segment in place, which is not a valid IAM
+    // principal -- every remediation command built from it was rejected by gcloud.
+    let principalString: string;
+    try {
+      principalString = buildWorkforcePrincipal(audience, targetUser);
+    } catch (principalErr: any) {
+      logger.warn(`Could not build a Workforce principal for the remediation hints: ${principalErr.message}`);
+      return res.status(200).json({
+        success: false,
+        error: 'InvalidWorkforceAudience',
+        message: principalErr.message,
+        audience,
+        tokenUrl
+      });
+    }
 
     // Path A: User requested Service Account Impersonation
     if (saEmail) {
@@ -1111,23 +1241,44 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
         try {
           const errJson = JSON.parse(errText);
           errMsg = errJson.error?.message || errText;
-        } catch {}
+        } catch (parseErr: any) {
+          // Body was not JSON. Keep the raw text -- it is the only diagnostic we have.
+          logger.debug(`Authorization failure body was not JSON (${parseErr.message}); using raw text.`);
+        }
 
-        const remediation = [
-          `Grant the workforce principal (or pool) access to project "${testProject}":`,
-          `gcloud projects add-iam-policy-binding ${testProject} --role="roles/discoveryengine.admin" --member="${principalString}"`,
-          `gcloud projects add-iam-policy-binding ${testProject} --role="roles/serviceusage.serviceUsageConsumer" --member="${principalString}"`
-        ];
+        // Granting a role only helps if the minted token resolves to the principal the
+        // binding names. Check that before telling the operator to add IAM bindings.
+        const subjectCheck = await checkSubjectMapping(audience);
+
+        const remediation: string[] = [];
+        if (subjectCheck.verdict === 'MISMATCH') {
+          remediation.push(
+            'SUBJECT MAPPING MISMATCH -- adding IAM bindings for the principal below will NOT fix this:'
+          );
+          remediation.push(subjectCheck.summary);
+        } else {
+          if (subjectCheck.verdict === 'UNKNOWN') {
+            remediation.push(`Note: subject mapping was not verified. ${subjectCheck.summary}`);
+          }
+          remediation.push(`Grant the workforce principal (or pool) access to project "${testProject}":`);
+          remediation.push(
+            `gcloud projects add-iam-policy-binding ${testProject} --role="roles/discoveryengine.admin" --member="${principalString}"`
+          );
+          remediation.push(
+            `gcloud projects add-iam-policy-binding ${testProject} --role="roles/serviceusage.serviceUsageConsumer" --member="${principalString}"`
+          );
+        }
 
         return res.status(200).json({
           success: false,
-          error: 'WorkforcePrincipalNotAuthorized',
+          error: subjectCheck.verdict === 'MISMATCH' ? 'WorkforceSubjectMappingMismatch' : 'WorkforcePrincipalNotAuthorized',
           message: `STS token was minted for workforce user "${targetUser}", but principal "${principalString}" is NOT authorized in GCP project "${testProject}" (${gcpRes.status}): ${errMsg}`,
           audience,
           tokenUrl,
           isWorkforcePool: isWorkforce,
           impersonatedPrincipal: principalString,
           impersonatedServiceAccount: 'Direct Workforce Principal',
+          subjectMapping: subjectCheck,
           remediation
         });
       }
@@ -1144,9 +1295,13 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
         tokenPrefix: `${stsToken.substring(0, 18)}...`
       });
     } catch (gcpErr: any) {
+      // The STS mint succeeded but authorization was never verified. Reporting success
+      // here told operators the setup worked when nothing had been proven.
+      logger.warn(`WiF live verification could not be completed for "${targetUser}": ${gcpErr.message}`);
       return res.status(200).json({
-        success: true,
-        message: `STS token minted for workforce user "${targetUser}" (${stsToken.substring(0, 18)}...), but live GCP project connectivity check could not be completed: ${gcpErr.message}`,
+        success: false,
+        error: 'WorkforceVerificationIncomplete',
+        message: `STS token minted for workforce user "${targetUser}" (${stsToken.substring(0, 18)}...), but the live GCP authorization check could NOT be completed, so access is unverified: ${gcpErr.message}`,
         audience,
         tokenUrl,
         isWorkforcePool: isWorkforce,

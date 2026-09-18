@@ -183,4 +183,171 @@ describe('Phase 1 Security & Identity Lockdown Tests', () => {
     expect(report.summary.totalMissing).toBeGreaterThan(0);
     expect(report.overallGrade).not.toBe('A+');
   });
+
+  describe('Fix 1.7: mintWorkforceToken STS scope handling', () => {
+    const CLOUD_PLATFORM = 'https://www.googleapis.com/auth/cloud-platform';
+
+    /**
+     * Builds a GcpAuthService with a real signing key and a scripted STS.
+     * `stsResponder` receives the attempt index (0-based) and the parsed request body.
+     */
+    async function withMockedSts(
+      stsResponder: (attempt: number, body: any) => { ok: boolean; status: number; payload: any }
+    ) {
+      const { GcpAuthService } = await import('../src/services/gcpAuth.js');
+      const authService = new GcpAuthService({
+        wifConfigJson: {
+          type: 'external_account',
+          audience: '//iam.googleapis.com/locations/global/workforcePools/test-pool/providers/migration-dwd-provider',
+          token_url: 'https://sts.googleapis.com/v1/token',
+          credential_source: { file: './idp-subject-token.jwt' }
+        }
+      });
+
+      const crypto = await import('crypto');
+      const { privateKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+      });
+
+      const fs = await import('fs');
+      const existsSpy = vi.spyOn(fs.default, 'existsSync').mockImplementation((p: any) => p === 'wif-migration-key.pem');
+      const readSpy = vi.spyOn(fs.default, 'readFileSync').mockImplementation((p: any) => {
+        if (p === 'wif-migration-key.pem') return privateKey;
+        return '';
+      });
+
+      const scopes: string[] = [];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any, opts: any) => {
+        if (typeof url !== 'string' || !url.includes('sts.googleapis.com')) {
+          throw new Error(`Unexpected fetch to ${String(url)} -- the test only scripts STS.`);
+        }
+        const body = JSON.parse(opts.body);
+        const attempt = scopes.length;
+        scopes.push(body.scope);
+        const { ok, status, payload } = stsResponder(attempt, body);
+        return {
+          ok,
+          status,
+          json: async () => payload,
+          text: async () => (typeof payload === 'string' ? payload : JSON.stringify(payload))
+        } as any;
+      });
+
+      const restore = () => {
+        fetchSpy.mockRestore();
+        existsSpy.mockRestore();
+        readSpy.mockRestore();
+      };
+
+      return { authService, scopes, restore };
+    }
+
+    it('requests cloud-platform by default, because iamcredentials rejects Discovery-Engine-only tokens', async () => {
+      const { authService, scopes, restore } = await withMockedSts(() => ({
+        ok: true,
+        status: 200,
+        payload: { access_token: 'default-scope-token' }
+      }));
+
+      try {
+        const token = await authService.mintWorkforceToken('user@company.com');
+        expect(token).toBe('default-scope-token');
+        expect(scopes.length).toBe(1);
+        // Regression guard: narrowing this default produced a token that STS accepts
+        // but generateAccessToken rejects with "insufficient authentication scopes".
+        expect(scopes[0]).toContain(CLOUD_PLATFORM);
+      } finally {
+        restore();
+      }
+    });
+
+    it('honours caller-supplied narrow scopes verbatim (least privilege is opt-in)', async () => {
+      const { authService, scopes, restore } = await withMockedSts(() => ({
+        ok: true,
+        status: 200,
+        payload: { access_token: 'narrow-scope-token' }
+      }));
+
+      try {
+        const token = await authService.mintWorkforceToken('user@company.com', undefined, [
+          'https://www.googleapis.com/auth/discoveryengine.readwrite'
+        ]);
+        expect(token).toBe('narrow-scope-token');
+        expect(scopes).toEqual(['https://www.googleapis.com/auth/discoveryengine.readwrite']);
+        expect(scopes[0]).not.toContain(CLOUD_PLATFORM);
+      } finally {
+        restore();
+      }
+    });
+
+    it('retries with cloud-platform when STS rejects the scopes with invalid_scope', async () => {
+      const { authService, scopes, restore } = await withMockedSts((attempt) =>
+        attempt === 0
+          ? { ok: false, status: 400, payload: { error: 'invalid_scope', error_description: 'Invalid OAuth scope' } }
+          : { ok: true, status: 200, payload: { access_token: 'retry-token' } }
+      );
+
+      try {
+        const token = await authService.mintWorkforceToken('user@company.com', undefined, [
+          'https://www.googleapis.com/auth/some-scope-sts-hates'
+        ]);
+        expect(token).toBe('retry-token');
+        expect(scopes.length).toBe(2);
+        expect(scopes[1]).toBe(CLOUD_PLATFORM);
+      } finally {
+        restore();
+      }
+    });
+
+    it('does NOT retry when STS fails for a reason unrelated to scope', async () => {
+      // A bad audience / unknown provider is not fixable by changing scope. Retrying
+      // would double the latency and bury the real error.
+      const { authService, scopes, restore } = await withMockedSts(() => ({
+        ok: false,
+        status: 400,
+        payload: { error: 'invalid_request', error_description: 'Invalid value for "audience"' }
+      }));
+
+      try {
+        const token = await authService.mintWorkforceToken('user@company.com');
+        expect(token).toBeUndefined();
+        expect(scopes.length).toBe(1);
+      } finally {
+        restore();
+      }
+    });
+
+    it('does not retry indefinitely when the retry itself fails', async () => {
+      const { authService, scopes, restore } = await withMockedSts(() => ({
+        ok: false,
+        status: 400,
+        payload: { error: 'invalid_scope', error_description: 'Invalid OAuth scope' }
+      }));
+
+      try {
+        const token = await authService.mintWorkforceToken('user@company.com', undefined, ['https://example.invalid/scope']);
+        expect(token).toBeUndefined();
+        expect(scopes.length).toBe(2);
+      } finally {
+        restore();
+      }
+    });
+
+    it('treats HTTP 200 without an access_token as a failure, not success', async () => {
+      const { authService, restore } = await withMockedSts(() => ({
+        ok: true,
+        status: 200,
+        payload: { issued_token_type: 'urn:ietf:params:oauth:token-type:access_token' }
+      }));
+
+      try {
+        await expect(authService.mintWorkforceToken('user@company.com')).resolves.toBeUndefined();
+      } finally {
+        restore();
+      }
+    });
+  });
 });
+

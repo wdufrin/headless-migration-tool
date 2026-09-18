@@ -41,7 +41,17 @@ export interface PermissionCheckItem {
   id: string;
   category: 'SOURCE_DISCOVERY' | 'TARGET_RESTORE' | 'WORKSPACE_OAUTH' | 'WIF_FEDERATION' | 'OVER_PROVISIONING';
   name: string;
-  status: 'GRANTED' | 'MISSING' | 'OVER_PROVISIONED' | 'SAFE';
+  /**
+   * GRANTED / MISSING / OVER_PROVISIONED are *evidence-backed* verdicts: the auditor
+   * performed a check and observed the result.
+   *
+   * UNKNOWN means the check could not be completed (no permission, gcloud missing,
+   * network failure). It must never be rendered as a pass - the previous code turned
+   * failed org-policy reads into GRANTED, which fabricated verdicts.
+   *
+   * INFO is contextual information that verifies nothing and therefore earns no score.
+   */
+  status: 'GRANTED' | 'MISSING' | 'OVER_PROVISIONED' | 'UNKNOWN' | 'INFO';
   level: 'REQUIRED' | 'RECOMMENDED' | 'DANGEROUS';
   details: string;
   remediation?: string;
@@ -57,14 +67,20 @@ export interface PermissionCheckItem {
 }
 
 export interface ScopeAuditItem {
+  /** BROAD = functional but far wider than least-privilege (e.g. cloud-platform). */
   scope: string;
-  status: 'ALLOWED' | 'EXCESSIVE' | 'OPTIONAL';
+  status: 'ALLOWED' | 'EXCESSIVE' | 'OPTIONAL' | 'BROAD';
   description: string;
 }
 
 export interface PermissionAuditReport {
   overallGrade: 'A+' | 'A' | 'B' | 'C' | 'F';
-  overallStatus: 'LEAST_PRIVILEGE_COMPLIANT' | 'OVER_PROVISIONED' | 'MISSING_PERMISSIONS' | 'AUTHENTICATION_FAILED';
+  overallStatus:
+    | 'LEAST_PRIVILEGE_COMPLIANT'
+    | 'OVER_PROVISIONED'
+    | 'MISSING_PERMISSIONS'
+    | 'AUTHENTICATION_FAILED'
+    | 'VERIFICATION_INCOMPLETE';
   authArchitecture: {
     sourceAuthType: 'WORKFORCE_IDENTITY_FEDERATION' | 'GOOGLE_WORKSPACE_DWD' | 'GCP_SERVICE_ACCOUNT';
     targetAuthType: 'WORKFORCE_IDENTITY_FEDERATION' | 'GOOGLE_WORKSPACE_DWD' | 'GCP_SERVICE_ACCOUNT';
@@ -77,6 +93,8 @@ export interface PermissionAuditReport {
     totalGranted: number;
     totalMissing: number;
     totalOverProvisioned: number;
+    /** Checks that could not be completed. A non-zero value means this report is incomplete. */
+    totalUnknown: number;
     score: number; // 0 - 100
   };
   scopesAudit: ScopeAuditItem[];
@@ -121,6 +139,8 @@ export class PermissionAuditor {
     let totalGranted = 0;
     let totalMissing = 0;
     let totalOverProvisioned = 0;
+    let totalUnknown = 0;
+
 
     let wifAudience = '';
 
@@ -153,38 +173,116 @@ export class PermissionAuditor {
         });
         totalGranted++;
       } else {
+        // No parseable WiF config on disk. The tool can still mint tokens programmatically,
+        // but nothing here has been *verified*, so this must not be reported as GRANTED.
         permissions.push({
           id: 'AUTH_WIF_CONFIG',
           category: 'WIF_FEDERATION',
           name: 'Source Workforce Identity Federation (WiF) Pool Config',
-          status: 'GRANTED',
+          status: 'UNKNOWN',
           level: 'RECOMMENDED',
-          details: `Source user "${rawUser}" is an external Entra ID/WiF identity. Programmatic token minting active via migration-dwd-provider.`,
-          remediation: `(Optional) Save workforce-identity-config.json in the WiF tab for standard Google Cloud SDK / ADC token exchange.`,
+          details:
+            `No valid Workforce Identity Federation config was found at "${wifPath}"` +
+            `${wifConfigExists ? ' (the file exists but could not be parsed as JSON)' : ' (file not present)'}. ` +
+            `The audience and pool could not be read, so the federation setup for "${rawUser}" was not verified.`,
+          remediation: `Save workforce-identity-config.json from the WiF tab so the audience and pool can be validated.`,
           fixAction: {
             type: 'GENERATE_WIF_CONFIG',
             title: '1-Click Save WiF ADC Config',
             steps: [
-              '1. Automatically generates workforce-identity-config.json using the active workforce pool (wdufrin-entra) and provider (migration-dwd-provider).',
+              '1. Generates workforce-identity-config.json from the active workforce pool and provider.',
               '2. Saves the file to the root directory for standard Google Cloud SDK / ADC token exchange.',
               '3. Allows standard Google Cloud client libraries to authenticate without manual token injection.'
             ]
           }
         });
-        totalGranted++;
+        totalUnknown++;
       }
 
-      // 1b. Validate Source User Identity Mapping
-      permissions.push({
-        id: 'AUTH_WIF_MAPPING',
-        category: 'WIF_FEDERATION',
-        name: 'Cross-IdP User Identity Resolution',
-        status: 'GRANTED',
-        level: 'REQUIRED',
-        details: `External IdP user "${rawUser}" successfully mapped to target identity "${targetUser}".`
-      });
-      totalGranted++;
+      // 1b. Validate Source User Identity Mapping.
+      //
+      // This previously asserted GRANTED - "successfully mapped to target identity" -
+      // unconditionally, without performing any check. That is precisely the failure mode
+      // seen in the field: when the migration provider maps google.subject=assertion.sub
+      // but the pool's real providers map assertion.email.lowerAscii(), impersonation of
+      // mixed-case addresses silently fails while this check reported a pass.
+      if (wifAudience) {
+        try {
+          const { checkSubjectMapping } = await import('./wifPreflight.js');
+          const preflight = await checkSubjectMapping(wifAudience);
+
+          if (preflight.verdict === 'MATCH') {
+            permissions.push({
+              id: 'AUTH_WIF_MAPPING',
+              category: 'WIF_FEDERATION',
+              name: 'Cross-IdP User Identity Resolution',
+              status: 'GRANTED',
+              level: 'REQUIRED',
+              details: `Verified against the live workforce pool: ${preflight.summary}`
+            });
+            totalGranted++;
+          } else if (preflight.verdict === 'MISMATCH') {
+            permissions.push({
+              id: 'AUTH_WIF_MAPPING',
+              category: 'WIF_FEDERATION',
+              name: 'Cross-IdP User Identity Resolution',
+              status: 'MISSING',
+              level: 'REQUIRED',
+              details:
+                `Subject mapping mismatch detected in the live workforce pool: ${preflight.summary} ` +
+                `IAM bindings reference a pool-scoped subject, so impersonation of "${rawUser}" will be denied ` +
+                `whenever the signed subject does not match the subject the production provider produces.`,
+              remediation:
+                `Align the migration provider's google.subject mapping with the pool's production providers, e.g.: ` +
+                `gcloud iam workforce-pools providers update-oidc migration-dwd-provider ` +
+                `--workforce-pool=${preflight.poolId || '<POOL>'} --location=global ` +
+                `--attribute-mapping='google.subject=assertion.email.lowerAscii(),attribute.user_email=assertion.email'`
+            });
+            totalMissing++;
+          } else {
+            permissions.push({
+              id: 'AUTH_WIF_MAPPING',
+              category: 'WIF_FEDERATION',
+              name: 'Cross-IdP User Identity Resolution',
+              status: 'UNKNOWN',
+              level: 'REQUIRED',
+              details: `Subject mapping could not be verified: ${preflight.summary}${preflight.error ? ` (${preflight.error})` : ''}`,
+              remediation:
+                `Inspect the pool manually: gcloud iam workforce-pools providers list ` +
+                `--workforce-pool=${preflight.poolId || '<POOL>'} --location=global ` +
+                `--format="table(name, attributeMapping['google.subject'])"`
+            });
+            totalUnknown++;
+          }
+        } catch (mapErr: any) {
+          permissions.push({
+            id: 'AUTH_WIF_MAPPING',
+            category: 'WIF_FEDERATION',
+            name: 'Cross-IdP User Identity Resolution',
+            status: 'UNKNOWN',
+            level: 'REQUIRED',
+            details: `Subject mapping preflight could not run for "${rawUser}": ${mapErr.message}`,
+            remediation: `Verify the workforce pool provider mappings manually before migrating.`
+          });
+          totalUnknown++;
+        }
+      } else {
+        permissions.push({
+          id: 'AUTH_WIF_MAPPING',
+          category: 'WIF_FEDERATION',
+          name: 'Cross-IdP User Identity Resolution',
+          status: 'UNKNOWN',
+          level: 'REQUIRED',
+          details:
+            `No WiF audience is configured, so the workforce pool could not be identified and the ` +
+            `google.subject mapping for "${rawUser}" was not checked. A subject mismatch here causes ` +
+            `silent per-user impersonation failures.`,
+          remediation: `Save workforce-identity-config.json from the WiF tab, then re-run this audit.`
+        });
+        totalUnknown++;
+      }
     } else {
+
       // Source is Google Workspace DWD
       try {
         srcToken = await this.authService.getAccessToken(rawUser);
@@ -296,8 +394,15 @@ export class PermissionAuditor {
     if (tokenInfo && tokenInfo.scope) {
       const activeScopes = tokenInfo.scope.split(' ').map((s: string) => s.trim()).filter(Boolean);
 
+      // cloud-platform is the single broadest Google Cloud OAuth scope. It is handled
+      // separately because it is genuinely REQUIRED for the WiF flow (iamcredentials
+      // generateAccessToken rejects Discovery-Engine-only scopes), yet in a Workspace
+      // Domain-Wide Delegation allowlist it lets the service account act as ANY user
+      // against EVERY Google Cloud API. Labelling it "least-privilege" was wrong in
+      // both modes; the real privilege boundary is the principal's IAM roles.
+      const CLOUD_PLATFORM = 'https://www.googleapis.com/auth/cloud-platform';
+
       const knownSafeScopes: Record<string, string> = {
-        'https://www.googleapis.com/auth/cloud-platform': 'Full Google Cloud API Gateway (Recommended Least-Privilege Scope)',
         'https://www.googleapis.com/auth/discoveryengine.readwrite': 'Discovery Engine Full Read/Write Scope',
         'https://www.googleapis.com/auth/discoveryengine.assist.readwrite': 'Gemini Enterprise Assist Conversation Scope',
         'https://www.googleapis.com/auth/gmail.send': 'Send-Only Email Scope for Migration Notifications (Safe)'
@@ -311,7 +416,49 @@ export class PermissionAuditor {
       };
 
       for (const scope of activeScopes) {
-        if (dangerousScopes[scope]) {
+        if (scope === CLOUD_PLATFORM) {
+          scopesAudit.push({
+            scope,
+            status: 'BROAD',
+            description:
+              'Full access to every Google Cloud API the principal is authorised for. ' +
+              'This is the broadest GCP scope - it is NOT least-privilege. ' +
+              'Effective privilege is bounded by the principal\'s IAM roles, not by this scope.'
+          });
+
+          // In WiF this scope is required; in DWD it is a real over-provisioning finding,
+          // because the DWD allowlist grants it for impersonation of every user in the domain.
+          if (isTargetWif) {
+            permissions.push({
+              id: 'SCOPE_BROAD_CLOUD_PLATFORM',
+              category: 'OVER_PROVISIONING',
+              name: 'Broad Scope: cloud-platform (required for WiF)',
+              status: 'INFO',
+              level: 'RECOMMENDED',
+              details:
+                'cloud-platform is present and is required by Workforce Identity Federation: ' +
+                'iamcredentials.generateAccessToken rejects Discovery-Engine-only scopes. ' +
+                'It is not least-privilege, so restrict the federated principal using IAM roles.'
+            });
+          } else {
+            permissions.push({
+              id: 'SCOPE_BROAD_CLOUD_PLATFORM',
+              category: 'OVER_PROVISIONING',
+              name: 'Over-Provisioned Scope: cloud-platform (DWD)',
+              status: 'OVER_PROVISIONED',
+              level: 'DANGEROUS',
+              details:
+                'The Domain-Wide Delegation allowlist grants cloud-platform, which lets this service account ' +
+                'impersonate any user in the domain against every Google Cloud API - far beyond what a ' +
+                'Gemini Enterprise migration requires.',
+              remediation:
+                'In admin.google.com > Security > API Controls > Domain-Wide Delegation, replace cloud-platform with the ' +
+                'narrow migration scopes: https://www.googleapis.com/auth/discoveryengine.readwrite and ' +
+                'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+            });
+            totalOverProvisioned++;
+          }
+        } else if (dangerousScopes[scope]) {
           scopesAudit.push({
             scope,
             status: 'EXCESSIVE',
@@ -333,6 +480,7 @@ export class PermissionAuditor {
             status: scope.includes('gmail.send') ? 'OPTIONAL' : 'ALLOWED',
             description: knownSafeScopes[scope]
           });
+
         } else {
           scopesAudit.push({
             scope,
@@ -549,131 +697,289 @@ export class PermissionAuditor {
     }
 
     // 5. Audit Target Project Organization Policies (SA Key Creation, Cross-Project, Allowed Domains)
+    //
+    // IMPORTANT: a failed policy read is NOT evidence that the policy is unenforced.
+    // `gcloud org-policies describe` fails with PERMISSION_DENIED when the caller lacks
+    // orgpolicy.policy.get, when gcloud is absent, or when the project does not exist.
+    // Reporting those cases as GRANTED ("policy allows key creation") fabricates a verdict
+    // the tool never established, so every unreadable constraint is reported as UNKNOWN.
     if (targetProject) {
-      try {
-        const { execFile } = await import('child_process');
-        const { promisify } = await import('util');
-        const execFileAsync = promisify(execFile);
-        const safeTargetProj = targetProject.replace(/[^a-zA-Z0-9\-_]/g, '');
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const safeTargetProj = targetProject.replace(/[^a-zA-Z0-9\-_]/g, '');
 
-        const checkPolicy = async (constraint: string): Promise<any> => {
-          try {
-            const { stdout } = await execFileAsync('gcloud', [
-              'org-policies',
-              'describe',
-              constraint,
-              '--effective',
-              `--project=${safeTargetProj}`,
-              '--format=json'
-            ]);
-            return JSON.parse(stdout || '{}');
-          } catch {
-            return null;
-          }
-        };
+      type PolicyRead =
+        | { ok: true; policy: any }
+        | { ok: false; error: string };
 
-        const [keyCreationPolicy, crossProjectPolicy, allowedDomainsPolicy] = await Promise.all([
-          checkPolicy('iam.disableServiceAccountKeyCreation'),
-          checkPolicy('iam.disableCrossProjectServiceAccountUsage'),
-          checkPolicy('iam.allowedPolicyMemberDomains')
-        ]);
-
-        const isKeyCreationDisabled = keyCreationPolicy?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
-        const isCrossProjectDisabled = crossProjectPolicy?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
-
-        if (isTargetWif) {
-          permissions.push({
-            id: 'ORG_POLICY_KEY_CREATION',
-            category: 'WIF_FEDERATION',
-            name: 'Org Policy: Service Account Key Exemption (WiF)',
-            status: 'SAFE',
-            level: 'REQUIRED',
-            details: `Workforce Identity Federation (WiF) uses short-lived tokens via GCP STS and is completely exempt from service account key restrictions.`
-          });
-          totalGranted++;
-        } else {
-          if (isKeyCreationDisabled) {
-            permissions.push({
-              id: 'ORG_POLICY_KEY_CREATION',
-              category: 'TARGET_RESTORE',
-              name: 'Org Policy: Service Account Key Creation (DWD)',
-              status: 'MISSING',
-              level: 'REQUIRED',
-              details: `Organization policy "constraints/iam.disableServiceAccountKeyCreation" is enforced on ${safeTargetProj}. Generating sa-dwd-key.json will fail.`,
-              remediation: `Apply a project-level override on ${safeTargetProj} (enforce: false) or switch to Workforce Identity Federation (WiF).`,
-              fixAction: {
-                type: 'NAVIGATE_TAB',
-                title: 'Apply Org Policy Override in DWD Tab',
-                targetTab: 'dwd',
-                steps: [
-                  `1. Switch to the Domain-Wide Delegation (DWD) tab in the wizard.`,
-                  `2. Click "1-Click Project Override" under Step 1 to allow key creation for ${safeTargetProj}.`,
-                  `3. Or switch to the WiF tab for keyless authentication.`
-                ]
-              }
-            });
-            totalMissing++;
-          } else {
-            permissions.push({
-              id: 'ORG_POLICY_KEY_CREATION',
-              category: 'TARGET_RESTORE',
-              name: 'Org Policy: Service Account Key Creation (DWD)',
-              status: 'GRANTED',
-              level: 'REQUIRED',
-              details: `Organization policy allows service account key creation on project ${safeTargetProj}.`
-            });
-            totalGranted++;
-          }
+      const checkPolicy = async (constraint: string): Promise<PolicyRead> => {
+        try {
+          const { stdout } = await execFileAsync('gcloud', [
+            'org-policies',
+            'describe',
+            constraint,
+            '--effective',
+            `--project=${safeTargetProj}`,
+            '--format=json'
+          ]);
+          return { ok: true, policy: JSON.parse(stdout || '{}') };
+        } catch (err: any) {
+          // Never swallow: the reason the read failed determines whether the
+          // downstream verdict is trustworthy.
+          const detail = (err?.stderr || err?.message || String(err)).toString().trim();
+          logger.warn(
+            `Org policy read failed for "${constraint}" on project "${safeTargetProj}": ${detail}`
+          );
+          return { ok: false, error: detail.split('\n')[0] || 'unknown error' };
         }
+      };
 
-        if (isCrossProjectDisabled) {
-          permissions.push({
-            id: 'ORG_POLICY_CROSS_PROJECT',
-            category: 'TARGET_RESTORE',
-            name: 'Org Policy: Cross-Project Service Account Usage',
-            status: 'SAFE',
-            level: 'RECOMMENDED',
-            details: `Cross-project service account usage is disabled by org policy. Service account must belong natively to project ${safeTargetProj}.`
-          });
-          totalGranted++;
-        }
+      const [keyCreationRead, crossProjectRead, allowedDomainsRead] = await Promise.all([
+        checkPolicy('constraints/iam.disableServiceAccountKeyCreation'),
+        checkPolicy('constraints/iam.disableCrossProjectServiceAccountUsage'),
+        checkPolicy('constraints/iam.allowedPolicyMemberDomains')
+      ]);
 
-        const allowedValues = allowedDomainsPolicy?.spec?.rules?.flatMap((r: any) => r.values?.allowedValues || []) || [];
+      const isEnforced = (policy: any): boolean =>
+        policy?.spec?.rules?.some((r: any) => r.enforce === true) ?? false;
+
+      const pushPolicyUnknown = (
+        id: string,
+        name: string,
+        constraint: string,
+        error: string,
+        category: PermissionCheckItem['category'] = 'TARGET_RESTORE'
+      ) => {
+        permissions.push({
+          id,
+          category,
+          name,
+          status: 'UNKNOWN',
+          level: 'RECOMMENDED',
+          details:
+            `Could not read organization policy "${constraint}" on project ${safeTargetProj}: ${error}. ` +
+            `This check did not run - no conclusion about this constraint should be drawn from this report.`,
+          remediation:
+            `Grant roles/orgpolicy.policyViewer (or orgpolicy.policy.get) on ${safeTargetProj} to the account running this tool, ` +
+            `or verify the constraint manually: gcloud org-policies describe ${constraint} --effective --project=${safeTargetProj}`
+        });
+        totalUnknown++;
+      };
+
+      // 5a. Service Account Key Creation
+      if (isTargetWif) {
+        // Factually true, but it verifies nothing about this environment, so it earns no score.
+        permissions.push({
+          id: 'ORG_POLICY_KEY_CREATION',
+          category: 'WIF_FEDERATION',
+          name: 'Org Policy: Service Account Key Exemption (WiF)',
+          status: 'INFO',
+          level: 'RECOMMENDED',
+          details:
+            `Not applicable: Workforce Identity Federation uses short-lived STS tokens and does not create ` +
+            `service account keys, so "constraints/iam.disableServiceAccountKeyCreation" cannot block this migration. ` +
+            `This is a property of WiF, not a verified check against project ${safeTargetProj}.`
+        });
+      } else if (!keyCreationRead.ok) {
+        pushPolicyUnknown(
+          'ORG_POLICY_KEY_CREATION',
+          'Org Policy: Service Account Key Creation (DWD)',
+          'constraints/iam.disableServiceAccountKeyCreation',
+          keyCreationRead.error
+        );
+      } else if (isEnforced(keyCreationRead.policy)) {
+        permissions.push({
+          id: 'ORG_POLICY_KEY_CREATION',
+          category: 'TARGET_RESTORE',
+          name: 'Org Policy: Service Account Key Creation (DWD)',
+          status: 'MISSING',
+          level: 'REQUIRED',
+          details: `Organization policy "constraints/iam.disableServiceAccountKeyCreation" is enforced on ${safeTargetProj}. Generating sa-dwd-key.json will fail.`,
+          remediation: `Apply a project-level override on ${safeTargetProj} (enforce: false) or switch to Workforce Identity Federation (WiF).`,
+          fixAction: {
+            type: 'NAVIGATE_TAB',
+            title: 'Apply Org Policy Override in DWD Tab',
+            targetTab: 'dwd',
+            steps: [
+              `1. Switch to the Domain-Wide Delegation (DWD) tab in the wizard.`,
+              `2. Click "1-Click Project Override" under Step 1 to allow key creation for ${safeTargetProj}.`,
+              `3. Or switch to the WiF tab for keyless authentication.`
+            ]
+          }
+        });
+        totalMissing++;
+      } else {
+        permissions.push({
+          id: 'ORG_POLICY_KEY_CREATION',
+          category: 'TARGET_RESTORE',
+          name: 'Org Policy: Service Account Key Creation (DWD)',
+          status: 'GRANTED',
+          level: 'REQUIRED',
+          details: `Verified: organization policy allows service account key creation on project ${safeTargetProj}.`
+        });
+        totalGranted++;
+      }
+
+      // 5b. Cross-Project Service Account Usage.
+      // Enforcement is a CONSTRAINT on the migration, not a permission the tool holds,
+      // so it is reported as INFO and never credited to the score.
+      if (!crossProjectRead.ok) {
+        pushPolicyUnknown(
+          'ORG_POLICY_CROSS_PROJECT',
+          'Org Policy: Cross-Project Service Account Usage',
+          'constraints/iam.disableCrossProjectServiceAccountUsage',
+          crossProjectRead.error
+        );
+      } else if (isEnforced(crossProjectRead.policy)) {
+        permissions.push({
+          id: 'ORG_POLICY_CROSS_PROJECT',
+          category: 'TARGET_RESTORE',
+          name: 'Org Policy: Cross-Project Service Account Usage',
+          status: 'INFO',
+          level: 'RECOMMENDED',
+          details:
+            `Cross-project service account usage is DISABLED by org policy on ${safeTargetProj}. ` +
+            `The migration service account must be created natively inside ${safeTargetProj}; ` +
+            `reusing a service account from another project will fail.`,
+          remediation: `Create the migration service account directly in ${safeTargetProj}, or request an override for "constraints/iam.disableCrossProjectServiceAccountUsage".`
+        });
+      }
+
+      // 5c. Domain-Restricted Sharing.
+      if (!allowedDomainsRead.ok) {
+        pushPolicyUnknown(
+          'ORG_POLICY_ALLOWED_DOMAINS',
+          'Org Policy: Domain-Restricted Sharing',
+          'constraints/iam.allowedPolicyMemberDomains',
+          allowedDomainsRead.error
+        );
+      } else {
+        const allowedValues =
+          allowedDomainsRead.policy?.spec?.rules?.flatMap((r: any) => r.values?.allowedValues || []) || [];
         if (allowedValues.length > 0) {
           permissions.push({
             id: 'ORG_POLICY_ALLOWED_DOMAINS',
             category: 'TARGET_RESTORE',
             name: 'Org Policy: Domain-Restricted Sharing',
-            status: 'SAFE',
+            status: 'INFO',
             level: 'RECOMMENDED',
-            details: `Domain-restricted sharing is active (${allowedValues.length} allowed customer IDs / principal sets). Ensure identityMapping maps external users.`
+            details:
+              `Domain-restricted sharing is ACTIVE on ${safeTargetProj} (${allowedValues.length} allowed customer IDs / principal sets). ` +
+              `IAM bindings for external or federated users outside those domains will be rejected.`,
+            remediation: `Confirm the target users' customer ID is present in "constraints/iam.allowedPolicyMemberDomains", or request an override on ${safeTargetProj}.`
           });
-          totalGranted++;
         }
-      } catch (err: any) {
-        logger.debug(`PermissionAuditor org policy check skipped: ${err.message}`);
       }
     }
 
-    // 6. Over-Provisioning & Destructive Safety Check on Source
-    if (effectiveToken || isTargetWif) {
-      permissions.push({
-        id: 'SEC_DESTRUCTIVE_ENGINE_DELETE',
-        category: 'OVER_PROVISIONING',
-        name: 'Source Engine Deletion Protection',
-        status: 'SAFE',
-        level: 'RECOMMENDED',
-        details: `Source environment is immutable. No destructive teardown permissions exposed.`
-      });
-      totalGranted++;
+    // 6. Destructive Permission Exposure on the Source Project.
+    //
+    // This previously asserted "Source environment is immutable. No destructive teardown
+    // permissions exposed." without performing any check. That claim is frequently FALSE:
+    // an operator with roles/discoveryengine.admin or roles/owner does hold engines.delete.
+    // It is now resolved with a real cloudresourcemanager testIamPermissions probe.
+    if (effectiveToken && sourceProject) {
+      const DESTRUCTIVE_SOURCE_PERMISSIONS = [
+        'discoveryengine.engines.delete',
+        'discoveryengine.dataStores.delete',
+        'discoveryengine.documents.delete'
+      ];
+
+      try {
+        const permRes = await fetch(
+          `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(sourceProject)}:testIamPermissions`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${effectiveToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ permissions: DESTRUCTIVE_SOURCE_PERMISSIONS })
+          }
+        );
+
+        if (!permRes.ok) {
+          const body = await permRes.text().catch(() => '');
+          permissions.push({
+            id: 'SEC_DESTRUCTIVE_ENGINE_DELETE',
+            category: 'OVER_PROVISIONING',
+            name: 'Source Destructive Permission Exposure',
+            status: 'UNKNOWN',
+            level: 'RECOMMENDED',
+            details:
+              `Could not determine whether the migration principal holds destructive permissions on source project ` +
+              `"${sourceProject}" (HTTP ${permRes.status}${body ? `: ${body.slice(0, 200)}` : ''}). ` +
+              `The source must NOT be assumed read-only.`,
+            remediation: `Verify manually: gcloud projects get-iam-policy ${sourceProject} and confirm no principal used by this tool holds ${DESTRUCTIVE_SOURCE_PERMISSIONS.join(', ')}.`
+          });
+          totalUnknown++;
+        } else {
+          const heldRaw: any = await permRes.json().catch(() => ({}));
+          const held: string[] = Array.isArray(heldRaw?.permissions) ? heldRaw.permissions : [];
+
+
+          if (held.length > 0) {
+            permissions.push({
+              id: 'SEC_DESTRUCTIVE_ENGINE_DELETE',
+              category: 'OVER_PROVISIONING',
+              name: 'Source Destructive Permission Exposure',
+              status: 'OVER_PROVISIONED',
+              level: 'DANGEROUS',
+              details:
+                `The migration principal holds ${held.length} destructive permission(s) on the SOURCE project ` +
+                `"${sourceProject}": ${held.join(', ')}. The source is therefore NOT immutable - a bug or ` +
+                `misdirected teardown could permanently delete source data before the migration is verified.`,
+              remediation: `Run the migration with a read-only principal on the source (e.g. roles/discoveryengine.viewer) and remove delete permissions from ${sourceProject}.`
+            });
+            totalOverProvisioned++;
+          } else {
+            permissions.push({
+              id: 'SEC_DESTRUCTIVE_ENGINE_DELETE',
+              category: 'OVER_PROVISIONING',
+              name: 'Source Destructive Permission Exposure',
+              status: 'GRANTED',
+              level: 'RECOMMENDED',
+              details:
+                `Verified via testIamPermissions: the migration principal holds none of ` +
+                `${DESTRUCTIVE_SOURCE_PERMISSIONS.join(', ')} on source project "${sourceProject}".`
+            });
+            totalGranted++;
+          }
+        }
+      } catch (e: any) {
+        permissions.push({
+          id: 'SEC_DESTRUCTIVE_ENGINE_DELETE',
+          category: 'OVER_PROVISIONING',
+          name: 'Source Destructive Permission Exposure',
+          status: 'UNKNOWN',
+          level: 'RECOMMENDED',
+          details: `Destructive-permission probe against "${sourceProject}" could not complete: ${e.message}. The source must NOT be assumed read-only.`,
+          remediation: `Verify manually with: gcloud projects get-iam-policy ${sourceProject}`
+        });
+        totalUnknown++;
+      }
     }
 
     // Calculate Summary & Security Grade
     const totalChecked = permissions.length;
-    const score = Math.max(0, Math.round(((totalGranted - (totalOverProvisioned * 1.5)) / Math.max(totalChecked, 1)) * 100));
+
+    // Only checks that actually produced evidence can contribute to the score.
+    // INFO items are contextual and are excluded from both numerator and denominator;
+    // UNKNOWN items count against completeness so an unverifiable audit cannot grade A+.
+    const scorable = permissions.filter((p) => p.status !== 'INFO').length;
+    const score = Math.max(
+      0,
+      Math.round(((totalGranted - totalOverProvisioned * 1.5) / Math.max(scorable, 1)) * 100)
+    );
 
     let overallGrade: 'A+' | 'A' | 'B' | 'C' | 'F' = 'A+';
-    let overallStatus: 'LEAST_PRIVILEGE_COMPLIANT' | 'OVER_PROVISIONED' | 'MISSING_PERMISSIONS' | 'AUTHENTICATION_FAILED' = 'LEAST_PRIVILEGE_COMPLIANT';
+    let overallStatus:
+      | 'LEAST_PRIVILEGE_COMPLIANT'
+      | 'OVER_PROVISIONED'
+      | 'MISSING_PERMISSIONS'
+      | 'AUTHENTICATION_FAILED'
+      | 'VERIFICATION_INCOMPLETE' = 'LEAST_PRIVILEGE_COMPLIANT';
 
     if (!effectiveToken && !isTargetWif) {
       overallGrade = 'F';
@@ -687,10 +993,16 @@ export class PermissionAuditor {
     } else if (totalMissing > 0) {
       overallGrade = 'B';
       overallStatus = 'MISSING_PERMISSIONS';
+    } else if (totalUnknown > 0) {
+      // Nothing failed, but the audit could not verify everything it claims to cover.
+      // Reporting "LEAST_PRIVILEGE_COMPLIANT" here would be an unearned pass.
+      overallGrade = 'B';
+      overallStatus = 'VERIFICATION_INCOMPLETE';
     } else {
       overallGrade = 'A+';
       overallStatus = 'LEAST_PRIVILEGE_COMPLIANT';
     }
+
 
     // Gather unique remediations
     for (const p of permissions) {
@@ -714,8 +1026,10 @@ export class PermissionAuditor {
         totalGranted,
         totalMissing,
         totalOverProvisioned,
+        totalUnknown,
         score
       },
+
       scopesAudit,
       permissions,
       remediations

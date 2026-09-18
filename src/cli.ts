@@ -31,7 +31,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.5.3')
+  .version('1.5.5')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
@@ -131,7 +131,19 @@ program
       console.log('\n========================================');
       console.log('       MIGRATION RUN COMPLETED          ');
       console.log('========================================');
-      console.log(`Status:               ${report.summary.totalFailed === 0 ? 'SUCCESS' : 'COMPLETED WITH ERRORS'}`);
+      const skipped = report.summary.totalSkipped ?? 0;
+      const failedSources = report.summary.totalFailedSources ?? 0;
+      const notOwned = report.summary.totalOwnershipNotTransferred ?? 0;
+      const isClean =
+        report.summary.totalFailed === 0 && skipped === 0 && failedSources === 0 && notOwned === 0;
+      const status = report.summary.totalFailed > 0 || failedSources > 0
+        ? 'COMPLETED WITH ERRORS'
+        : skipped > 0
+          ? 'COMPLETED WITH DROPPED ITEMS'
+          : notOwned > 0
+            ? 'COMPLETED WITHOUT OWNERSHIP TRANSFER'
+            : 'SUCCESS';
+      console.log(`Status:               ${status}`);
       console.log(`Duration:             ${(report.durationMs / 1000).toFixed(2)}s`);
       console.log(`Migrated Agents:      ${report.summary.totalMigratedAgents}`);
       console.log(`Migrated Notebooks:   ${report.summary.totalMigratedNotebooks}`);
@@ -139,9 +151,25 @@ program
       console.log(`Migrated Sessions:    ${report.summary.totalMigratedSessions ?? 0}`);
       console.log(`Migrated Memories:    ${report.summary.totalMigratedMemories ?? 0}`);
       console.log(`Failed Items:         ${report.summary.totalFailed}`);
+      console.log(`Failed Sources:       ${failedSources}`);
+      console.log(`Dropped (SKIPPED):    ${skipped}`);
+      console.log(`Not owned by user:    ${notOwned}`);
+      if (notOwned > 0) {
+        console.log('');
+        console.log(`WARNING: ${notOwned} item(s) were created by the admin service account because`);
+        console.log('         user impersonation failed. The intended owners do NOT own them.');
+      }
+      if (skipped > 0) {
+        console.log('');
+        console.log(`WARNING: ${skipped} item(s) were DROPPED because the target user could not be`);
+        console.log('         resolved. Their content was not migrated. See the report for details.');
+      }
       console.log('========================================\n');
 
-      if (report.summary.totalFailed > 0 && !validatedConfig.options?.dryRun) {
+      // Exit non-zero for anything that is not a clean run. Dropped items are data
+      // loss, and failed notebook sources are incomplete migrations; both previously
+      // exited 0, so automation treated them as successful.
+      if (!isClean && !validatedConfig.options?.dryRun) {
         process.exit(1);
       }
 

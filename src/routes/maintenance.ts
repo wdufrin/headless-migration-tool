@@ -820,6 +820,79 @@ maintenanceRouter.post('/maintenance/decommission', async (req, res) => {
       }
     }
 
+    // 4b. Delete the custom Workforce Identity OIDC provider.
+    //
+    // This runs before step 5 on purpose: step 5 calls AppStateTracker.clearTrackedState(),
+    // and once the state file is gone we no longer know which provider to delete.
+    //
+    // This is the most sensitive artifact the tool creates. Deleting the local
+    // signing key is not equivalent to deleting the provider: the provider stays
+    // registered in the pool, and anyone with iam.workforcePoolProviders.update can
+    // upload a fresh JWKS and resume minting assertions for arbitrary users.
+    const wifProvidersDeleted: Array<{
+      workforcePoolId: string;
+      providerId: string;
+      location: string;
+      deleted: boolean;
+      error?: string;
+    }> = [];
+
+    if (req.body?.deleteWifProviders !== false) {
+      const providerState = AppStateTracker.loadState();
+      for (const provider of providerState.createdWifProviders) {
+        const safePoolId = provider.workforcePoolId.replace(/[^a-zA-Z0-9\-_]/g, '');
+        const safeProviderId = provider.providerId.replace(/[^a-zA-Z0-9\-_]/g, '');
+        const safeLocation = (provider.location || 'global').replace(/[^a-zA-Z0-9\-_]/g, '');
+
+        try {
+          logger.info(
+            `Deleting Workforce Identity provider "${safeProviderId}" from pool "${safePoolId}"...`
+          );
+          await execFileAsync('gcloud', [
+            'iam',
+            'workforce-pools',
+            'providers',
+            'delete',
+            safeProviderId,
+            `--workforce-pool=${safePoolId}`,
+            `--location=${safeLocation}`,
+            '--quiet'
+          ]);
+          wifProvidersDeleted.push({
+            workforcePoolId: safePoolId,
+            providerId: safeProviderId,
+            location: safeLocation,
+            deleted: true
+          });
+          logger.info(`Deleted Workforce Identity provider "${safeProviderId}".`);
+        } catch (provErr: any) {
+          const msg = provErr.message || String(provErr);
+          if (msg.includes('NOT_FOUND') || msg.includes('not found') || msg.includes('does not exist')) {
+            // Already gone is the desired end state.
+            wifProvidersDeleted.push({
+              workforcePoolId: safePoolId,
+              providerId: safeProviderId,
+              location: safeLocation,
+              deleted: true
+            });
+          } else {
+            // Do NOT mark this deleted. A provider that survives teardown is a
+            // standing impersonation capability, and rollback must say so.
+            logger.error(
+              `FAILED to delete Workforce Identity provider "${safeProviderId}" in pool "${safePoolId}": ${msg}`
+            );
+            wifProvidersDeleted.push({
+              workforcePoolId: safePoolId,
+              providerId: safeProviderId,
+              location: safeLocation,
+              deleted: false,
+              error: msg
+            });
+          }
+        }
+      }
+    }
+
     // 5. Delete Local Files & Credentials
     const localFilesDeleted: string[] = [];
     const foldersPurged: string[] = [];
@@ -1294,12 +1367,156 @@ export async function validateRollbackCompleteness(options: {
     });
   }
 
+  // 6b. Cloud Check: Custom Workforce Identity OIDC Provider
+  //
+  // Rollback previously never looked for this, so a teardown that left the Shadow
+  // IdP registered still reported VERIFIED_CLEAN.
+  {
+    type ProviderRef = { workforcePoolId: string; providerId: string; location: string };
+    const candidates: ProviderRef[] = [];
+    const seen = new Set<string>();
+
+    const addCandidate = (ref: ProviderRef) => {
+      const key = `${ref.location}/${ref.workforcePoolId}/${ref.providerId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push(ref);
+      }
+    };
+
+    for (const p of AppStateTracker.loadState().createdWifProviders) {
+      addCandidate({
+        workforcePoolId: p.workforcePoolId,
+        providerId: p.providerId,
+        location: p.location || 'global'
+      });
+    }
+
+    // Also derive from any surviving WiF config, which names the provider in its
+    // audience. This catches providers created before tracking existed.
+    try {
+      const wifConfigPath = path.resolve(rootDir, 'workforce-identity-config.json');
+      if (fs.existsSync(wifConfigPath)) {
+        const wifConfig = JSON.parse(fs.readFileSync(wifConfigPath, 'utf-8'));
+        const match = /locations\/([^/]+)\/workforcePools\/([^/]+)\/providers\/([^/]+)/.exec(
+          wifConfig?.audience || ''
+        );
+        if (match) {
+          addCandidate({ location: match[1], workforcePoolId: match[2], providerId: match[3] });
+        }
+      }
+    } catch (cfgErr: any) {
+      logger.warn(`Could not parse workforce-identity-config.json while verifying rollback: ${cfgErr.message}`);
+    }
+
+    if (candidates.length === 0) {
+      checks.push({
+        id: 'wif_oidc_provider',
+        name: 'Custom Workforce Identity OIDC Provider (Shadow IdP)',
+        category: 'CLOUD',
+        passed: true,
+        statusText: 'No Provider Recorded',
+        details:
+          'No custom OIDC provider is recorded in local state and no WiF config remains, so there is ' +
+          'nothing to delete. Note this proves no *tracked* provider exists; it cannot prove that a ' +
+          'provider created outside this tool is absent from the pool.'
+      });
+    } else {
+      for (const ref of candidates) {
+        const safePoolId = ref.workforcePoolId.replace(/[^a-zA-Z0-9\-_]/g, '');
+        const safeProviderId = ref.providerId.replace(/[^a-zA-Z0-9\-_]/g, '');
+        const safeLocation = (ref.location || 'global').replace(/[^a-zA-Z0-9\-_]/g, '');
+        const checkId = `wif_oidc_provider_${safePoolId}_${safeProviderId}`;
+        const checkName = `Custom Workforce Identity OIDC Provider "${safeProviderId}" (Shadow IdP)`;
+
+        try {
+          const { stdout } = await execFileAsync('gcloud', [
+            'iam',
+            'workforce-pools',
+            'providers',
+            'describe',
+            safeProviderId,
+            `--workforce-pool=${safePoolId}`,
+            `--location=${safeLocation}`,
+            '--format=json'
+          ]);
+          const provider = JSON.parse(stdout || '{}');
+
+          // GCP soft-deletes pool providers: describe still succeeds and reports
+          // state DELETED. Treat only a live provider as a failure.
+          if (provider?.state === 'DELETED') {
+            checks.push({
+              id: checkId,
+              name: checkName,
+              category: 'CLOUD',
+              passed: true,
+              statusText: 'Deleted (Pending Purge)',
+              details:
+                `Provider "${safeProviderId}" in pool "${safePoolId}" is marked DELETED and can no ` +
+                'longer exchange assertions. GCP purges soft-deleted providers after 30 days.'
+            });
+          } else if (provider?.name) {
+            checks.push({
+              id: checkId,
+              name: checkName,
+              category: 'CLOUD',
+              passed: false,
+              statusText: 'Provider Still Active',
+              details:
+                `Provider "${safeProviderId}" is STILL ACTIVE in pool "${safePoolId}" (${safeLocation}). ` +
+                'This is a standing impersonation capability: anyone able to update the provider can ' +
+                'upload a new JWKS and mint assertions for any user in the pool, bypassing MFA. ' +
+                'Delete it with: gcloud iam workforce-pools providers delete ' +
+                `${safeProviderId} --workforce-pool=${safePoolId} --location=${safeLocation}`
+            });
+          } else {
+            checks.push({
+              id: checkId,
+              name: checkName,
+              category: 'CLOUD',
+              passed: true,
+              statusText: 'Provider Removed',
+              details: `No provider "${safeProviderId}" found in pool "${safePoolId}".`
+            });
+          }
+        } catch (provErr: any) {
+          const msg = provErr.message || String(provErr);
+          if (msg.includes('NOT_FOUND') || msg.includes('not found') || msg.includes('does not exist')) {
+            checks.push({
+              id: checkId,
+              name: checkName,
+              category: 'CLOUD',
+              passed: true,
+              statusText: 'Provider Removed',
+              details: `Provider "${safeProviderId}" no longer exists in pool "${safePoolId}".`
+            });
+          } else {
+            // Fail closed: an unverifiable Shadow IdP is not a clean rollback.
+            checks.push({
+              id: checkId,
+              name: checkName,
+              category: 'CLOUD',
+              passed: false,
+              statusText: msg.includes('PERMISSION_DENIED') || msg.includes('403')
+                ? 'Verification Inconclusive (Permission Denied)'
+                : 'Verification Failed',
+              details:
+                `Could not confirm that provider "${safeProviderId}" in pool "${safePoolId}" was ` +
+                `removed: ${msg}. Treating as incomplete rather than assuming it is gone.`
+            });
+          }
+        }
+      }
+    }
+  }
+
   // 7. Local Check: Application State Tracker
   const tracked = AppStateTracker.loadState();
   const hasTrackedEntries = 
     tracked.overriddenOrgPolicies.length > 0 ||
     tracked.createdServiceAccounts.length > 0 ||
-    tracked.appliedIamBindings.length > 0;
+    tracked.appliedIamBindings.length > 0 ||
+    tracked.createdWifProviders.length > 0;
 
   if (!hasTrackedEntries && !fs.existsSync(path.resolve(rootDir, '.migration-state.json'))) {
     checks.push({
@@ -1317,7 +1534,7 @@ export async function validateRollbackCompleteness(options: {
       category: 'LOCAL',
       passed: false,
       statusText: 'Active State Entries',
-      details: `Tracked state contains ${tracked.overriddenOrgPolicies.length} policy override(s), ${tracked.createdServiceAccounts.length} SA(s).`
+      details: `Tracked state contains ${tracked.overriddenOrgPolicies.length} policy override(s), ${tracked.createdServiceAccounts.length} SA(s), ${tracked.createdWifProviders.length} WiF provider(s).`
     });
   }
 

@@ -18,6 +18,8 @@ import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { EnvironmentConfig, MigrationOptions, MigrationItemResult, MigratedSourceItem } from '../types/migration.js';
 import { Notebook, NotebookSource, NotebookNote } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
+import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
+import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
 
 export class NotebookMigrator {
@@ -357,7 +359,7 @@ export class NotebookMigrator {
       rawOwner = rawOwner.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim();
       try { rawOwner = decodeURIComponent(rawOwner); } catch {}
       const originalOwner = (rawOwner === 'unknown' || !rawOwner.includes('@')) ? fallbackUser : rawOwner;
-      const targetOwner = identityMapping[originalOwner] || identityMapping[`user:${originalOwner}`] || (selectedUser || originalOwner);
+      const targetOwner = IdentityMappingService.lookupTargetIdentity(originalOwner, identityMapping, selectedUser || originalOwner);
 
       const result: MigrationItemResult = {
         id: notebookId,
@@ -658,10 +660,18 @@ export class NotebookMigrator {
         }
 
       } catch (err: any) {
-        if (err.message.includes('DWD Impersonation Failed') || err.message.includes('User does not exist') || err.message.includes('client_is_not_authorized') || err.message.includes('unauthorized_client')) {
+        // Only discard the notebook when the target user genuinely does not exist.
+        // See utils/impersonationFailure.ts -- the previous predicate matched the
+        // wrapper prefix and so dropped data on pure configuration errors.
+        const classification = classifyImpersonationFailure(err.message);
+        if (classification.safeToDropData) {
           logger.warn(`[DROPPED / SKIPPED] Notebook "${result.displayName}" for offboarded/unmapped user "${originalOwner}" was dropped (target: "${targetOwner}"). Admin account will not be polluted.`);
           result.status = 'SKIPPED';
           result.error = `Skipped: User "${targetOwner || originalOwner}" not found in target Google Identity. Data safely dropped to prevent admin account pollution.`;
+        } else if (classification.kind === 'MISCONFIGURED' || classification.kind === 'UNKNOWN') {
+          logger.error(`Failed to migrate Notebook "${result.displayName}" for "${originalOwner}": ${err.message}. ${classification.explanation}`);
+          result.status = 'FAILED';
+          result.error = `${err.message} -- ${classification.explanation}`;
         } else {
           logger.error(`Failed to migrate Notebook "${result.displayName}" (${notebookId}): ${err.message}`);
           result.status = 'FAILED';

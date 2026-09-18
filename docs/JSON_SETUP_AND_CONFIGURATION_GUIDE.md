@@ -18,7 +18,7 @@ This guide explains how configuration and credential JSON files are discovered, 
 ## 2. File 1: `sa-dwd-key.json` (Service Account Key)
 
 ### How It Is Loaded
-The authentication service ([gcpAuth.ts](file:///usr/local/google/home/wdufrin/Documents/Code/headless%20migration%20tool/src/services/gcpAuth.ts)) resolves service account credentials in this order of precedence:
+The authentication service ([gcpAuth.ts](../src/services/gcpAuth.ts)) resolves service account credentials in this order of precedence:
 1. `options.serviceAccountKeyJson`: Inline JSON passed in API parameters.
 2. `options.serviceAccountKeyPath`: File path specified via `--service-account-key` or config.
 3. `process.env.SERVICE_ACCOUNT_KEY_PATH`: Environment variable.
@@ -91,7 +91,7 @@ gcloud iam service-accounts keys create sa-dwd-key.json \
 ## 3. File 2: `workforce-identity-config.json` (WiF / STS Configuration)
 
 ### How It Is Loaded
-[gcpAuth.ts](file:///usr/local/google/home/wdufrin/Documents/Code/headless%20migration%20tool/src/services/gcpAuth.ts) resolves Workforce Identity Federation configs in this order:
+[gcpAuth.ts](../src/services/gcpAuth.ts) resolves Workforce Identity Federation configs in this order:
 1. `options.wifConfigJson`: Inline config.
 2. `options.wifConfigPath`: File path specified via `--wif-config` or config.
 3. `process.env.WIF_CONFIG_PATH`: Environment variable.
@@ -130,7 +130,7 @@ If you set up a new workforce pool in a new project or change IDPs (e.g. from En
 ## 4. File 3: `migration-config.json` (Pipeline Configuration)
 
 ### How It Is Loaded
-The configuration loader ([loader.ts](file:///usr/local/google/home/wdufrin/Documents/Code/headless%20migration%20tool/src/config/loader.ts)) reads:
+The configuration loader ([loader.ts](../src/config/loader.ts)) reads:
 1. Path passed via `--config <path>` in CLI.
 2. Default `./migration-config.json` when running `npm start` or headless worker.
 

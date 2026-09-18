@@ -1,7 +1,8 @@
 import fs from 'fs';
-import { GcpAuthService } from '../services/gcpAuth.js';
+import { GcpAuthService, isCredentialAutoloadDisabled } from '../services/gcpAuth.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
+import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
 
 export interface ChatSessionTurn {
@@ -39,7 +40,15 @@ export class SessionMigrator {
   constructor(config: ValidatedMigrationConfig, authService?: GcpAuthService) {
     this.config = config;
     this.auth = authService || new GcpAuthService();
-    if (fs.existsSync('./sa-dwd-key.json')) {
+    // Only fill in a DWD key when the caller has not configured one. This used to
+    // run unconditionally, silently overwriting an explicitly-supplied credential
+    // with whatever happened to be sitting in the process working directory.
+    if (
+      !isCredentialAutoloadDisabled() &&
+      !this.auth.hasDwdConfigured() &&
+      fs.existsSync('./sa-dwd-key.json')
+    ) {
+      logger.debug('SessionMigrator: auto-loading DWD key from ./sa-dwd-key.json');
       this.auth.setServiceAccountKey('./sa-dwd-key.json');
     }
   }
@@ -268,7 +277,10 @@ export class SessionMigrator {
       let cleanSrcUser = srcUser ? srcUser.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim() : '';
       try { cleanSrcUser = decodeURIComponent(cleanSrcUser); } catch {}
 
-      if (cleanSrcUser && this.config.identityMapping?.[cleanSrcUser]) {
+      const mappedFromDict = IdentityMappingService.lookupTargetIdentity(cleanSrcUser || srcUser, this.config.identityMapping, '');
+      if (mappedFromDict && mappedFromDict !== (cleanSrcUser || srcUser)) {
+        targetUserId = mappedFromDict;
+      } else if (cleanSrcUser && this.config.identityMapping?.[cleanSrcUser]) {
         targetUserId = this.config.identityMapping[cleanSrcUser];
       } else if (srcUser && this.config.identityMapping?.[srcUser]) {
         targetUserId = this.config.identityMapping[srcUser];

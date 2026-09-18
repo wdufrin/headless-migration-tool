@@ -16,9 +16,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { GcpAuthService } from '../services/gcpAuth.js';
+import { GcpAuthService, isCredentialAutoloadDisabled } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
+import { IdentityMappingService } from '../services/identityMappingService.js';
 import { Memory, MemoryBackupSnapshot } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
@@ -30,7 +31,15 @@ export class MemoryMigrator {
   constructor(config: ValidatedMigrationConfig, authService?: GcpAuthService, client?: DiscoveryEngineClient) {
     this.config = config;
     this.auth = authService || new GcpAuthService();
-    if (fs.existsSync('./sa-dwd-key.json') && !(this.auth as any).serviceAccountKeyPath) {
+    // `(this.auth as any).serviceAccountKeyPath` was always undefined -- GcpAuthService
+    // has no such property -- so this guard never fired and the CWD key always won.
+    // hasDwdConfigured() is the real accessor.
+    if (
+      !isCredentialAutoloadDisabled() &&
+      !this.auth.hasDwdConfigured() &&
+      fs.existsSync('./sa-dwd-key.json')
+    ) {
+      logger.debug('MemoryMigrator: auto-loading DWD key from ./sa-dwd-key.json');
       this.auth.setServiceAccountKey('./sa-dwd-key.json');
     }
     this.client = client || new DiscoveryEngineClient(this.auth);
@@ -169,7 +178,10 @@ export class MemoryMigrator {
       let cleanSrcUser = srcUser ? srcUser.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim() : '';
       try { cleanSrcUser = decodeURIComponent(cleanSrcUser); } catch {}
 
-      if (cleanSrcUser && this.config.identityMapping?.[cleanSrcUser]) {
+      const mappedFromDict = IdentityMappingService.lookupTargetIdentity(cleanSrcUser || srcUser, this.config.identityMapping, '');
+      if (mappedFromDict && mappedFromDict !== (cleanSrcUser || srcUser)) {
+        targetUserId = mappedFromDict;
+      } else if (cleanSrcUser && this.config.identityMapping?.[cleanSrcUser]) {
         targetUserId = this.config.identityMapping[cleanSrcUser];
       } else if (srcUser && this.config.identityMapping?.[srcUser]) {
         targetUserId = this.config.identityMapping[srcUser];

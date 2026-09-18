@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.3</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.5</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -639,31 +639,51 @@
                 <!-- Discovery Diagnostics & Warning Banner -->
                 <div id="userDiscoveryWarnings" class="hidden p-3 bg-amber-950/40 border border-amber-800/60 rounded-lg text-xs text-amber-300 space-y-1"></div>
 
-                <!-- Add Custom User Input Row -->
-                <div class="flex items-center gap-2">
-                  <input type="email" id="customUserEmailInput" onkeydown="if(event.key === 'Enter'){event.preventDefault(); addCustomUserToSelection();}" placeholder="Enter specific user email to include (e.g. user@company.com) - Press Enter to add" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono">
+                <!-- Add Custom User & CSV Mapping Toolbar Row -->
+                <div class="flex flex-wrap items-center gap-2">
+                  <input type="email" id="customUserEmailInput" onkeydown="if(event.key === 'Enter'){event.preventDefault(); addCustomUserToSelection();}" placeholder="Enter specific user email (or source@XXXX.com,target@YYYY.com) - Press Enter" class="flex-1 min-w-[240px] bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono">
                   <button type="button" onclick="addCustomUserToSelection()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1">
                     <span>+</span> Add User
                   </button>
-                  <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.toggle('hidden')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-indigo-300 border border-indigo-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1" title="Paste a list of user emails exported from Okta or Google Admin">
-                    <span>📋</span> Bulk Paste Users
+                  <input type="file" id="csvMappingFileInput" accept=".csv,.tsv,.txt" class="hidden" onchange="handleCsvMappingFileUpload(event)" />
+                  <button type="button" onclick="document.getElementById('csvMappingFileInput').click()" class="px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/70 text-emerald-300 border border-emerald-500/50 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="Upload a CSV mapping old user IDs (e.g. first.last@XXXX.com) to new user IDs (e.g. #####@YYYY.com)">
+                    <span>📂</span> Upload Mapping CSV
+                  </button>
+                  <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.toggle('hidden')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-indigo-300 border border-indigo-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1" title="Paste a CSV mapping (old_id,new_id) or list of user emails">
+                    <span>📋</span> Paste CSV / Users
+                  </button>
+                  <button type="button" onclick="toggleAndRenderMappingReport()" id="btnToggleMappingReport" class="px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900/70 text-purple-300 border border-purple-500/50 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="View and export the Source-to-Destination User ID Mapping Report">
+                    <span>📊</span> Mapping Report
+                    <span id="mappingReportCountBadge" class="hidden px-1.5 py-0.2 bg-purple-800 text-white rounded-full text-[10px] font-mono">0</span>
                   </button>
                 </div>
 
-                <!-- Bulk Paste Users Panel (for Okta WiF / CSV Exports) -->
-                <div id="bulkUserImportPanel" class="hidden p-3 bg-gray-900/90 border border-indigo-500/30 rounded-lg space-y-2">
+                <!-- Bulk Paste Users / CSV Mapping Panel -->
+                <div id="bulkUserImportPanel" class="hidden p-3.5 bg-gray-900/95 border border-indigo-500/40 rounded-xl space-y-2.5 shadow-lg">
                   <div class="flex items-center justify-between">
-                    <span class="text-xs font-semibold text-indigo-300">Bulk Import User Emails (Okta WiF / CSV / Line-separated)</span>
-                    <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.add('hidden')" class="text-[11px] text-gray-400 hover:text-white">✕ Close</button>
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs font-bold text-indigo-300">📋 Import User ID Mappings (CSV `old_id,new_id`) or Bulk Emails</span>
+                      <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-mono">Supports first.last@XXXX.com ➔ #####@YYYY.com</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button type="button" onclick="downloadSampleMappingCsv()" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-cyan-300 border border-cyan-700/50 rounded text-[11px] font-mono transition">📥 Sample CSV</button>
+                      <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.add('hidden')" class="text-[11px] text-gray-400 hover:text-white">✕ Close</button>
+                    </div>
                   </div>
-                  <p class="text-[11px] text-gray-400">
-                    When migrating from Okta Workforce Identity Federation (WiF), users with private NotebookLM notebooks or group-mapped IAM policies may not appear in Project IAM enumeration. Paste any list of user emails below (separated by commas, spaces, or newlines) to include them in discovery and migration:
+                  <p class="text-[11px] text-gray-400 leading-relaxed">
+                    Paste either <strong class="text-white">2-column CSV mappings</strong> (<code class="text-emerald-300 font-mono">source_email,target_email</code> such as <code class="text-cyan-300 font-mono">jane.doe@xxxx.com,849201@yyyy.com</code>) to automatically map source to destination user IDs, or a simple list of source emails:
                   </p>
-                  <textarea id="bulkUserEmailsTextarea" rows="3" placeholder="alice@company.com, bob@company.com&#10;charlie@company.com" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"></textarea>
-                  <div class="flex justify-end gap-2">
-                    <button type="button" onclick="addBulkUsersToSelection()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition">
-                      + Add All Emails to Scope
-                    </button>
+                  <textarea id="bulkUserEmailsTextarea" rows="4" placeholder="source_email,target_email&#10;jane.doe@xxxx.com,849201@yyyy.com&#10;john.smith@xxxx.com,849202@yyyy.com" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"></textarea>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-[10px] text-gray-500 font-mono">Supports comma (,), tab, semicolon (;), or arrow (-&gt;) delimiters. Headers are skipped automatically.</span>
+                    <div class="flex items-center gap-2">
+                      <button type="button" onclick="document.getElementById('csvMappingFileInput').click()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-emerald-300 border border-emerald-600/40 rounded-lg text-xs font-semibold transition">
+                        📂 Choose .CSV File...
+                      </button>
+                      <button type="button" onclick="addBulkUsersToSelection()" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition shadow">
+                        ⚡ Apply Mappings & Add to Scope
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -673,9 +693,9 @@
                     <thead class="bg-gray-950 text-gray-400 uppercase text-[10px] font-mono border-b border-gray-800 sticky top-0">
                       <tr>
                         <th class="py-2 px-3 w-10 text-center">Migrate</th>
-                        <th class="py-2 px-3">User Identity</th>
+                        <th class="py-2 px-3">Source User ID (Old)</th>
                         <th class="py-2 px-3">Discovered Assets / Sources</th>
-                        <th class="py-2 px-3">Target Mapped Identity</th>
+                        <th class="py-2 px-3">Destination User ID (New / Mapped)</th>
                         <th class="py-2 px-3 w-16 text-center">Action</th>
                       </tr>
                     </thead>
@@ -683,6 +703,92 @@
                       <!-- Populated via JS -->
                     </tbody>
                   </table>
+                </div>
+
+                <!-- Embedded Identity Mapping Audit & Verification Report Panel -->
+                <div id="userMappingReportPanel" class="hidden bg-gray-950/95 border border-purple-500/40 rounded-xl p-4 space-y-3.5 shadow-xl">
+                  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-800 pb-3">
+                    <div class="flex items-center gap-2.5">
+                      <span class="p-1.5 bg-purple-500/20 text-purple-300 rounded-lg text-sm">📊</span>
+                      <div>
+                        <h4 class="font-bold text-white text-xs flex items-center gap-2">
+                          <span>Source-to-Destination User Identity Mapping Report</span>
+                          <span id="mappingReportStatusPill" class="text-[10px] px-2 py-0.5 rounded-full font-mono bg-emerald-950 text-emerald-300 border border-emerald-700/60">Ready</span>
+                        </h4>
+                        <p class="text-[11px] text-gray-400">Reconciles discovered GCP users against CSV mappings (<code class="text-purple-300 font-mono">first.last@XXXX.com ➔ #####@YYYY.com</code>) &amp; domain rules</p>
+                      </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button type="button" onclick="exportUserMappingReportCsv()" class="px-2.5 py-1 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-lg text-[11px] font-semibold transition flex items-center gap-1">
+                        <span>📥</span> Export Report (.CSV)
+                      </button>
+                      <button type="button" onclick="exportUserMappingReportJson()" class="px-2.5 py-1 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 rounded-lg text-[11px] font-semibold transition flex items-center gap-1">
+                        <span>📄</span> Export JSON
+                      </button>
+                      <button type="button" onclick="clearAllExplicitUserMappings()" class="px-2.5 py-1 bg-gray-900 hover:bg-red-950/60 text-gray-400 hover:text-red-300 border border-gray-800 rounded-lg text-[11px] transition">
+                        🗑️ Clear Overrides
+                      </button>
+                      <button type="button" onclick="document.getElementById('userMappingReportPanel').classList.add('hidden')" class="text-xs text-gray-400 hover:text-white px-2">✕</button>
+                    </div>
+                  </div>
+
+                  <!-- KPI Summary Cards -->
+                  <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
+                    <div class="bg-gray-900/90 border border-gray-800 rounded-lg p-2.5">
+                      <div class="text-[10px] text-gray-400 uppercase font-mono">Total Users</div>
+                      <div id="mapRepTotal" class="text-base font-bold text-white font-mono mt-0.5">0</div>
+                    </div>
+                    <div class="bg-emerald-950/30 border border-emerald-800/50 rounded-lg p-2.5">
+                      <div class="text-[10px] text-emerald-300 uppercase font-mono">CSV / 1:1 Mapped</div>
+                      <div id="mapRepCsvCount" class="text-base font-bold text-emerald-400 font-mono mt-0.5">0</div>
+                    </div>
+                    <div class="bg-indigo-950/30 border border-indigo-800/50 rounded-lg p-2.5">
+                      <div class="text-[10px] text-indigo-300 uppercase font-mono">Domain Rule</div>
+                      <div id="mapRepDomainCount" class="text-base font-bold text-indigo-400 font-mono mt-0.5">0</div>
+                    </div>
+                    <div class="bg-amber-950/30 border border-amber-800/50 rounded-lg p-2.5">
+                      <div class="text-[10px] text-amber-300 uppercase font-mono">Unmapped (Same ID)</div>
+                      <div id="mapRepUnmappedCount" class="text-base font-bold text-amber-400 font-mono mt-0.5">0</div>
+                    </div>
+                    <div class="bg-red-950/30 border border-red-800/50 rounded-lg p-2.5">
+                      <div class="text-[10px] text-red-300 uppercase font-mono">Target Collisions</div>
+                      <div id="mapRepCollisionCount" class="text-base font-bold text-red-400 font-mono mt-0.5">0</div>
+                    </div>
+                  </div>
+
+                  <!-- Collision / Parse Alert Box -->
+                  <div id="mappingReportAlertsBox" class="hidden p-2.5 bg-red-950/50 border border-red-600/50 rounded-lg text-[11px] text-red-200 space-y-1"></div>
+
+                  <!-- Filter & Search Bar -->
+                  <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div class="flex items-center gap-1.5">
+                      <button type="button" onclick="setMappingReportFilter('ALL')" id="mapFilterBtn_ALL" class="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-purple-600 text-white">All Users</button>
+                      <button type="button" onclick="setMappingReportFilter('MAPPED')" id="mapFilterBtn_MAPPED" class="px-2.5 py-1 rounded-md text-[11px] font-medium bg-gray-900 text-gray-300 hover:bg-gray-800 border border-gray-800">Mapped (Old ➔ New)</button>
+                      <button type="button" onclick="setMappingReportFilter('UNMAPPED')" id="mapFilterBtn_UNMAPPED" class="px-2.5 py-1 rounded-md text-[11px] font-medium bg-gray-900 text-amber-300 hover:bg-gray-800 border border-gray-800">⚠️ Unmapped Only</button>
+                      <button type="button" onclick="setMappingReportFilter('COLLISION')" id="mapFilterBtn_COLLISION" class="px-2.5 py-1 rounded-md text-[11px] font-medium bg-gray-900 text-red-300 hover:bg-gray-800 border border-gray-800">❌ Collisions</button>
+                    </div>
+                    <input type="text" id="mappingReportSearchInput" oninput="renderUserMappingReport()" placeholder="Search old or new user ID..." class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-purple-500 w-56" />
+                  </div>
+
+                  <!-- Mapping Report Table -->
+                  <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/70 max-h-72 overflow-y-auto">
+                    <table class="w-full text-left text-xs text-gray-300">
+                      <thead class="bg-gray-950 text-gray-400 uppercase text-[10px] font-mono border-b border-gray-800 sticky top-0">
+                        <tr>
+                          <th class="py-2 px-3 w-10">#</th>
+                          <th class="py-2 px-3">Source User ID (Old)</th>
+                          <th class="py-2 px-3 w-8 text-center">➔</th>
+                          <th class="py-2 px-3">Destination User ID (New)</th>
+                          <th class="py-2 px-3">Mapping Method</th>
+                          <th class="py-2 px-3">Scope / Assets</th>
+                          <th class="py-2 px-3">Validation Status</th>
+                        </tr>
+                      </thead>
+                      <tbody id="mappingReportTableBody" class="divide-y divide-gray-800/60">
+                        <!-- Populated dynamically via renderUserMappingReport() -->
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -779,22 +885,26 @@
           </div>
 
           <!-- Stage Milestones -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
+          <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
             <div id="stage-preflight" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>Pre-Flight</span>
             </div>
-            <div id="stage-skills" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
-              <span class="stage-icon">⚪</span> <span>Enterprise Skills</span>
-            </div>
             <div id="stage-notebooks" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>Notebooks</span>
+            </div>
+            <div id="stage-skills" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>Enterprise Skills</span>
             </div>
             <div id="stage-agents" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>Agents</span>
             </div>
             <div id="stage-sessions" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
-              <span class="stage-icon">⚪</span> <span>Chat & Memories</span>
+              <span class="stage-icon">⚪</span> <span>Chat Sessions</span>
             </div>
+            <div id="stage-memories" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
+              <span class="stage-icon">⚪</span> <span>User Memories</span>
+            </div>
+
             <div id="stage-artifacts" class="bg-gray-950 border border-gray-800 p-2.5 rounded-lg flex items-center gap-2 text-gray-400">
               <span class="stage-icon">⚪</span> <span>User Artifacts</span>
             </div>
@@ -2933,6 +3043,14 @@
                   <label class="block text-gray-400 mb-1 font-medium">External IdP Issuer URI</label>
                   <input type="text" id="wizWifIssuer" value="https://gemini-migration.internal" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500">
                 </div>
+                <div class="col-span-1 md:col-span-2">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-gray-400 font-medium">Attribute Condition (Security CEL Expression)</label>
+                    <span class="text-[10px] text-emerald-400 font-mono font-bold">🛡️ Least-Privilege Guardrail</span>
+                  </div>
+                  <input type="text" id="wizWifAttributeCondition" value="assertion.email != &quot;&quot; &amp;&amp; !assertion.sub.startsWith(&quot;service-&quot;)" placeholder="e.g. assertion.email != &quot;&quot; &amp;&amp; !assertion.sub.startsWith(&quot;service-&quot;)" oninput="updateWifScript()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:border-purple-500 text-xs">
+                  <p class="text-[10px] text-gray-400 mt-1">Enforces cryptographic boundaries in GCP IAM so the custom provider rejects minting tokens for service accounts or arbitrary non-human subjects.</p>
+                </div>
               </div>
 
               <div>
@@ -4836,8 +4954,13 @@
                 <span class="font-mono text-xs uppercase px-2 py-0.5 rounded bg-black/40 border border-white/10">${(data.overallStatus || '').replace(/_/g, ' ')}</span>
               </div>
               <p class="text-xs opacity-90 mt-0.5">
-                ${data.summary.totalGranted} granted &bull; ${data.summary.totalMissing} missing &bull; ${data.summary.totalOverProvisioned} over-provisioned (Score: ${data.summary.score}/100)
+                ${data.summary.totalGranted} granted &bull; ${data.summary.totalMissing} missing &bull; ${data.summary.totalOverProvisioned} over-provisioned${data.summary.totalUnknown ? ` &bull; <span class="text-slate-300 font-semibold">${data.summary.totalUnknown} not verified</span>` : ''} (Score: ${data.summary.score}/100)
               </p>
+              ${data.summary.totalUnknown ? `
+              <p class="text-[11px] mt-1 px-2 py-1 rounded bg-black/30 border border-white/10 text-slate-200">
+                ⚠️ This report is incomplete: ${data.summary.totalUnknown} check${data.summary.totalUnknown === 1 ? '' : 's'} could not be performed. Do not treat unverified items as passing.
+              </p>` : ''}
+
             </div>
           </div>
           <div class="text-right text-xs opacity-80 font-mono">
@@ -4882,7 +5005,9 @@
             let badge = '';
             if (s.status === 'ALLOWED') badge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">LEAST-PRIVILEGE ALLOWED</span>';
             else if (s.status === 'OPTIONAL') badge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">OPTIONAL (NOTIFICATION)</span>';
+            else if (s.status === 'BROAD') badge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">⚠️ BROAD (NOT LEAST-PRIVILEGE)</span>';
             else badge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-950 text-red-300 border border-red-800">⚠️ OVER-PROVISIONED EXCESSIVE</span>';
+
 
             return `
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-gray-950 rounded-lg border border-gray-800/80 text-xs">
@@ -4902,8 +5027,9 @@
         permsTable.innerHTML = data.permissions.map(p => {
           let statusBadge = '';
           if (p.status === 'GRANTED') statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">GRANTED</span>';
-          else if (p.status === 'SAFE') statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">SAFE (IMMUTABLE)</span>';
           else if (p.status === 'OVER_PROVISIONED') statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-950 text-red-300 border border-red-800">OVER-PROVISIONED</span>';
+          else if (p.status === 'UNKNOWN') statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-600">? NOT VERIFIED</span>';
+          else if (p.status === 'INFO') statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950 text-blue-300 border border-blue-800">INFO</span>';
           else statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">MISSING</span>';
 
           let levelBadge = '';
@@ -4914,9 +5040,13 @@
           let actionContent = '';
           if (p.status === 'GRANTED') {
             actionContent = '<span class="text-[11px] text-emerald-400 flex items-center justify-end gap-1 font-semibold"><span>✓</span> Ready</span>';
-          } else if (p.status === 'SAFE') {
-            actionContent = '<span class="text-[11px] text-cyan-400 flex items-center justify-end gap-1 font-semibold"><span>🛡️</span> Protected</span>';
+          } else if (p.status === 'INFO') {
+            actionContent = '<span class="text-[11px] text-blue-400 flex items-center justify-end gap-1 font-semibold"><span>ℹ️</span> Context</span>';
+          } else if (p.status === 'UNKNOWN') {
+            // Must never read as a pass: this check did not complete.
+            actionContent = '<span class="text-[11px] text-slate-400 flex items-center justify-end gap-1 font-semibold"><span>?</span> Verify manually</span>';
           } else {
+
             if (p.fixAction?.type === 'IAM_AUTO_FIX') {
               actionContent = `
                 <div class="flex items-center justify-end gap-1.5">
@@ -5397,11 +5527,26 @@ gcloud iam service-accounts keys create sa-dwd-key.json \\
       if (el) el.textContent = script;
     }
 
+    /**
+     * Wraps a value in POSIX single quotes so it can be pasted into a shell
+     * verbatim. Any embedded single quote becomes '\'' (close, literal, reopen).
+     *
+     * Required because CEL conditions contain `!`, and bash applies history
+     * expansion to `!` even inside double quotes, which made the generated
+     * script fail with "event not found".
+     */
+    function shellSingleQuote(value) {
+      return `'${String(value).replace(/'/g, "'\\''")}'`;
+    }
+
     function updateWifScript() {
       const orgId = document.getElementById('wizWifOrgId')?.value?.trim() || '<ORGANIZATION_ID>';
       const poolId = document.getElementById('wizWifPoolId')?.value?.trim() || '<WORKFORCE_POOL_ID>';
       const provId = document.getElementById('wizWifProviderId')?.value?.trim() || 'migration-dwd-provider';
       const issuer = document.getElementById('wizWifIssuer')?.value?.trim() || 'https://gemini-migration.internal';
+
+      const attrCond = document.getElementById('wizWifAttributeCondition')?.value?.trim() || 'assertion.email != "" && !assertion.sub.startsWith("service-")';
+      const attrCondArg = (attrCond && attrCond.toLowerCase() !== 'none') ? ` \\\n    --attribute-condition=${shellSingleQuote(attrCond)}` : '';
 
       const script = `# 1. Create Workforce Pool (Skip if "${poolId}" already exists)
 gcloud iam workforce-pools describe "${poolId}" --location="global" >/dev/null 2>&1 || \\
@@ -5438,7 +5583,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     --web-sso-response-type="id-token" \\
     --web-sso-assertion-claims-behavior="only-id-token-claims" \\
     --jwk-json-path="./wif-migration-jwks.json" \\
-    --attribute-mapping="google.subject=assertion.sub,attribute.user_email=assertion.email"`;
+    --attribute-mapping="google.subject=assertion.sub,attribute.user_email=assertion.email"${attrCondArg}`;
 
       const el = document.getElementById('wizWifScript');
       if (el) el.textContent = script;
@@ -5937,7 +6082,8 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             workforcePoolId: poolId,
             providerId: provId,
             issuerUri: issuer,
-            location: 'global'
+            location: 'global',
+            attributeCondition: document.getElementById('wizWifAttributeCondition')?.value?.trim()
           })
         });
         const data = await res.json();
@@ -7220,8 +7366,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const domainRules = getActiveDomainRules();
       tbody.innerHTML = targetedUsersList.map((u) => {
         let mappedTarget = computeMappedTarget(u.email, domainRules);
-        if (explicitIdpOverrides[u.email]) {
-          mappedTarget = explicitIdpOverrides[u.email];
+        const explicitTarget = getExplicitOverride(u.email);
+        if (explicitTarget) {
+          mappedTarget = explicitTarget;
         }
 
         const sourceBadge = u.sources && u.sources.length > 0 
@@ -7260,15 +7407,28 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       }).join('');
     }
 
+    let csvMappedKeysSet = new Set();
+    let currentMappingReportFilter = 'ALL';
+
+    function getExplicitOverride(email) {
+      if (!email) return undefined;
+      return explicitIdpOverrides[email] || explicitIdpOverrides[email.toLowerCase()];
+    }
+
     function updateTargetMappedIdentity(sourceEmail, targetEmail) {
       if (!sourceEmail) return;
+      const cleanSrc = sourceEmail.trim();
       const cleanTarget = (targetEmail || '').trim();
-      if (cleanTarget && cleanTarget !== sourceEmail) {
-        explicitIdpOverrides[sourceEmail] = cleanTarget;
+      if (cleanTarget && cleanTarget.toLowerCase() !== cleanSrc.toLowerCase()) {
+        explicitIdpOverrides[cleanSrc] = cleanTarget;
+        explicitIdpOverrides[cleanSrc.toLowerCase()] = cleanTarget.toLowerCase();
       } else {
-        delete explicitIdpOverrides[sourceEmail];
+        delete explicitIdpOverrides[cleanSrc];
+        delete explicitIdpOverrides[cleanSrc.toLowerCase()];
+        csvMappedKeysSet.delete(cleanSrc.toLowerCase());
       }
       renderUserSelectionTable();
+      renderUserMappingReport();
     }
 
     function toggleUserSelection(email) {
@@ -7276,54 +7436,156 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       if (user) {
         user.selected = !user.selected;
         renderUserSelectionTable();
+        renderUserMappingReport();
       }
     }
 
     function toggleAllUsers(select) {
       targetedUsersList.forEach(u => u.selected = select);
       renderUserSelectionTable();
+      renderUserMappingReport();
     }
 
     function removeUserFromSelection(email) {
       targetedUsersList = targetedUsersList.filter(u => u.email !== email);
       delete explicitIdpOverrides[email];
+      delete explicitIdpOverrides[email.toLowerCase()];
+      csvMappedKeysSet.delete(email.toLowerCase());
       renderUserSelectionTable();
+      renderUserMappingReport();
     }
 
     function addCustomUserToSelection() {
       const input = document.getElementById('customUserEmailInput');
-      const email = input?.value?.trim();
-      if (!email || !email.includes('@')) {
-        alert('Please enter a valid user email address.');
+      const rawVal = input?.value?.trim();
+      if (!rawVal) return;
+
+      // Support single-line mapping pair e.g. first.last@XXXX.com,12345@YYYY.com or first.last@XXXX.com -> 12345@YYYY.com
+      if (rawVal.includes(',') || rawVal.includes('->') || rawVal.includes('=>') || rawVal.includes('\t')) {
+        processCsvOrBulkUserContent(rawVal, 'Quick Input');
+        if (input) input.value = '';
         return;
       }
-      if (!targetedUsersList.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+
+      if (!rawVal.includes('@')) {
+        alert('Please enter a valid user email address (or source@XXXX.com,target@YYYY.com).');
+        return;
+      }
+      if (!targetedUsersList.some(u => u.email.toLowerCase() === rawVal.toLowerCase())) {
         targetedUsersList.push({
-          email: email,
+          email: rawVal,
           selected: true,
           sources: ['Admin Specified']
         });
         if (input) input.value = '';
         renderUserSelectionTable();
+        renderUserMappingReport();
       } else {
-        alert(`User ${email} is already in the list.`);
+        alert(`User ${rawVal} is already in the list.`);
       }
     }
 
-    function addBulkUsersToSelection() {
+    function handleCsvMappingFileUpload(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const content = String(e.target?.result || '');
+        await processCsvOrBulkUserContent(content, `CSV: ${file.name}`);
+        event.target.value = '';
+      };
+      reader.readAsText(file);
+    }
+
+    async function addBulkUsersToSelection() {
       const textarea = document.getElementById('bulkUserEmailsTextarea');
       const raw = textarea?.value || '';
-      const emails = raw
+      if (!raw.trim()) {
+        alert('Please paste user emails or CSV mappings (old_id,new_id) first.');
+        return;
+      }
+      await processCsvOrBulkUserContent(raw, 'CSV / Bulk Import');
+      if (textarea) textarea.value = '';
+      document.getElementById('bulkUserImportPanel')?.classList.add('hidden');
+    }
+
+    async function processCsvOrBulkUserContent(rawText, sourceLabel = 'CSV Mapped') {
+      const fromDomain = document.getElementById('mapFromDomain')?.value?.trim() || '';
+      const toDomain = document.getElementById('mapToDomain')?.value?.trim() || '';
+
+      // Detect whether input contains 2-column mappings (e.g. old_id,new_id) vs plain email list
+      const lines = rawText.replace(/^\uFEFF/, '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+      let hasTwoColumnRows = false;
+      for (const line of lines) {
+        const parts = line.split(/->|=>|[\t,;|]/).map(p => p.replace(/^["']+|["']+$/g, '').trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          hasTwoColumnRows = true;
+          break;
+        }
+      }
+
+      if (hasTwoColumnRows) {
+        try {
+          const res = await fetch('/api/idp/parse-csv', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              csvContent: rawText,
+              defaultSourceDomain: fromDomain,
+              defaultTargetDomain: toDomain,
+              discoveredUsers: targetedUsersList.map(u => u.email),
+              domainRules: getActiveDomainRules(),
+              existingExplicitMappings: explicitIdpOverrides
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.parseResult) {
+            const parsedMappings = data.parseResult.mappings || {};
+            let mappedCount = 0;
+            for (const [src, tgt] of Object.entries(parsedMappings)) {
+              const cleanSrc = src.toLowerCase().trim();
+              const cleanTgt = String(tgt).toLowerCase().trim();
+              explicitIdpOverrides[cleanSrc] = cleanTgt;
+              csvMappedKeysSet.add(cleanSrc);
+              mappedCount++;
+
+              const existingUser = targetedUsersList.find(u => u.email.toLowerCase() === cleanSrc);
+              if (existingUser) {
+                if (!existingUser.sources.includes(sourceLabel)) {
+                  existingUser.sources.push(sourceLabel);
+                }
+                existingUser.selected = true;
+              } else {
+                targetedUsersList.push({
+                  email: cleanSrc,
+                  selected: true,
+                  sources: [sourceLabel]
+                });
+              }
+            }
+            addLog(`Imported ${mappedCount} user identity mapping(s) from ${sourceLabel}.`, 'SUCCESS');
+            renderUserSelectionTable();
+            const reportPanel = document.getElementById('userMappingReportPanel');
+            if (reportPanel) reportPanel.classList.remove('hidden');
+            renderUserMappingReport();
+            return;
+          }
+        } catch (err) {
+          console.warn('Server CSV parse fallback to client parser:', err);
+        }
+      }
+
+      // Fallback: Single-column or space/comma-separated source emails
+      const emails = rawText
         .split(/[\s,;]+/)
         .map(e => e.trim())
         .filter(e => e.includes('@') && e.length > 3);
 
       if (emails.length === 0) {
-        alert('No valid email addresses found in the text area.');
+        alert('No valid email addresses or (source,target) mapping pairs found.');
         return;
       }
 
-      let addedCount = 0;
       for (const email of emails) {
         if (!targetedUsersList.some(u => u.email.toLowerCase() === email.toLowerCase())) {
           targetedUsersList.push({
@@ -7331,16 +7593,300 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
             selected: true,
             sources: ['Bulk Imported (Admin)']
           });
-          addedCount++;
+        }
+      }
+      renderUserSelectionTable();
+      renderUserMappingReport();
+    }
+
+    function toggleAndRenderMappingReport() {
+      const panel = document.getElementById('userMappingReportPanel');
+      if (!panel) return;
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        renderUserMappingReport();
+      }
+    }
+
+    function setMappingReportFilter(filterType) {
+      currentMappingReportFilter = filterType;
+      ['ALL', 'MAPPED', 'UNMAPPED', 'COLLISION'].forEach(f => {
+        const btn = document.getElementById('mapFilterBtn_' + f);
+        if (!btn) return;
+        if (f === filterType) {
+          btn.className = 'px-2.5 py-1 rounded-md text-[11px] font-semibold bg-purple-600 text-white';
+        } else {
+          btn.className = 'px-2.5 py-1 rounded-md text-[11px] font-medium bg-gray-900 text-gray-300 hover:bg-gray-800 border border-gray-800';
+        }
+      });
+      renderUserMappingReport();
+    }
+
+    function computeFullMappingReportData() {
+      const domainRules = getActiveDomainRules();
+      const allSourceMap = new Map();
+
+      targetedUsersList.forEach(u => {
+        allSourceMap.set(u.email.toLowerCase(), {
+          sourceEmail: u.email,
+          selected: u.selected,
+          sources: u.sources || ['Discovered'],
+          inDiscoveredScope: true
+        });
+      });
+
+      Object.keys(explicitIdpOverrides).forEach(k => {
+        const lk = k.toLowerCase();
+        if (!allSourceMap.has(lk)) {
+          allSourceMap.set(lk, {
+            sourceEmail: lk,
+            selected: true,
+            sources: [csvMappedKeysSet.has(lk) ? 'CSV Mapped' : 'Manual Override'],
+            inDiscoveredScope: false
+          });
+        }
+      });
+
+      const targetToSources = new Map();
+      const rows = [];
+
+      for (const [lowerSrc, item] of allSourceMap.entries()) {
+        const override = getExplicitOverride(item.sourceEmail);
+        const domainMapped = computeMappedTarget(item.sourceEmail, domainRules);
+        let targetEmail = item.sourceEmail;
+        let method = 'UNMAPPED';
+
+        if (override && override.toLowerCase() !== lowerSrc) {
+          targetEmail = override;
+          method = csvMappedKeysSet.has(lowerSrc) ? 'CSV_MAP' : 'MANUAL_OVERRIDE';
+        } else if (domainMapped && domainMapped.toLowerCase() !== lowerSrc) {
+          targetEmail = domainMapped;
+          method = 'DOMAIN_RULE';
+        }
+
+        const lowerTgt = targetEmail.toLowerCase();
+        if (!targetToSources.has(lowerTgt)) {
+          targetToSources.set(lowerTgt, []);
+        }
+        targetToSources.get(lowerTgt).push(item.sourceEmail);
+
+        rows.push({
+          sourceIdentity: item.sourceEmail,
+          targetIdentity: targetEmail,
+          mappingMethod: method,
+          sources: item.sources,
+          selected: item.selected,
+          validationStatus: 'VALID',
+          validationMessage: 'Ready for migration'
+        });
+      }
+
+      let csvOrExplicitCount = 0;
+      let domainCount = 0;
+      let unmappedCount = 0;
+      let collisionCount = 0;
+      const collisions = [];
+
+      for (const [tgt, srcList] of targetToSources.entries()) {
+        if (srcList.length > 1) {
+          collisions.push({ target: tgt, sources: srcList });
         }
       }
 
-      if (textarea) textarea.value = '';
-      document.getElementById('bulkUserImportPanel')?.classList.add('hidden');
-      renderUserSelectionTable();
-      if (typeof previewAutoMapping === 'function' && getActiveDomainRules().length > 0) {
-        previewAutoMapping();
+      const hasAnyMappingsConfigured = Object.keys(explicitIdpOverrides).length > 0 || domainRules.length > 0;
+
+      rows.forEach(r => {
+        if (r.mappingMethod === 'CSV_MAP' || r.mappingMethod === 'MANUAL_OVERRIDE') csvOrExplicitCount++;
+        else if (r.mappingMethod === 'DOMAIN_RULE') domainCount++;
+        else unmappedCount++;
+
+        const matchingSources = targetToSources.get(r.targetIdentity.toLowerCase()) || [];
+        if (matchingSources.length > 1) {
+          r.validationStatus = 'COLLISION';
+          r.validationMessage = `Collision: ${matchingSources.length} source users map to "${r.targetIdentity}"`;
+          collisionCount++;
+        } else if (r.mappingMethod === 'UNMAPPED' && hasAnyMappingsConfigured) {
+          r.validationStatus = 'UNMAPPED_WARNING';
+          r.validationMessage = 'Missing from CSV / domain rules (remains on old ID)';
+        }
+      });
+
+      return {
+        rows,
+        collisions,
+        summary: {
+          total: rows.length,
+          csvOrExplicitCount,
+          domainCount,
+          unmappedCount,
+          collisionCount
+        }
+      };
+    }
+
+    function renderUserMappingReport() {
+      const data = computeFullMappingReportData();
+      const badge = document.getElementById('mappingReportCountBadge');
+      if (badge) {
+        if (data.summary.csvOrExplicitCount + data.summary.domainCount > 0) {
+          badge.classList.remove('hidden');
+          badge.textContent = `${data.summary.csvOrExplicitCount + data.summary.domainCount}/${data.summary.total}`;
+        } else {
+          badge.classList.add('hidden');
+        }
       }
+
+      const tbody = document.getElementById('mappingReportTableBody');
+      if (!tbody) return;
+
+      document.getElementById('mapRepTotal').textContent = String(data.summary.total);
+      document.getElementById('mapRepCsvCount').textContent = String(data.summary.csvOrExplicitCount);
+      document.getElementById('mapRepDomainCount').textContent = String(data.summary.domainCount);
+      document.getElementById('mapRepUnmappedCount').textContent = String(data.summary.unmappedCount);
+      document.getElementById('mapRepCollisionCount').textContent = String(data.summary.collisionCount);
+
+      const statusPill = document.getElementById('mappingReportStatusPill');
+      if (statusPill) {
+        if (data.summary.collisionCount > 0) {
+          statusPill.textContent = `${data.summary.collisionCount} Collision(s) Detected`;
+          statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full font-mono bg-red-950 text-red-300 border border-red-700/60';
+        } else if (data.summary.unmappedCount > 0 && (data.summary.csvOrExplicitCount > 0 || data.summary.domainCount > 0)) {
+          statusPill.textContent = `${data.summary.unmappedCount} Unmapped Warning(s)`;
+          statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full font-mono bg-amber-950 text-amber-300 border border-amber-700/60';
+        } else {
+          statusPill.textContent = `${data.summary.csvOrExplicitCount + data.summary.domainCount} Mapped Ready`;
+          statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full font-mono bg-emerald-950 text-emerald-300 border border-emerald-700/60';
+        }
+      }
+
+      const alertBox = document.getElementById('mappingReportAlertsBox');
+      if (alertBox) {
+        if (data.collisions.length > 0) {
+          alertBox.classList.remove('hidden');
+          alertBox.innerHTML = `<div class="font-bold text-red-300">⚠️ Duplicate Destination ID Collisions Detected:</div>` +
+            data.collisions.map(c => `<div>• Target ID <code class="text-white font-mono">${escapeHtml(c.target)}</code> is mapped from multiple source users: <code class="text-amber-300 font-mono">${escapeHtml(c.sources.join(', '))}</code></div>`).join('');
+        } else {
+          alertBox.classList.add('hidden');
+        }
+      }
+
+      const query = (document.getElementById('mappingReportSearchInput')?.value || '').trim().toLowerCase();
+      const filtered = data.rows.filter(r => {
+        if (currentMappingReportFilter === 'MAPPED' && r.mappingMethod === 'UNMAPPED') return false;
+        if (currentMappingReportFilter === 'UNMAPPED' && r.mappingMethod !== 'UNMAPPED') return false;
+        if (currentMappingReportFilter === 'COLLISION' && r.validationStatus !== 'COLLISION') return false;
+        if (query && !r.sourceIdentity.toLowerCase().includes(query) && !r.targetIdentity.toLowerCase().includes(query)) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-5 text-center text-gray-500">No mapping entries match the current filter. Upload a CSV or discover source users above.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((r, idx) => {
+        const methodBadge = r.mappingMethod === 'CSV_MAP'
+          ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700/60">📄 CSV Mapped</span>'
+          : r.mappingMethod === 'MANUAL_OVERRIDE'
+          ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-700/60">✏️ Manual Override</span>'
+          : r.mappingMethod === 'DOMAIN_RULE'
+          ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-700/60">🔄 Domain Rule</span>'
+          : '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">1:1 Unchanged</span>';
+
+        const valBadge = r.validationStatus === 'COLLISION'
+          ? `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-950 text-red-300 border border-red-700" title="${escapeHtml(r.validationMessage)}">❌ Duplicate Target</span>`
+          : r.validationStatus === 'UNMAPPED_WARNING'
+          ? `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950 text-amber-300 border border-amber-700" title="${escapeHtml(r.validationMessage)}">⚠️ Not in CSV</span>`
+          : `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/70 text-emerald-300 border border-emerald-800">✅ Ready</span>`;
+
+        const srcBadges = (r.sources || []).map(s => `<span class="px-1.5 py-0.5 rounded text-[9px] bg-gray-800 text-gray-300 border border-gray-700 mr-1">${escapeHtml(s)}</span>`).join('');
+
+        return `
+          <tr class="hover:bg-gray-800/50">
+            <td class="py-2 px-3 font-mono text-gray-500">${idx + 1}</td>
+            <td class="py-2 px-3 font-mono text-white">${escapeHtml(r.sourceIdentity)}</td>
+            <td class="py-2 px-3 text-center text-emerald-400 font-bold">➔</td>
+            <td class="py-2 px-3 font-mono">
+              <input type="text" value="${escapeHtml(r.targetIdentity)}"
+                onchange="updateTargetMappedIdentity('${escapeHtml(r.sourceIdentity)}', this.value)"
+                class="w-full max-w-xs bg-gray-950 border ${r.mappingMethod !== 'UNMAPPED' ? 'border-emerald-600/60 text-emerald-300' : 'border-gray-700 text-gray-300'} rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-purple-500" />
+            </td>
+            <td class="py-2 px-3">${methodBadge}</td>
+            <td class="py-2 px-3">${srcBadges}</td>
+            <td class="py-2 px-3">${valBadge}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function downloadSampleMappingCsv() {
+      const sample = [
+        'source_user_id,target_user_id',
+        'jane.doe@xxxx.com,849201@yyyy.com',
+        'john.smith@xxxx.com,849202@yyyy.com',
+        'alex.wong@xxxx.com,849203@yyyy.com'
+      ].join('\n');
+      const blob = new Blob([sample], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'user_id_mapping_template.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportUserMappingReportCsv() {
+      const data = computeFullMappingReportData();
+      const csvLines = [
+        'Source_User_ID,Target_User_ID,Mapping_Method,Discovery_Sources,Selected_For_Migration,Validation_Status,Validation_Notes'
+      ];
+      data.rows.forEach(r => {
+        const esc = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
+        csvLines.push([
+          esc(r.sourceIdentity),
+          esc(r.targetIdentity),
+          esc(r.mappingMethod),
+          esc((r.sources || []).join('; ')),
+          esc(r.selected ? 'YES' : 'NO'),
+          esc(r.validationStatus),
+          esc(r.validationMessage)
+        ].join(','));
+      });
+      const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `user-identity-mapping-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportUserMappingReportJson() {
+      const data = computeFullMappingReportData();
+      const identityMapping = {};
+      data.rows.forEach(r => {
+        identityMapping[r.sourceIdentity] = r.targetIdentity;
+      });
+      const payload = {
+        generatedAt: new Date().toISOString(),
+        summary: data.summary,
+        identityMapping,
+        entries: data.rows
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `user-identity-mapping-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function clearAllExplicitUserMappings() {
+      explicitIdpOverrides = {};
+      csvMappedKeysSet.clear();
+      renderUserSelectionTable();
+      renderUserMappingReport();
     }
 
     async function discoverSourceUsers(preserveManual = true, forceScope = null) {
@@ -7428,7 +7974,114 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       return targetedUsersList.filter(u => u.selected).map(u => u.email);
     }
 
+    // Set for the duration of a run so a second click cannot start a concurrent
+    // migration. Two overlapping runs also clobber each other's server-side audit
+    // log, because the logger is a module-level singleton that gets reset per run.
+    let migrationInFlight = false;
+
+    /**
+     * Returns a list of human-readable problems that should stop a migration from
+     * starting. Empty list means the configuration is runnable.
+     */
+    function validateMigrationConfig() {
+      const problems = [];
+
+      const required = [
+        ['srcProjectId', 'Source Project ID'],
+        ['srcAppId', 'Source App (Engine) ID'],
+        ['tgtProjectId', 'Target Project ID'],
+        ['tgtAppId', 'Target App (Engine) ID']
+      ];
+
+      for (const [fieldId, label] of required) {
+        if (!(getFieldValue(fieldId) || '').trim()) {
+          problems.push(`${label} is required.`);
+        }
+      }
+
+      const srcProject = (getFieldValue('srcProjectId') || '').trim();
+      const tgtProject = (getFieldValue('tgtProjectId') || '').trim();
+      const srcApp = (getFieldValue('srcAppId') || '').trim();
+      const tgtApp = (getFieldValue('tgtAppId') || '').trim();
+
+      // Migrating an app onto itself duplicates assets into the source tenant.
+      if (srcProject && srcProject === tgtProject && srcApp && srcApp === tgtApp) {
+        problems.push(
+          'Source and target are the same project AND the same app. This would write ' +
+          'copies of every asset back into the source app.'
+        );
+      }
+
+      const anyCategory = [
+        'optNotebooks', 'optSkills', 'optAgents', 'optSessions', 'optMemories', 'optArtifacts'
+      ].some(id => document.getElementById(id)?.checked);
+
+      if (!anyCategory) {
+        problems.push('No asset categories are selected, so the run would migrate nothing.');
+      }
+
+      return problems;
+    }
+
+    function setMigrationButtonBusy(busy) {
+      const btn = document.getElementById('btnExecuteMigration');
+      if (!btn) return;
+      btn.disabled = busy;
+      btn.classList.toggle('opacity-50', busy);
+      btn.classList.toggle('cursor-not-allowed', busy);
+    }
+
     async function startMigration(isDryRun) {
+      // --- Guard 1: double submit -------------------------------------------
+      if (migrationInFlight) {
+        addLog('A migration is already running. Ignoring duplicate start request.', 'WARN');
+        return;
+      }
+
+      // --- Guard 2: configuration validation --------------------------------
+      const problems = validateMigrationConfig();
+      if (problems.length > 0) {
+        alert(
+          'Cannot start migration — please fix the following:\n\n' +
+          problems.map(p => `  • ${p}`).join('\n')
+        );
+        return;
+      }
+
+      // --- Guard 3: confirmation for live (non-dry-run) writes --------------
+      if (!isDryRun) {
+        const selected = getSelectedUsersForMigration();
+        const scope = selected.length > 0
+          ? `${selected.length} selected user(s)`
+          : `ALL discovered users (${targetedUsersList.length})`;
+
+        const categories = [
+          ['optNotebooks', 'Notebooks'],
+          ['optSkills', 'Skills'],
+          ['optAgents', 'Agents'],
+          ['optSessions', 'Chat Sessions'],
+          ['optMemories', 'Memories'],
+          ['optArtifacts', 'Artifacts']
+        ].filter(([id]) => document.getElementById(id)?.checked).map(([, label]) => label);
+
+        const confirmed = confirm(
+          'LIVE MIGRATION — this writes real assets into the target tenant.\n\n' +
+          `Target project:  ${(getFieldValue('tgtProjectId') || '').trim()}\n` +
+          `Target app:      ${(getFieldValue('tgtAppId') || '').trim()}\n` +
+          `Scope:           ${scope}\n` +
+          `Categories:      ${categories.join(', ') || 'none'}\n\n` +
+          'This is not a dry run. Continue?'
+        );
+
+        if (!confirmed) {
+          addLog('Live migration cancelled at confirmation prompt.', 'WARN');
+          return;
+        }
+      }
+
+      migrationInFlight = true;
+      setMigrationButtonBusy(true);
+
       const tracker = document.getElementById('trackerSection');
       tracker.classList.remove('hidden');
       tracker.scrollIntoView({ behavior: 'smooth' });
@@ -7436,15 +8089,18 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       const compActions = document.getElementById('jobCompletionActions');
       if (compActions) compActions.classList.add('hidden');
 
-      document.getElementById('progressBar').style.width = '10%';
-      document.getElementById('progressPercent').textContent = '10%';
+      // Start at zero: progress reflects phases the engine has actually finished.
+      document.getElementById('progressBar').style.width = '0%';
+      document.getElementById('progressPercent').textContent = '0%';
+
       document.getElementById('trackerTitle').textContent = isDryRun ? 'Simulating Dry Run...' : 'Executing Live Migration...';
       document.getElementById('statusSpinner').classList.remove('hidden');
 
       // Clear previous logs
       document.getElementById('liveLogs').innerHTML = '';
 
-      ['preflight', 'skills', 'notebooks', 'agents', 'sessions', 'artifacts', 'reports'].forEach(s => updateStage(s, 'pending'));
+      ['preflight', 'notebooks', 'skills', 'agents', 'sessions', 'memories', 'artifacts', 'reports'].forEach(s => updateStage(s, 'pending'));
+
       updateStage('preflight', 'active');
       addLog(`Initiating migration job (Dry Run: ${isDryRun})...`);
 
@@ -7453,16 +8109,23 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         addLog(`Filtering migration to ${selectedUsers.length} selected user(s): ${selectedUsers.join(', ')}`);
       }
 
-      const effectiveIdentityMapping = { ...explicitIdpOverrides };
+      const effectiveIdentityMapping = {};
+      Object.entries(explicitIdpOverrides || {}).forEach(([k, v]) => {
+        if (k && v) {
+          effectiveIdentityMapping[k] = v;
+          effectiveIdentityMapping[k.toLowerCase()] = v;
+        }
+      });
       const domainRules = getActiveDomainRules();
       const usersToMap = (selectedUsers && selectedUsers.length > 0) 
         ? targetedUsersList.filter(u => selectedUsers.includes(u.email))
         : targetedUsersList;
 
       usersToMap.forEach(u => {
-        if (!effectiveIdentityMapping[u.email]) {
-          effectiveIdentityMapping[u.email] = computeMappedTarget(u.email, domainRules);
-        }
+        const overrideVal = getExplicitOverride(u.email);
+        const mappedTarget = overrideVal || computeMappedTarget(u.email, domainRules);
+        effectiveIdentityMapping[u.email] = mappedTarget;
+        effectiveIdentityMapping[u.email.toLowerCase()] = mappedTarget;
       });
 
       const config = {
@@ -7490,7 +8153,7 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         idpMapping: {
           sourceIdp: document.getElementById('srcIdp')?.value === 'entra' ? 'MICROSOFT_ENTRA_ID' : (document.getElementById('srcIdp')?.value === 'okta' ? 'OKTA' : 'GOOGLE_CLOUD_IDENTITY'),
           targetIdp: document.getElementById('tgtIdp')?.value === 'entra' ? 'MICROSOFT_ENTRA_ID' : (document.getElementById('tgtIdp')?.value === 'okta' ? 'OKTA' : 'GOOGLE_CLOUD_IDENTITY'),
-          domainRules: (document.getElementById('srcIdp')?.value !== document.getElementById('tgtIdp')?.value) ? getActiveDomainRules() : []
+          domainRules: domainRules
         },
         identityMapping: effectiveIdentityMapping,
         options: {
@@ -7534,6 +8197,24 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         let buffer = '';
         let finalReport = null;
         let migrationCompletedNormally = false;
+        // Set when the server sends an `error` event. Must take precedence over the
+        // generic "stream disconnected" message so the real cause reaches the operator.
+        let streamError = null;
+        let streamErrorIssues = null;
+
+        // Progress is (finished phases / total phases). These names must match the
+        // MigrationStage union emitted by src/engines/migrationRunner.ts.
+        const MIGRATION_STAGE_ORDER = [
+          'preflight', 'notebooks', 'skills', 'agents', 'sessions', 'memories', 'artifacts', 'reports'
+        ];
+        let completedStages = new Set();
+        const setProgress = (pct) => {
+          const clamped = Math.max(0, Math.min(100, pct));
+          document.getElementById('progressBar').style.width = `${clamped}%`;
+          document.getElementById('progressPercent').textContent = `${clamped}%`;
+        };
+
+
 
         while (true) {
           const { done, value } = await reader.read();
@@ -7564,60 +8245,58 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
               if (eventType === 'log') {
                 const msg = data.message || data.line || '';
                 addLog(msg, data.level || 'INFO');
-
-                // Dynamic progress updates across all phases
-                if (msg.includes('Executing Pre-Flight') || msg.includes('Verifying target') || msg.includes('RESUME CHECKPOINT')) {
-                  updateStage('preflight', 'active');
-                  document.getElementById('progressBar').style.width = '10%';
-                  document.getElementById('progressPercent').textContent = '10%';
-                } else if (msg.includes('enterprise skills') || msg.includes('Creating Skill')) {
-                  updateStage('preflight', 'done');
-                  updateStage('skills', 'active');
-                  document.getElementById('progressBar').style.width = '24%';
-                  document.getElementById('progressPercent').textContent = '24%';
-                } else if (msg.includes('Discovering source notebooks') || msg.includes('Discovering notebooks') || msg.includes('Restored notebook') || msg.includes('Restored DataStore')) {
-                  updateStage('skills', 'done');
-                  updateStage('notebooks', 'active');
-                  document.getElementById('progressBar').style.width = '42%';
-                  document.getElementById('progressPercent').textContent = '42%';
-                } else if (msg.includes('Discovering agents') || msg.includes('Created target Agent') || msg.includes('Published agent')) {
-                  updateStage('notebooks', 'done');
-                  updateStage('agents', 'active');
-                  document.getElementById('progressBar').style.width = '62%';
-                  document.getElementById('progressPercent').textContent = '62%';
-                } else if (msg.includes('Multi-User Chat History') || msg.includes('Restored session') || msg.includes('User Memories')) {
-                  updateStage('agents', 'done');
-                  updateStage('sessions', 'active');
-                  document.getElementById('progressBar').style.width = '80%';
-                  document.getElementById('progressPercent').textContent = '80%';
-                } else if (msg.includes('user artifacts across') || msg.includes('Archived')) {
-                  updateStage('sessions', 'done');
-                  updateStage('artifacts', 'active');
-                  document.getElementById('progressBar').style.width = '92%';
-                  document.getElementById('progressPercent').textContent = '92%';
-                }
+                // Progress is driven by `stage` events from the engine, not by
+                // pattern-matching this text. Log wording is not an API.
               } else if (eventType === 'stage') {
                 if (data.stage === 'complete') {
                   migrationCompletedNormally = true;
-                  updateStage('artifacts', 'done');
-                  updateStage('reports', 'done');
-                  document.getElementById('progressBar').style.width = '100%';
-                  document.getElementById('progressPercent').textContent = '100%';
+                  MIGRATION_STAGE_ORDER.forEach(s => updateStage(s, 'done'));
+                  completedStages = new Set(MIGRATION_STAGE_ORDER);
+                  setProgress(100);
+                } else if (data.stage) {
+                  // Unknown stages are ignored for the bar but still logged, so a new
+                  // engine phase cannot silently distort the percentage.
+                  if (MIGRATION_STAGE_ORDER.includes(data.stage)) {
+                    updateStage(data.stage, data.status === 'done' ? 'done' : 'active');
+                    if (data.status === 'done') completedStages.add(data.stage);
+                    setProgress(Math.round((completedStages.size / MIGRATION_STAGE_ORDER.length) * 100));
+                  } else {
+                    console.debug('Unrecognised migration stage:', data.stage);
+                  }
                 }
+
               } else if (eventType === 'report') {
                 finalReport = data;
                 activeReportData = data;
                 renderReport(data);
               } else if (eventType === 'error') {
-                throw new Error(data.message || 'Stream reported an error');
+                // Do NOT throw here: this try/catch also wraps JSON.parse, so throwing
+                // would be caught two lines below and downgraded to a console.warn,
+                // discarding the server's actual failure reason and leaving the user
+                // with a misleading "connection closed" message.
+                streamError = data.message || 'Stream reported an error';
+                streamErrorIssues = Array.isArray(data.issues) ? data.issues : null;
+                addLog(`Migration engine reported an error: ${streamError}`, 'ERROR');
+                if (streamErrorIssues) {
+                  for (const issue of streamErrorIssues) {
+                    addLog(`  • ${typeof issue === 'string' ? issue : JSON.stringify(issue)}`, 'ERROR');
+                  }
+                }
               }
             } catch (e) {
+              // A malformed event is itself a problem worth surfacing - it means we may
+              // have missed a log line, a report, or an error notification.
               console.warn('Failed to parse stream event:', e, dataStr);
+              addLog(`Could not parse an event from the migration stream (${e && e.message ? e.message : e}). Some progress information may be missing.`, 'WARN');
             }
+
           }
         }
 
-        if (migrationCompletedNormally || finalReport) {
+        // A reported error outranks a received report: the server may emit `report`
+        // and then fail, and announcing success in that case would be unearned.
+        if (!streamError && (migrationCompletedNormally || finalReport)) {
+
           updateStage('preflight', 'done');
           updateStage('skills', 'done');
           updateStage('notebooks', 'done');
@@ -7647,11 +8326,21 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
           }
         } else {
           document.getElementById('statusSpinner').classList.add('hidden');
-          document.getElementById('trackerTitle').textContent = '⚠️ Migration Stream Disconnected Prematurely';
           document.getElementById('trackerTitle').classList.remove('text-white');
           document.getElementById('trackerTitle').classList.add('text-amber-400');
-          document.getElementById('trackerSubtitle').textContent = 'Connection to migration engine closed before completion event was received.';
-          addLog('Stream disconnected unexpectedly before receiving final completion event. Migration state uncertain; inspect reports or run with --resume to continue.', 'ERROR');
+
+          if (streamError) {
+            // The engine told us exactly what went wrong - say so, rather than
+            // misattributing a real migration failure to a dropped connection.
+            document.getElementById('trackerTitle').textContent = '❌ Migration Failed';
+            document.getElementById('trackerSubtitle').textContent = streamError;
+            addLog(`Migration failed: ${streamError}`, 'ERROR');
+          } else {
+            document.getElementById('trackerTitle').textContent = '⚠️ Migration Stream Disconnected Prematurely';
+            document.getElementById('trackerSubtitle').textContent = 'Connection to migration engine closed before completion event was received.';
+            addLog('Stream disconnected unexpectedly before receiving final completion event. Migration state uncertain; inspect reports or run with --resume to continue.', 'ERROR');
+          }
+
 
           let alertBanner = document.getElementById('streamInterruptAlert');
           if (!alertBanner) {
@@ -7709,6 +8398,11 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
         addLog(err.message, 'ERROR');
         document.getElementById('trackerTitle').textContent = 'Migration Failed';
         document.getElementById('statusSpinner').classList.add('hidden');
+      } finally {
+        // Must release in `finally`: an exception on the success path would
+        // otherwise leave the button permanently disabled with no way to retry.
+        migrationInFlight = false;
+        setMigrationButtonBusy(false);
       }
     }
 
@@ -8180,8 +8874,22 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
       return { queryParams, payload, srcProjectId, tgtProjectId, srcLocation, tgtLocation, srcCollectionId, tgtCollectionId, srcAppId, tgtAppId };
     }
 
+    // Single source of truth for the destructive-cleanup categories.
+    // These ids were previously duplicated across two array literals, and
+    // 'chkCleanMemories' was missing from both while being `checked` by default.
+    // That meant "Deselect All" left memories armed, and the button then reported
+    // one fewer category than the request actually destroyed.
+    const MAINTENANCE_CLEAN_CHECKBOX_IDS = [
+      'chkCleanChats',
+      'chkCleanAgents',
+      'chkCleanNotebooks',
+      'chkCleanMemories',
+      'chkCleanArtifacts',
+      'chkCleanReports'
+    ];
+
     function toggleAllMaintenanceCheckboxes(checked) {
-      ['chkCleanChats', 'chkCleanAgents', 'chkCleanNotebooks', 'chkCleanArtifacts', 'chkCleanReports'].forEach(id => {
+      MAINTENANCE_CLEAN_CHECKBOX_IDS.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.checked = checked;
       });
@@ -8189,13 +8897,9 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     }
 
     function updateMaintenanceButtonState() {
-      const selected = [
-        document.getElementById('chkCleanChats')?.checked,
-        document.getElementById('chkCleanAgents')?.checked,
-        document.getElementById('chkCleanNotebooks')?.checked,
-        document.getElementById('chkCleanArtifacts')?.checked,
-        document.getElementById('chkCleanReports')?.checked
-      ].filter(Boolean).length;
+      const selected = MAINTENANCE_CLEAN_CHECKBOX_IDS
+        .map(id => document.getElementById(id)?.checked)
+        .filter(Boolean).length;
 
       const btn = document.getElementById('btnClearTarget');
       const textEl = document.getElementById('btnClearTargetText');

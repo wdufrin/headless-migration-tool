@@ -55,7 +55,8 @@ export class MigrationReporter {
     lines.push(`| **Successfully Migrated Skills** | ${report.summary.totalMigratedSkills ?? 0} |`);
     lines.push(`| **Exported Studio Artifacts** | ${report.summary.totalMigratedArtifacts ?? report.summary.totalDiscoveredArtifacts ?? 0} |`);
     lines.push(`| **Skipped Items** | ${report.summary.totalSkipped} |`);
-    lines.push(`| **Failed Items** | ${report.summary.totalFailed} |\n`);
+    lines.push(`| **Failed Items** | ${report.summary.totalFailed} |`);
+    lines.push(`| **Migrated WITHOUT ownership transfer** | ${report.summary.totalOwnershipNotTransferred ?? 0} |\n`);
 
     // Group results by original user for reconciliation
     const userGroups = new Map<string, {
@@ -114,6 +115,24 @@ export class MigrationReporter {
         grp.failed++;
         if (r.error && !grp.reasons.includes(r.error)) grp.reasons.push(r.error);
       }
+    }
+
+    if (report.identityMapping && Object.keys(report.identityMapping).length > 0) {
+      lines.push(`---`);
+      lines.push(`## 2b. User Identity Mapping Report (Source ID ➔ Destination ID)`);
+      lines.push(`| Source User Identity (Old ID) | Target User Identity (New ID) | Mapping Type | Assets Migrated |`);
+      lines.push(`| :--- | :--- | :---: | :---: |`);
+      const seenPairs = new Set<string>();
+      for (const [srcId, tgtId] of Object.entries(report.identityMapping)) {
+        const normKey = `${srcId.toLowerCase()}->${tgtId.toLowerCase()}`;
+        if (seenPairs.has(normKey)) continue;
+        seenPairs.add(normKey);
+        const grp = userGroups.get(srcId) || userGroups.get(srcId.toLowerCase());
+        const count = grp ? grp.migrated : 0;
+        const mapType = srcId.toLowerCase() !== tgtId.toLowerCase() ? '🔄 Mapped (`Old ➔ New`)' : '1:1 Direct';
+        lines.push(`| \`${srcId}\` | \`${tgtId}\` | ${mapType} | **${count}** |`);
+      }
+      lines.push('');
     }
 
     if (userGroups.size > 0) {

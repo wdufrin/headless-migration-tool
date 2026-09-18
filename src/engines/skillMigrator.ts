@@ -20,6 +20,7 @@ import { EnvironmentConfig, MigrationOptions, MigrationItemResult } from '../typ
 import { RegistrySkill, RegistrySkillRevision, Agent, IamPolicy } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
+import { IdentityMappingService } from '../services/identityMappingService.js';
 import { isAgentOwnedByUser, mapIamMember } from './agentMigrator.js';
 
 export const PUBLIC_1P_SKILL_IDS = new Set([
@@ -256,7 +257,7 @@ export class SkillMigrator {
             .replace(/^principal(set)?:\/\/.*?\//i, '')
             .replace(/^user:/i, '')
             .trim();
-          const targetOwner = identityMapping[cleanOwner] || identityMapping[rawOwner] || cleanOwner;
+          const targetOwner = IdentityMappingService.lookupTargetIdentity(cleanOwner, identityMapping, cleanOwner);
 
           if (options.dryRun) {
             logger.info(`[DRY RUN] Would migrate Discovery Engine Skill Agent "${agent.displayName}" (ID: ${agentId}) for owner ${targetOwner}`);
