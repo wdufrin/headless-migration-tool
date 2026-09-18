@@ -16,6 +16,7 @@
 
 import express from 'express';
 import fs from 'fs';
+import path from 'path';
 import { GcpAuthService, CLOUD_PLATFORM_SCOPE } from '../services/gcpAuth.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
 import { buildWorkforcePrincipal } from '../utils/wifPrincipal.js';
@@ -762,7 +763,9 @@ wizardRouter.get('/wizard/wif-discovery', async (req, res) => {
       localKeys: {
         hasKey,
         hasJwks,
-        ready: hasKey && hasJwks
+        ready: hasKey && hasJwks,
+        keyPath: path.resolve('wif-migration-key.pem'),
+        jwksPath: path.resolve('wif-migration-jwks.json')
       },
       currentConfig
     });

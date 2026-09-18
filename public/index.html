@@ -5544,9 +5544,30 @@ gcloud iam service-accounts keys create sa-dwd-key.json \\
       const poolId = document.getElementById('wizWifPoolId')?.value?.trim() || '<WORKFORCE_POOL_ID>';
       const provId = document.getElementById('wizWifProviderId')?.value?.trim() || 'migration-dwd-provider';
       const issuer = document.getElementById('wizWifIssuer')?.value?.trim() || 'https://gemini-migration.internal';
+      const srcProj = document.getElementById('wizDwdSrcProject')?.value?.trim() || document.getElementById('srcProjectId')?.value?.trim() || 'testgebackupandrestorev3';
+      const tgtProj = document.getElementById('wizDwdProject')?.value?.trim() || document.getElementById('tgtProjectId')?.value?.trim() || srcProj;
+      const saName = document.getElementById('wizDwdSaName')?.value?.trim() || 'gemini-dwd-migrator';
 
       const attrCond = document.getElementById('wizWifAttributeCondition')?.value?.trim() || 'assertion.email != "" && !assertion.sub.startsWith("service-")';
       const attrCondArg = (attrCond && attrCond.toLowerCase() !== 'none') ? ` \\\n    --attribute-condition=${shellSingleQuote(attrCond)}` : '';
+
+      const uniqueProjects = Array.from(new Set([srcProj, tgtProj].filter(Boolean)));
+      const projectIamBlock = uniqueProjects.map(proj => `# Grant Workforce Pool Quota + Discovery Engine Access on Project "${proj}"
+gcloud projects add-iam-policy-binding "${proj}" \\
+    --role="roles/serviceusage.serviceUsageConsumer" \\
+    --member="principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*"
+
+gcloud projects add-iam-policy-binding "${proj}" \\
+    --role="roles/discoveryengine.admin" \\
+    --member="principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*"
+
+gcloud iam service-accounts add-iam-policy-binding "${saName}@${proj}.iam.gserviceaccount.com" \\
+    --role="roles/iam.serviceAccountTokenCreator" \\
+    --member="principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*" \\
+    --project="${proj}"`).join('\n\n');
+
+      const jwksPath = discoveredWifData?.localKeys?.jwksPath || './wif-migration-jwks.json';
+      const keyPath = discoveredWifData?.localKeys?.keyPath || './wif-migration-key.pem';
 
       const script = `# 1. Create Workforce Pool (Skip if "${poolId}" already exists)
 gcloud iam workforce-pools describe "${poolId}" --location="global" >/dev/null 2>&1 || \\
@@ -5556,7 +5577,7 @@ gcloud iam workforce-pools create "${poolId}" \\
     --display-name="Enterprise Workforce IdP Pool"
 
 # 2. Generate Migration RSA Signing Key & Public JWKS (if not already present)
-test -f ./wif-migration-jwks.json || node -e "
+test -f "${jwksPath}" || node -e "
 const crypto = require('crypto');
 const fs = require('fs');
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
@@ -5568,13 +5589,14 @@ const jwk = crypto.createPublicKey(publicKey).export({ format: 'jwk' });
 jwk.kid = 'wif-migration-key-1';
 jwk.use = 'sig';
 jwk.alg = 'RS256';
-fs.writeFileSync('wif-migration-key.pem', privateKey, { mode: 0o600 });
-fs.writeFileSync('wif-migration-jwks.json', JSON.stringify({ keys: [jwk] }, null, 2));
+fs.writeFileSync(${JSON.stringify(keyPath)}, privateKey, { mode: 0o600 });
+fs.writeFileSync(${JSON.stringify(jwksPath)}, JSON.stringify({ keys: [jwk] }, null, 2));
 console.log('Generated wif-migration-key.pem and wif-migration-jwks.json');
 "
 
-# 3. Register Migration Impersonation Provider in Workforce Pool "${poolId}"
-gcloud iam workforce-pools providers create-oidc "${provId}" \\
+# 3. Register (or Update) Migration Impersonation Provider in Workforce Pool "${poolId}"
+if gcloud iam workforce-pools providers describe "${provId}" --workforce-pool="${poolId}" --location="global" >/dev/null 2>&1; then
+  gcloud iam workforce-pools providers update-oidc "${provId}" \\
     --workforce-pool="${poolId}" \\
     --location="global" \\
     --display-name="Migration DWD Impersonator" \\
@@ -5582,8 +5604,23 @@ gcloud iam workforce-pools providers create-oidc "${provId}" \\
     --client-id="gemini-migration-tool" \\
     --web-sso-response-type="id-token" \\
     --web-sso-assertion-claims-behavior="only-id-token-claims" \\
-    --jwk-json-path="./wif-migration-jwks.json" \\
-    --attribute-mapping="google.subject=assertion.sub,attribute.user_email=assertion.email"${attrCondArg}`;
+    --jwk-json-path="${jwksPath}" \\
+    --attribute-mapping="google.subject=assertion.sub,attribute.user_email=assertion.email"${attrCondArg}
+else
+  gcloud iam workforce-pools providers create-oidc "${provId}" \\
+    --workforce-pool="${poolId}" \\
+    --location="global" \\
+    --display-name="Migration DWD Impersonator" \\
+    --issuer-uri="${issuer}" \\
+    --client-id="gemini-migration-tool" \\
+    --web-sso-response-type="id-token" \\
+    --web-sso-assertion-claims-behavior="only-id-token-claims" \\
+    --jwk-json-path="${jwksPath}" \\
+    --attribute-mapping="google.subject=assertion.sub,attribute.user_email=assertion.email"${attrCondArg}
+fi
+
+# 4. Grant Required GCP Project & Service Account Permissions to Workforce Pool "${poolId}"
+${projectIamBlock}`;
 
       const el = document.getElementById('wizWifScript');
       if (el) el.textContent = script;
