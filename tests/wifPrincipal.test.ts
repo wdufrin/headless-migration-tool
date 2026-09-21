@@ -28,7 +28,10 @@ import {
   isEmailDerivedMapping,
   deriveAlignedMigrationAttributeMapping,
   inspectGeAppWorkforceConfig,
-  getDiscoveredPoolGroups
+  getDiscoveredPoolGroups,
+  registerDiscoveredPoolGroups,
+  canonicalEmailSubjectKind,
+  areEmailMappingsSemanticallyAligned
 } from '../src/services/wifPreflight.js';
 
 const AUDIENCE =
@@ -404,5 +407,64 @@ describe('Real wdufrin-okta pool configuration', () => {
       globalThis.fetch = origFetch;
     }
   });
+
+  describe('Semantic Subject Equivalence & Scoped Group Discovery', () => {
+    it('classifies CEL subject expressions into canonical kinds correctly', () => {
+      expect(canonicalEmailSubjectKind('assertion.email.lowerAscii()')).toBe('LOWER_EMAIL');
+      expect(canonicalEmailSubjectKind('assertion.subject.lowerAscii()')).toBe('LOWER_EMAIL');
+      expect(canonicalEmailSubjectKind('assertion.attributes.email[0].lowerAscii()')).toBe('LOWER_EMAIL');
+      expect(canonicalEmailSubjectKind('assertion.email')).toBe('RAW_EMAIL');
+      expect(canonicalEmailSubjectKind('assertion.subject')).toBe('RAW_EMAIL');
+      expect(canonicalEmailSubjectKind('assertion.email.split("@")[0].lowerAscii()')).toBe('LOWER_SHORT_USER');
+      expect(canonicalEmailSubjectKind('assertion.oid')).toBe('NON_EMAIL');
+      expect(canonicalEmailSubjectKind('')).toBe('NON_EMAIL');
+    });
+
+    it('determines semantic equivalence between OIDC and SAML expressions', () => {
+      // OIDC assertion.email.lowerAscii() matches SAML assertion.subject.lowerAscii()
+      expect(
+        areEmailMappingsSemanticallyAligned(
+          'assertion.email.lowerAscii()',
+          'assertion.subject.lowerAscii()'
+        )
+      ).toBe(true);
+
+      // Cased vs Lowercased must NOT match
+      expect(
+        areEmailMappingsSemanticallyAligned(
+          'assertion.email',
+          'assertion.email.lowerAscii()'
+        )
+      ).toBe(false);
+
+      // Non-email expressions must NOT match
+      expect(
+        areEmailMappingsSemanticallyAligned(
+          'assertion.oid',
+          'assertion.oid'
+        )
+      ).toBe(true); // exact string match is true
+      expect(
+        areEmailMappingsSemanticallyAligned(
+          'assertion.oid',
+          'assertion.email'
+        )
+      ).toBe(false);
+    });
+
+    it('isolates discovered IAM groups strictly per poolId to prevent cross-pool bleeding', () => {
+      registerDiscoveredPoolGroups('pool-alpha', ['group-alpha-1', 'group-alpha-2']);
+      registerDiscoveredPoolGroups('pool-beta', ['group-beta-1']);
+
+      // Scoped lookups return only the pool's own groups
+      expect(getDiscoveredPoolGroups('pool-alpha')).toEqual(['group-alpha-1', 'group-alpha-2']);
+      expect(getDiscoveredPoolGroups('pool-beta')).toEqual(['group-beta-1']);
+      expect(getDiscoveredPoolGroups('pool-nonexistent')).toEqual([]);
+
+      // When multiple pools are in cache, unscoped lookup returns [] to prevent cross-pool bleed
+      expect(getDiscoveredPoolGroups()).toEqual([]);
+    });
+  });
 });
+
 

@@ -161,6 +161,30 @@ describe('Concurrency Utilities', () => {
     expect(Date.now() - start).toBeGreaterThanOrEqual(80);
   });
 
+  it('retryWithBackoff should fail fast without retry on HTTP 401 and 403', async () => {
+    let attempts401 = 0;
+    await expect(
+      retryWithBackoff(async () => {
+        attempts401++;
+        const err: any = new Error('Unauthorized');
+        err.status = 401;
+        throw err;
+      }, 5, 10)
+    ).rejects.toThrow('Unauthorized');
+    expect(attempts401).toBe(1);
+
+    let attempts403 = 0;
+    await expect(
+      retryWithBackoff(async () => {
+        attempts403++;
+        const err: any = new Error('Permission denied on resource (quota project check)');
+        err.status = 403;
+        throw err;
+      }, 5, 10)
+    ).rejects.toThrow('Permission denied');
+    expect(attempts403).toBe(1);
+  });
+
   it('RateLimiter should throttle token acquisition', async () => {
     const limiter = new RateLimiter(5, 5); // 5 tokens per second
     const start = Date.now();

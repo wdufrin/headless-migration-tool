@@ -1037,15 +1037,19 @@ wizardRouter.post('/wizard/verify-wif-pool', async (req, res) => {
     const parsedProviders = parseProviders(provOut || '[]');
     const alignmentPlan = deriveAlignedMigrationAttributeMapping(parsedProviders, safeProvider);
 
-    const activeProvider = providers.find((p: any) => p.name?.endsWith(`/providers/${safeProvider}`)) || providers[0] || null;
+    const activeProvider = providers.find((p: any) => p.name?.endsWith(`/providers/${safeProvider}`)) || null;
+    const isVerified = Boolean(activeProvider);
 
     return res.status(200).json({
-      verified: true,
+      verified: isVerified,
       pool: poolData,
       provider: activeProvider,
       providers,
       alignmentPlan,
-      audience: `//iam.googleapis.com/locations/${safeLoc}/workforcePools/${safePool}/providers/${safeProvider}`
+      audience: `//iam.googleapis.com/locations/${safeLoc}/workforcePools/${safePool}/providers/${safeProvider}`,
+      message: isVerified
+        ? `Workforce Pool "${safePool}" and provider "${safeProvider}" verified in GCP.`
+        : `Workforce Pool "${safePool}" found, but provider "${safeProvider}" does not exist in this pool yet. Please run the Step 1 command to register it.`
     });
   } catch (err: any) {
     logger.warn(`Verify WiF Pool failed: ${err.message}`);

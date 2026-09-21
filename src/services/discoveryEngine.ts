@@ -56,6 +56,8 @@ export class DiscoveryEngineClient {
       headers['X-Goog-User-Project'] = homeProject;
     }
 
+    let impersonationFallbackAttempted = false;
+
     return retryWithBackoff(async () => {
       logger.debug(`HTTP ${method} ${url}`);
       let response = await fetch(url, {
@@ -114,15 +116,22 @@ export class DiscoveryEngineClient {
           }
         }
 
+        // 1. If 403 Forbidden with SERVICE_DISABLED, fail immediately without retry.
+        if (response.status === 403) {
+          const detail = parsedError?.error?.details?.find((d: any) => d['@type']?.includes('ErrorInfo'));
+          if (detail?.reason === 'SERVICE_DISABLED') {
+            const serviceName = detail?.metadata?.service || 'discoveryengine.googleapis.com';
+            const consumerProject = detail?.metadata?.consumer || userProject || '';
+            const activationUrl = `https://console.cloud.google.com/apis/library/${serviceName}?project=${consumerProject}`;
+            throw new Error(`CRITICAL: Google Cloud Discovery Engine API is disabled on project "${consumerProject}". Please activate it before continuing: ${activationUrl}`);
+          }
+        }
+
         // 2. If 403 Permission Denied when impersonating a user (e.g., WiF token sent to Google Workspace target project),
         // retry using the alternate impersonation mechanism (DWD <-> WIF) -- but ONLY if that
-        // mechanism is actually configured.
-        //
-        // Previously this compared access token STRINGS to decide whether the alternate
-        // mechanism differed. Re-minting with the same mechanism yields a different string
-        // (the JWT `iat` advances), so the retry fired even when no alternate mechanism
-        // existed, logged that it was using DWD, and re-sent the same class of credential.
-        if (response.status === 403 && forUserEmail) {
+        // mechanism is actually configured, and only ONCE per request to prevent flip-flop loops.
+        if (response.status === 403 && forUserEmail && !impersonationFallbackAttempted) {
+          impersonationFallbackAttempted = true;
           const actualInitialMode: 'DWD' | 'WIF' =
             (typeof this.auth.getLastUsedImpersonationMode === 'function'
               ? this.auth.getLastUsedImpersonationMode(forUserEmail)

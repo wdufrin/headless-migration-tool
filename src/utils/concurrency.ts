@@ -107,14 +107,17 @@ export async function retryWithBackoff<T>(
     try {
       return await operation();
     } catch (err: any) {
-      attempt++;
-      const msg = String(err?.message || '').toLowerCase();
       const status = err?.status || err?.statusCode || 0;
-      
+      const msg = String(err?.message || '').toLowerCase();
+      // Permission and authentication errors (401, 403) are permanent authorization failures
+      // and must fail fast instead of retrying across backoff delays.
+      if (status === 401 || status === 403) {
+        throw err;
+      }
+
       const isRateLimit = status === 429 || 
         msg.includes('429') || 
         msg.includes('resource_exhausted') || 
-        msg.includes('quota') || 
         msg.includes('rate limit');
         
       const isTransient = status === 503 || 

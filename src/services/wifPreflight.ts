@@ -76,6 +76,7 @@ export function isEmailDerivedMapping(expression: string): boolean {
   const expr = (expression || '').trim();
   return (
     /^assertion\.(email|subject|sub|upn|preferred_username)(\.lowerAscii\(\))?(\.split\(['"]@['"]\)\[0\])?$/.test(expr) ||
+    /^assertion\.(email|subject|sub|upn|preferred_username)\.split\(['"]@['"]\)\[0\](\.lowerAscii\(\))?$/.test(expr) ||
     /^assertion\.attributes\.(email|mail|upn|uid|samAccountName)\[0\](\.lowerAscii\(\))?$/.test(expr)
   );
 }
@@ -148,14 +149,14 @@ export interface GeAppWorkforceInspection {
 const discoveredPoolGroupsCache: Map<string, string[]> = new Map();
 
 export function getDiscoveredPoolGroups(poolId?: string): string[] {
-  if (poolId && discoveredPoolGroupsCache.has(poolId)) {
+  if (poolId) {
     return discoveredPoolGroupsCache.get(poolId) || [];
   }
-  const all = new Set<string>();
-  for (const groups of discoveredPoolGroupsCache.values()) {
-    for (const g of groups) all.add(g);
+  // If no poolId was provided but only one pool has been discovered, safely use that pool
+  if (discoveredPoolGroupsCache.size === 1) {
+    return Array.from(discoveredPoolGroupsCache.values())[0] || [];
   }
-  return Array.from(all);
+  return [];
 }
 
 export function registerDiscoveredPoolGroups(poolId: string, groups: string[]): void {
