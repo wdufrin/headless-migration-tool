@@ -22,7 +22,14 @@ import {
   workforceResourceFromAudience,
   InvalidWorkforceAudienceError
 } from '../src/utils/wifPrincipal.js';
-import { parseProviders, evaluateSubjectMapping, isEmailDerivedMapping } from '../src/services/wifPreflight.js';
+import {
+  parseProviders,
+  evaluateSubjectMapping,
+  isEmailDerivedMapping,
+  deriveAlignedMigrationAttributeMapping,
+  inspectGeAppWorkforceConfig,
+  getDiscoveredPoolGroups
+} from '../src/services/wifPreflight.js';
 
 const AUDIENCE =
   '//iam.googleapis.com/locations/global/workforcePools/wdufrin-okta/providers/migration-dwd-provider';
@@ -258,4 +265,144 @@ describe('Real wdufrin-okta pool configuration', () => {
     ]);
     expect(evaluateSubjectMapping(parseProviders(aligned), 'migration-dwd-provider').verdict).toBe('MATCH');
   });
+
+  it('returns MATCH on the full 5-provider wdufrin-okta pool once migration-dwd-provider is updated to assertion.email.lowerAscii()', () => {
+    const alignedFullPool = JSON.stringify([
+      { name: 'locations/global/workforcePools/wdufrin-okta/providers/migration-dwd-provider',
+        attributeMapping: { 'google.subject': 'assertion.email.lowerAscii()' } },
+      { name: 'locations/global/workforcePools/wdufrin-okta/providers/oidc-okta',
+        attributeMapping: { 'google.subject': 'assertion.email.lowerAscii()' } },
+      { name: 'locations/global/workforcePools/wdufrin-okta/providers/okta-saml',
+        attributeMapping: { 'google.subject': 'assertion.subject.lowerAscii()' } },
+      { name: 'locations/global/workforcePools/wdufrin-okta/providers/okta-spa-provider',
+        attributeMapping: { 'google.subject': 'assertion.email.lowerAscii()' } },
+      { name: 'locations/global/workforcePools/wdufrin-okta/providers/okta-spa-provider2',
+        attributeMapping: { 'google.subject': 'assertion.sub' } }
+    ]);
+    const res = evaluateSubjectMapping(parseProviders(alignedFullPool), 'migration-dwd-provider');
+    expect(res.verdict).toBe('MATCH');
+  });
+
+  it('derives the aligned attribute-mapping from the GE App production provider (including google.groups)', () => {
+    const plan = deriveAlignedMigrationAttributeMapping(parseProviders(REAL_POOL), 'migration-dwd-provider');
+    expect(plan.referenceProvider?.providerId).toBe('oidc-okta');
+    expect(plan.targetGoogleSubject).toBe('assertion.email.lowerAscii()');
+    expect(plan.attributeMappingString).toBe(
+      'google.subject=assertion.email.lowerAscii(),google.groups=assertion.groups,attribute.user_email=assertion.email'
+    );
+    expect(plan.isAligned).toBe(false);
+    expect(plan.isOpaqueSubject).toBe(false);
+  });
+
+  it('translates SAML assertion.attributes expressions into valid OIDC claim expressions', () => {
+    const samlPool = parseProviders(
+      JSON.stringify([
+        {
+          name: 'locations/global/workforcePools/gea-pool/providers/gea-saml-sso',
+          saml: { idpMetadataXml: '<xml/>' },
+          attributeMapping: { 'google.subject': 'assertion.attributes.email[0].lowerAscii()' }
+        }
+      ])
+    );
+    const plan = deriveAlignedMigrationAttributeMapping(samlPool, 'migration-dwd-provider');
+    expect(plan.targetGoogleSubject).toBe('assertion.email.lowerAscii()');
+    expect(plan.attributeMappingString).toBe(
+      'google.subject=assertion.email.lowerAscii(),google.groups=assertion.groups,attribute.user_email=assertion.email'
+    );
+    expect(plan.isOpaqueSubject).toBe(false);
+  });
+
+  it('flags opaque non-email google.subject mappings (e.g. assertion.oid) as isOpaqueSubject=true', () => {
+    const entraGuidPool = parseProviders(
+      JSON.stringify([
+        {
+          name: 'locations/global/workforcePools/entra-pool/providers/entra-oidc',
+          oidc: { issuerUri: 'https://login.microsoftonline.com/tenant/v2.0' },
+          attributeMapping: { 'google.subject': 'assertion.oid' }
+        }
+      ])
+    );
+    const plan = deriveAlignedMigrationAttributeMapping(entraGuidPool, 'migration-dwd-provider');
+    expect(plan.isOpaqueSubject).toBe(true);
+    expect(plan.explanation).toMatch(/opaque IdP identifier/i);
+  });
+
+  it('discovers GE App Workforce Pool from aclConfig and extracts group bindings from IAM policy', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (url: any) => {
+        const u = String(url);
+        if (u.includes('/aclConfig')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              idpConfig: {
+                idpType: 'THIRD_PARTY',
+                externalIdpConfig: {
+                  workforcePoolName: 'locations/global/workforcePools/gea-enterprise-pool'
+                }
+              }
+            })
+          } as any;
+        }
+        if (u.includes(':getIamPolicy')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              bindings: [
+                {
+                  role: 'roles/discoveryengine.user',
+                  members: [
+                    'principalSet://iam.googleapis.com/locations/global/workforcePools/gea-enterprise-pool/group/GEA-AI-Users',
+                    'principal://iam.googleapis.com/locations/global/workforcePools/gea-enterprise-pool/subject/rakshitha.shetty@geappliances.com'
+                  ]
+                }
+              ]
+            })
+          } as any;
+        }
+        if (u.includes('/workforcePools/gea-enterprise-pool/providers')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              workforcePoolProviders: [
+                {
+                  name: 'locations/global/workforcePools/gea-enterprise-pool/providers/gea-okta',
+                  oidc: { issuerUri: 'https://geappliances.okta.com' },
+                  attributeMapping: {
+                    'google.subject': 'assertion.email.lowerAscii()',
+                    'google.groups': 'assertion.groups'
+                  }
+                }
+              ]
+            })
+          } as any;
+        }
+        return { ok: false, status: 404, text: async () => 'Not found' } as any;
+      }) as any;
+
+      const inspection = await inspectGeAppWorkforceConfig({
+        sourceProjectId: 'agntspce-agntspace-ai-d-1-eced',
+        sourceLocation: 'global',
+        bearerToken: 'test-admin-token'
+      });
+
+      expect(inspection.detectedPoolId).toBe('gea-enterprise-pool');
+      expect(inspection.detectedFrom).toBe('ACL_CONFIG');
+      expect(inspection.idpType).toBe('THIRD_PARTY');
+      expect(inspection.discoveredIamGroups).toContain('GEA-AI-Users');
+      expect(getDiscoveredPoolGroups('gea-enterprise-pool')).toContain('GEA-AI-Users');
+      expect(inspection.discoveredSampleSubjects).toContain('rakshitha.shetty@geappliances.com');
+      expect(inspection.alignmentPlan.targetGoogleSubject).toBe('assertion.email.lowerAscii()');
+      expect(inspection.alignmentPlan.attributeMappingString).toBe(
+        'google.subject=assertion.email.lowerAscii(),google.groups=assertion.groups,attribute.user_email=assertion.email'
+      );
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
 });
+

@@ -19,6 +19,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import crypto from 'crypto';
 import { JWT, GoogleAuth } from 'google-auth-library';
+import { getDiscoveredPoolGroups } from './wifPreflight.js';
 import { logger } from '../utils/logger.js';
 
 const execFileAsync = promisify(execFile);
@@ -94,7 +95,14 @@ export class GcpAuthService {
   private cachedAdcToken?: { token: string; expiresAt: number };
   private cachedWifToken?: { token: string; expiresAt: number };
   private userTokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
+  private userMechanismCache: Map<string, 'DWD' | 'WIF'> = new Map();
   private failedDwdUsers: Set<string> = new Set();
+
+  public getLastUsedImpersonationMode(forUserEmail?: string): 'DWD' | 'WIF' | undefined {
+    if (!forUserEmail) return undefined;
+    const lower = forUserEmail.replace(/^user:/i, '').trim().toLowerCase();
+    return this.userMechanismCache.get(lower);
+  }
 
   constructor(options: TokenProviderOptions = {}) {
     this.staticToken = options.staticToken;
@@ -303,45 +311,59 @@ export class GcpAuthService {
 
       if (!isServiceIdentity) {
         const isExternalDomain = GcpAuthService.isExternalIdentityDomain(lower);
+        const isStrictMode = preferredMode === 'DWD' || preferredMode === 'WIF';
         let lastDwdError: Error | null = null;
+        let lastWifError: Error | null = null;
 
-        if (effectiveMode === 'DWD' && !isExternalDomain && this.serviceAccountKey) {
-          // Try DWD first, then fallback to WiF
-          try {
-            const dwdToken = await tryMintDwd(cleanEmail);
-            if (dwdToken) {
-              this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
-              return dwdToken;
-            }
-          } catch (err: any) {
-            lastDwdError = err;
-            if (!this.failedDwdUsers.has(cleanEmail)) {
-              this.failedDwdUsers.add(cleanEmail);
-              logger.debug(`DWD impersonation note for ${cleanEmail} (${err.message}).`);
+        if (effectiveMode === 'DWD') {
+          if (!isExternalDomain && this.serviceAccountKey) {
+            try {
+              const dwdToken = await tryMintDwd(cleanEmail);
+              if (dwdToken) {
+                this.userMechanismCache.set(lower, 'DWD');
+                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
+                return dwdToken;
+              }
+            } catch (err: any) {
+              lastDwdError = err;
+              if (!this.failedDwdUsers.has(cleanEmail)) {
+                this.failedDwdUsers.add(cleanEmail);
+                logger.debug(`DWD impersonation note for ${cleanEmail} (${err.message}).`);
+              }
             }
           }
-          try {
-            const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
-            if (wifToken) {
-              this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
-              return wifToken;
+          // Only fall back to WIF when the caller did NOT explicitly request 'DWD' (e.g. during a retry)
+          if (!isStrictMode) {
+            try {
+              const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
+              if (wifToken) {
+                this.userMechanismCache.set(lower, 'WIF');
+                this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
+                return wifToken;
+              }
+            } catch (wifErr: any) {
+              lastWifError = wifErr;
             }
-          } catch {}
+          }
         } else {
-          // Try WiF first, then fallback to DWD
+          // Try WiF first
           try {
             const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
             if (wifToken) {
+              this.userMechanismCache.set(lower, 'WIF');
               this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
               return wifToken;
             }
           } catch (wifErr: any) {
+            lastWifError = wifErr;
             logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
           }
-          if (this.serviceAccountKey && !isExternalDomain) {
+          // Only fall back to DWD when the caller did NOT explicitly request 'WIF' (e.g. during a retry)
+          if (!isStrictMode && this.serviceAccountKey && !isExternalDomain) {
             try {
               const dwdToken = await tryMintDwd(cleanEmail);
               if (dwdToken) {
+                this.userMechanismCache.set(lower, 'DWD');
                 this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
                 return dwdToken;
               }
@@ -351,37 +373,39 @@ export class GcpAuthService {
           }
         }
 
-        // 1.c Fallback: If DWD/WiF is not configured (or failed) AND target user matches active local gcloud caller
-        const callerEmail = await this.getCallerIdentity().catch(() => undefined);
-        if (callerEmail && callerEmail.toLowerCase() === lower) {
-          if (this.staticToken) {
-            return this.staticToken;
-          }
-          if (this.cachedAdcToken && this.cachedAdcToken.expiresAt > Date.now() + 60000) {
-            return this.cachedAdcToken.token;
-          }
-          try {
-            const { stdout } = await execFileAsync('gcloud', ['auth', 'print-access-token']);
-            const token = stdout.trim();
-            if (token) {
-              this.cachedAdcToken = {
-                token,
-                expiresAt: Date.now() + 3000 * 1000
-              };
-              return token;
+        // 1.c Fallback: If DWD/WiF is not configured (or failed) AND target user matches active local gcloud caller (only when not in strict retry mode)
+        if (!isStrictMode) {
+          const callerEmail = await this.getCallerIdentity().catch(() => undefined);
+          if (callerEmail && callerEmail.toLowerCase() === lower) {
+            if (this.staticToken) {
+              return this.staticToken;
             }
-          } catch (err: any) {
-            logger.warn(`Failed to obtain caller token via gcloud ADC: ${err.message}`);
+            if (this.cachedAdcToken && this.cachedAdcToken.expiresAt > Date.now() + 60000) {
+              return this.cachedAdcToken.token;
+            }
+            try {
+              const { stdout } = await execFileAsync('gcloud', ['auth', 'print-access-token']);
+              const token = stdout.trim();
+              if (token) {
+                this.cachedAdcToken = {
+                  token,
+                  expiresAt: Date.now() + 3000 * 1000
+                };
+                return token;
+              }
+            } catch (err: any) {
+              logger.warn(`Failed to obtain caller token via gcloud ADC: ${err.message}`);
+            }
           }
         }
 
         // Fail-closed: User impersonation was requested for a specific human user identity.
-        // Never silently fall back to ambient service account or admin static credentials,
-        // which causes cross-user data contamination and leaks admin personal memories/notebooks.
         const failureReason = lastDwdError
           ? lastDwdError.message
+          : lastWifError
+          ? lastWifError.message
           : (!this.serviceAccountKey ? 'No Service Account Key configured for Domain-Wide Delegation' : 'User impersonation failed');
-        throw new Error(`DWD Impersonation Failed for user "${cleanEmail}": ${failureReason}`);
+        throw new Error(`${effectiveMode} Impersonation Failed for user "${cleanEmail}": ${failureReason}`);
       }
     }
 
@@ -576,10 +600,24 @@ export class GcpAuthService {
         kid: 'wif-migration-key-1'
       };
       const now = Math.floor(Date.now() / 1000);
-      const payload = {
+      const shortUser = userEmail.includes('@') ? userEmail.split('@')[0] : userEmail;
+      const envGroups = (process.env.WIF_DEFAULT_GROUPS || '')
+        .split(',')
+        .map((g) => g.trim())
+        .filter(Boolean);
+      const poolGroups = getDiscoveredPoolGroups(pool);
+      const allGroups = Array.from(new Set([...envGroups, ...poolGroups]));
+
+      const payload: Record<string, any> = {
         iss: 'https://gemini-migration.internal',
         sub: userEmail,
+        subject: userEmail,
         email: userEmail,
+        upn: userEmail,
+        preferred_username: userEmail,
+        uid: shortUser,
+        samAccountName: shortUser,
+        groups: allGroups,
         aud: 'gemini-migration-tool',
         iat: now,
         exp: now + 3600

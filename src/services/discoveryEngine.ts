@@ -123,8 +123,14 @@ export class DiscoveryEngineClient {
         // (the JWT `iat` advances), so the retry fired even when no alternate mechanism
         // existed, logged that it was using DWD, and re-sent the same class of credential.
         if (response.status === 403 && forUserEmail) {
-          const alternateMode: 'DWD' | 'WIF' = (initialMode === 'DWD') ? 'WIF' : 'DWD';
-          const initialLabel = initialMode || 'WIF';
+          const actualInitialMode: 'DWD' | 'WIF' =
+            (typeof this.auth.getLastUsedImpersonationMode === 'function'
+              ? this.auth.getLastUsedImpersonationMode(forUserEmail)
+              : undefined) ||
+            initialMode ||
+            'WIF';
+          const alternateMode: 'DWD' | 'WIF' = (actualInitialMode === 'DWD') ? 'WIF' : 'DWD';
+          const initialLabel = actualInitialMode;
           const firstFailureDetail = (parsedError?.error?.message || errorText || '').slice(0, 500);
           const mechanism = this.auth.getImpersonationMechanismStatus(forUserEmail, alternateMode);
 

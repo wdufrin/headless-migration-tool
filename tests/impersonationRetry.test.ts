@@ -272,4 +272,16 @@ describe('DiscoveryEngineClient 403 impersonation retry', () => {
       restore();
     }
   });
+
+  it('does NOT silently fall back to mintWorkforceToken inside real getAccessToken when preferredMode="DWD" fails', async () => {
+    const auth = makeAuth({ withSaKey: true, withWifKeyOnDisk: true });
+    const wifSpy = vi.spyOn(auth, 'mintWorkforceToken').mockResolvedValue('wif-token-that-should-not-be-used');
+
+    await expect(
+      auth.getAccessToken('rakshitha.shetty@geappliances.com', undefined, 'DWD')
+    ).rejects.toThrow(/DWD Impersonation Failed/i);
+
+    expect(wifSpy).not.toHaveBeenCalled();
+  });
 });
+

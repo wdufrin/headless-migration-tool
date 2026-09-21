@@ -20,7 +20,13 @@ import path from 'path';
 import { GcpAuthService, CLOUD_PLATFORM_SCOPE } from '../services/gcpAuth.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
 import { buildWorkforcePrincipal } from '../utils/wifPrincipal.js';
-import { checkSubjectMapping } from '../services/wifPreflight.js';
+import {
+  checkSubjectMapping,
+  deriveAlignedMigrationAttributeMapping,
+  inspectGeAppWorkforceConfig,
+  listPoolProviders,
+  parseProviders
+} from '../services/wifPreflight.js';
 import { logger } from '../utils/logger.js';
 
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
@@ -740,6 +746,32 @@ wizardRouter.get('/wizard/wif-discovery', async (req, res) => {
       }
     }
 
+    // 4. Inspect Gemini Enterprise App (Discovery Engine aclConfig + Project IAM Policy) for Workforce Pool & google.subject alignment
+    const sourceProjectId = ((req.query.sourceProjectId as string) || process.env.SOURCE_PROJECT_ID || '').trim();
+    const sourceLocation = ((req.query.sourceLocation as string) || process.env.SOURCE_LOCATION || 'global').trim();
+    const targetProjectId = ((req.query.targetProjectId as string) || process.env.TARGET_PROJECT_ID || '').trim();
+    const targetLocation = ((req.query.targetLocation as string) || process.env.TARGET_LOCATION || 'global').trim();
+    const requestedPoolId = ((req.query.poolId as string) || '').trim();
+
+    const geAppInspection = await inspectGeAppWorkforceConfig({
+      sourceProjectId,
+      sourceLocation,
+      targetProjectId,
+      targetLocation,
+      poolId: requestedPoolId || pools[0]?.id,
+      bearerToken: token
+    });
+
+    if (geAppInspection.detectedPoolId && !pools.some((p) => p.id === geAppInspection.detectedPoolId)) {
+      pools.unshift({
+        id: geAppInspection.detectedPoolId,
+        name: `locations/global/workforcePools/${geAppInspection.detectedPoolId}`,
+        displayName: `GE App Pool (${geAppInspection.detectedPoolId})`,
+        description: `Auto-detected from Gemini Enterprise ${geAppInspection.detectedFrom === 'ACL_CONFIG' ? 'aclConfig' : 'IAM policy'}`,
+        state: 'ACTIVE'
+      });
+    }
+
     // 5. Local WIF Key Status
     const hasKey = fs.existsSync('wif-migration-key.pem');
     const hasJwks = fs.existsSync('wif-migration-jwks.json');
@@ -767,7 +799,8 @@ wizardRouter.get('/wizard/wif-discovery', async (req, res) => {
         keyPath: path.resolve('wif-migration-key.pem'),
         jwksPath: path.resolve('wif-migration-jwks.json')
       },
-      currentConfig
+      currentConfig,
+      geAppInspection
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'WifDiscoveryFailed', message: err.message });
@@ -807,7 +840,7 @@ wizardRouter.post('/wizard/generate-wif-keys', async (_req, res) => {
   }
 });
 
-// Wizard: 1-Click Register Migration Provider in GCP Workforce Pool
+// Wizard: 1-Click Register (or Update) Migration Provider in GCP Workforce Pool
 wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
   try {
     const {
@@ -815,7 +848,8 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
       providerId = 'migration-dwd-provider',
       location = 'global',
       issuerUri = 'https://gemini-migration.internal',
-      attributeCondition
+      attributeCondition,
+      attributeMapping
     } = req.body || {};
 
     const safePool = workforcePoolId.replace(/[^a-zA-Z0-9\-_]/g, '');
@@ -842,7 +876,23 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
     const { promisify } = await import('util');
     const execFileAsync = promisify(execFile);
 
+    // Inspect existing providers in the pool so `--attribute-mapping` matches the GE App's production provider
+    const authService = new GcpAuthService();
+    const token = await authService.getAccessToken().catch(() => null);
+    const { providers: poolProviders } = await listPoolProviders(safePool, safeLoc, token);
+    const alignmentPlan = deriveAlignedMigrationAttributeMapping(poolProviders, safeProvider);
+    const effectiveAttributeMapping =
+      typeof attributeMapping === 'string' && attributeMapping.trim()
+        ? attributeMapping.trim()
+        : alignmentPlan.attributeMappingString;
+
+    // Enterprise Security: Apply Attribute Condition to restrict token minting blast radius
+    const condition = typeof attributeCondition === 'string' && attributeCondition.trim()
+      ? attributeCondition.trim()
+      : 'assertion.email != "" && !assertion.sub.startsWith("service-")';
+
     // Check if provider already exists
+    let existing: any = null;
     try {
       const { stdout: provDescribe } = await execFileAsync('gcloud', [
         'iam',
@@ -854,26 +904,51 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
         `--location=${safeLoc}`,
         '--format=json'
       ]);
-      const existing = JSON.parse(provDescribe || '{}');
-      if (existing.name) {
-        // Track it even though we did not create it in this run. Teardown must be
-        // able to remove a provider left behind by an earlier session, otherwise
-        // the Shadow IdP outlives every rollback that follows.
-        AppStateTracker.recordWifProvider(safePool, safeProvider, safeLoc, {
-          issuerUri: existing.oidc?.issuerUri,
-          attributeCondition: existing.attributeCondition
-        });
-        return res.status(200).json({
-          success: true,
-          alreadyExists: true,
-          message: `Provider "${safeProvider}" is already registered in pool "${safePool}".`,
-          provider: existing
-        });
-      }
+      existing = JSON.parse(provDescribe || '{}');
     } catch (describeErr: any) {
-      // A describe failure normally just means "not found", which is the happy
-      // path here. Log at debug so a genuine permission error is still traceable.
       logger.debug(`Provider describe for "${safeProvider}" did not return an existing provider: ${describeErr.message}`);
+    }
+
+    if (existing && existing.name) {
+      // Update the existing provider so its google.subject attribute mapping and JWKS key match the GE App's production provider!
+      const updateArgs = [
+        'iam',
+        'workforce-pools',
+        'providers',
+        'update-oidc',
+        safeProvider,
+        `--workforce-pool=${safePool}`,
+        `--location=${safeLoc}`,
+        '--display-name=Migration DWD Impersonator',
+        `--issuer-uri=${issuerUri}`,
+        '--client-id=gemini-migration-tool',
+        '--web-sso-response-type=id-token',
+        '--web-sso-assertion-claims-behavior=only-id-token-claims',
+        '--jwk-json-path=./wif-migration-jwks.json',
+        `--attribute-mapping=${effectiveAttributeMapping}`
+      ];
+      if (condition && condition.toLowerCase() !== 'none') {
+        updateArgs.push(`--attribute-condition=${condition}`);
+      }
+
+      const { stdout: updateStdout } = await execFileAsync('gcloud', updateArgs);
+
+      AppStateTracker.recordWifProvider(safePool, safeProvider, safeLoc, {
+        issuerUri,
+        attributeCondition: condition && condition.toLowerCase() !== 'none' ? condition : undefined
+      });
+
+      return res.status(200).json({
+        success: true,
+        updatedExisting: true,
+        alreadyExists: true,
+        message:
+          `Updated provider "${safeProvider}" in pool "${safePool}" with aligned mapping ` +
+          `"${effectiveAttributeMapping}"${alignmentPlan.referenceProvider ? ` (matched to "${alignmentPlan.referenceProvider.providerId}")` : ''}.`,
+        stdout: updateStdout,
+        attributeMapping: effectiveAttributeMapping,
+        alignmentPlan
+      });
     }
 
     const gcloudArgs = [
@@ -890,13 +965,8 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
       '--web-sso-response-type=id-token',
       '--web-sso-assertion-claims-behavior=only-id-token-claims',
       '--jwk-json-path=./wif-migration-jwks.json',
-      '--attribute-mapping=google.subject=assertion.sub,attribute.user_email=assertion.email'
+      `--attribute-mapping=${effectiveAttributeMapping}`
     ];
-
-    // Enterprise Security: Apply Attribute Condition to restrict token minting blast radius
-    const condition = typeof attributeCondition === 'string' && attributeCondition.trim()
-      ? attributeCondition.trim()
-      : 'assertion.email != "" && !assertion.sub.startsWith("service-")';
 
     if (condition && condition.toLowerCase() !== 'none') {
       gcloudArgs.push(`--attribute-condition=${condition}`);
@@ -912,8 +982,12 @@ wizardRouter.post('/wizard/register-migration-provider', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Successfully created workforce pool provider "${safeProvider}" in pool "${safePool}".`,
+      message:
+        `Successfully created workforce pool provider "${safeProvider}" in pool "${safePool}" ` +
+        `with aligned mapping "${effectiveAttributeMapping}".`,
       stdout,
+      attributeMapping: effectiveAttributeMapping,
+      alignmentPlan,
       attributeCondition: condition && condition.toLowerCase() !== 'none' ? condition : undefined
     });
   } catch (err: any) {
@@ -960,6 +1034,8 @@ wizardRouter.post('/wizard/verify-wif-pool', async (req, res) => {
       '--format=json'
     ]);
     const providers = JSON.parse(provOut || '[]');
+    const parsedProviders = parseProviders(provOut || '[]');
+    const alignmentPlan = deriveAlignedMigrationAttributeMapping(parsedProviders, safeProvider);
 
     const activeProvider = providers.find((p: any) => p.name?.endsWith(`/providers/${safeProvider}`)) || providers[0] || null;
 
@@ -968,6 +1044,7 @@ wizardRouter.post('/wizard/verify-wif-pool', async (req, res) => {
       pool: poolData,
       provider: activeProvider,
       providers,
+      alignmentPlan,
       audience: `//iam.googleapis.com/locations/${safeLoc}/workforcePools/${safePool}/providers/${safeProvider}`
     });
   } catch (err: any) {
@@ -1152,11 +1229,30 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
         audience,
         tokenUrl
       });
-    }
+    }    // 2. LIVE VERIFICATION OF WORKFORCE USER ACCESS & SUBJECT PARITY (NO SHORT-CIRCUITING ON SA)
+    //
+    // Critical: User-scoped Discovery Engine assets (NotebookLM notebooks, memories, chat sessions)
+    // are migrated using the direct Workforce STS token (principal://.../subject/<user>), NOT a
+    // Service Account token. Previously, filling in `serviceAccountToImpersonate` caused this endpoint
+    // to test IAM Credentials SA token minting and return `success: true` immediately without ever
+    // testing whether the workforce user token matches the production provider's `google.subject`
+    // or has `discoveryengine.notebooks.list` permission in the Gemini Enterprise project.
+    const testProject = targetProjectId || resolvedConfig.workforce_pool_user_project || process.env.GCP_PROJECT_ID || 'testgebackupandrestorev3';
+    const subjectCheck = await checkSubjectMapping(audience);
 
-    // Path A: User requested Service Account Impersonation
+    // Optional Check A: Service Account Impersonation (if requested)
+    let saImpersonationStatus: {
+      attempted: boolean;
+      success: boolean;
+      serviceAccount?: string;
+      tokenPrefix?: string;
+      error?: string;
+    } = { attempted: false, success: false };
+
     if (saEmail) {
-      const saProject = saEmail.split('@')[1]?.split('.')[0] || targetProjectId || process.env.GCP_PROJECT_ID || 'testgebackupandrestorev3';
+      saImpersonationStatus.attempted = true;
+      saImpersonationStatus.serviceAccount = saEmail;
+      const saProject = saEmail.split('@')[1]?.split('.')[0] || testProject;
       try {
         const iamRes = await fetch(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:generateAccessToken`, {
           method: 'POST',
@@ -1170,68 +1266,33 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
           })
         });
 
-        if (!iamRes.ok) {
+        if (iamRes.ok) {
+          const iamData: any = await iamRes.json();
+          const saToken = iamData.accessToken || '';
+          saImpersonationStatus.success = true;
+          saImpersonationStatus.tokenPrefix = `${saToken.substring(0, 18)}...`;
+        } else {
           const errText = await iamRes.text();
           let errMsg = errText;
           try {
             const errJson = JSON.parse(errText);
             errMsg = errJson.error?.message || errText;
-          } catch {}
-
-          const remediation = [
-            `Grant the workforce principal Token Creator permissions on service account "${saEmail}":`,
-            `gcloud iam service-accounts add-iam-policy-binding ${saEmail} --role="roles/iam.serviceAccountTokenCreator" --member="${principalString}" --project=${saProject}`,
-            `If error mentions USER_PROJECT_DENIED / serviceusage, grant Service Usage Consumer on quota project "${saProject}":`,
-            `gcloud projects add-iam-policy-binding ${saProject} --role="roles/serviceusage.serviceUsageConsumer" --member="${principalString}"`,
-            `CRITICAL ARCHITECTURE NOTE: Even with SA impersonation, Discovery Engine user-scoped assets (NotebookLM notebooks, chat sessions) require authentic human user tokens (via Google Workspace DWD or direct workforce principals). Service Accounts cannot read or write user-scoped notebooks.`
-          ];
-
-          return res.status(200).json({
-            success: false,
-            error: 'ServiceAccountImpersonationFailed',
-            message: `STS token was minted for workforce user "${targetUser}", but Service Account Impersonation of "${saEmail}" failed (${iamRes.status}): ${errMsg}`,
-            audience,
-            tokenUrl,
-            isWorkforcePool: isWorkforce,
-            impersonatedPrincipal: principalString,
-            attemptedServiceAccount: saEmail,
-            remediation
-          });
+          } catch (parseErr: any) {
+            logger.debug(`SA impersonation error body was not JSON: ${parseErr.message}`);
+          }
+          saImpersonationStatus.error = `HTTP ${iamRes.status}: ${errMsg}`;
         }
-
-        const iamData: any = await iamRes.json();
-        const saToken = iamData.accessToken || '';
-        return res.status(200).json({
-          success: true,
-          message: `Verified: Workforce user "${targetUser}" successfully exchanged STS token and impersonated Service Account "${saEmail}" via GCP IAM Credentials API.`,
-          audience,
-          tokenUrl,
-          isWorkforcePool: isWorkforce,
-          impersonatedPrincipal: principalString,
-          impersonatedServiceAccount: saEmail,
-          impersonatedUser: targetUser,
-          tokenPrefix: `${saToken.substring(0, 18)}...`,
-          expireTime: iamData.expireTime
-        });
       } catch (iamErr: any) {
-        return res.status(200).json({
-          success: false,
-          error: 'ServiceAccountImpersonationError',
-          message: `Failed to contact GCP IAM Credentials API for "${saEmail}": ${iamErr.message}`,
-          audience,
-          tokenUrl,
-          isWorkforcePool: isWorkforce,
-          impersonatedPrincipal: principalString,
-          attemptedServiceAccount: saEmail
-        });
+        saImpersonationStatus.error = iamErr.message;
       }
     }
 
-    // Path B: Direct Workforce Principal Verification (No SA Impersonation specified)
-    // Verify whether the direct workforce principal has access to GCP resources in the project
-    const testProject = targetProjectId || resolvedConfig.workforce_pool_user_project || process.env.GCP_PROJECT_ID || 'testgebackupandrestorev3';
+    // Mandatory Check B: Direct Workforce User Probe against `notebooks:listRecentlyViewed`
+    // (`discoveryengine.notebooks.list` — the exact permission granted by `roles/discoveryengine.user`
+    // and required to migrate user notebooks/sessions).
     try {
-      const gcpRes = await fetch(`https://discoveryengine.googleapis.com/v1alpha/projects/${testProject}/locations/global/collections/default_collection/dataStores`, {
+      const notebooksProbeUrl = `https://discoveryengine.googleapis.com/v1alpha/projects/${testProject}/locations/global/notebooks:listRecentlyViewed?pageSize=1`;
+      const gcpRes = await fetch(notebooksProbeUrl, {
         headers: {
           'Authorization': `Bearer ${stsToken}`,
           'x-goog-user-project': testProject
@@ -1249,10 +1310,6 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
           logger.debug(`Authorization failure body was not JSON (${parseErr.message}); using raw text.`);
         }
 
-        // Granting a role only helps if the minted token resolves to the principal the
-        // binding names. Check that before telling the operator to add IAM bindings.
-        const subjectCheck = await checkSubjectMapping(audience);
-
         const remediation: string[] = [];
         if (subjectCheck.verdict === 'MISMATCH') {
           remediation.push(
@@ -1263,38 +1320,83 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
           if (subjectCheck.verdict === 'UNKNOWN') {
             remediation.push(`Note: subject mapping was not verified. ${subjectCheck.summary}`);
           }
-          remediation.push(`Grant the workforce principal (or pool) access to project "${testProject}":`);
+          remediation.push(`1. Ensure "${audience.split('/providers/')[1] || 'migration-dwd-provider'}" maps google.subject (and google.groups if using IdP group IAM bindings) identically to your GE App's production provider.`);
+          remediation.push(`2. Grant Discovery Engine User (discoveryengine.notebooks.list) & Service Usage Consumer on project "${testProject}":`);
           remediation.push(
-            `gcloud projects add-iam-policy-binding ${testProject} --role="roles/discoveryengine.admin" --member="${principalString}"`
+            `gcloud projects add-iam-policy-binding ${testProject} --role="roles/discoveryengine.user" --member="${principalString}"`
           );
           remediation.push(
             `gcloud projects add-iam-policy-binding ${testProject} --role="roles/serviceusage.serviceUsageConsumer" --member="${principalString}"`
           );
         }
 
+        if (saImpersonationStatus.attempted && saImpersonationStatus.success) {
+          remediation.push(
+            `NOTE: Service Account impersonation (${saEmail}) succeeded, but Service Accounts CANNOT read or write user-scoped NotebookLM notebooks. The direct workforce user token (${principalString}) failed notebooks:listRecentlyViewed with HTTP ${gcpRes.status}.`
+          );
+        }
+
         return res.status(200).json({
           success: false,
           error: subjectCheck.verdict === 'MISMATCH' ? 'WorkforceSubjectMappingMismatch' : 'WorkforcePrincipalNotAuthorized',
-          message: `STS token was minted for workforce user "${targetUser}", but principal "${principalString}" is NOT authorized in GCP project "${testProject}" (${gcpRes.status}): ${errMsg}`,
+          message: `STS token was minted for workforce user "${targetUser}"${saImpersonationStatus.success ? ` (and SA "${saEmail}" impersonation succeeded)` : ''}, BEFORE migration can work: direct user call to Discovery Engine (discoveryengine.notebooks.list) in project "${testProject}" FAILED (${gcpRes.status}): ${errMsg}`,
           audience,
           tokenUrl,
           isWorkforcePool: isWorkforce,
           impersonatedPrincipal: principalString,
-          impersonatedServiceAccount: 'Direct Workforce Principal',
+          impersonatedServiceAccount: saImpersonationStatus.success ? `${saEmail} (SA OK, but Direct User Token 403)` : 'Direct Workforce Principal',
+          saImpersonation: saImpersonationStatus,
           subjectMapping: subjectCheck,
           remediation
         });
       }
 
+      let notebookCount = 0;
+      try {
+        const nbData: any = await gcpRes.json();
+        if (Array.isArray(nbData?.notebooks)) {
+          notebookCount = nbData.notebooks.length;
+        }
+      } catch (parseErr: any) {
+        logger.debug(`Could not parse notebooks response JSON: ${parseErr.message}`);
+      }
+
+      // If notebooks.list succeeded with 200 OK, also check if subjectCheck found a mismatch warning
+      if (subjectCheck.verdict === 'MISMATCH') {
+        return res.status(200).json({
+          success: false,
+          error: 'WorkforceSubjectMappingMismatch',
+          message: `Discovery Engine notebooks.list returned 200 OK (likely via a broad pool-wide /* IAM binding), BUT subject mapping mismatch was detected: ${subjectCheck.summary}. User-owned notebooks will land under the wrong subject ID unless aligned!`,
+          audience,
+          tokenUrl,
+          isWorkforcePool: isWorkforce,
+          impersonatedPrincipal: principalString,
+          impersonatedServiceAccount: saImpersonationStatus.success ? saEmail : 'Direct Workforce Principal',
+          saImpersonation: saImpersonationStatus,
+          subjectMapping: subjectCheck,
+          notebookCount,
+          remediation: [subjectCheck.summary]
+        });
+      }
+
+      const zeroNotebooksWarning = notebookCount === 0
+        ? ` Note: 0 notebooks were returned for "${targetUser}". Because GCP Workforce Identity Pools are stateless (STS verifies your local wif-migration-key.pem signature without calling Okta/Entra) and pool-wide IAM bindings (workforcePools/.../*) authorize every subject string in the pool, even a non-existent email will return 200 OK with 0 notebooks. Test with a user known to own >=1 notebook to prove real data visibility.`
+        : ` Confirmed real data visibility: ${notebookCount} notebook(s) visible for "${targetUser}".`;
+
       return res.status(200).json({
         success: true,
-        message: `Verified: Workforce user "${targetUser}" successfully authenticated with GCP STS and verified Discovery Engine access in project "${testProject}".`,
+        message: `Verified End-to-End: Workforce user "${targetUser}" (${principalString}) exchanged STS token, verified subject mapping (${subjectCheck.verdict}), and passed live Discovery Engine notebooks:listRecentlyViewed (discoveryengine.notebooks.list) in project "${testProject}".${zeroNotebooksWarning}`,
         audience,
         tokenUrl,
         isWorkforcePool: isWorkforce,
         impersonatedPrincipal: principalString,
-        impersonatedServiceAccount: 'Direct Workforce Principal',
+        impersonatedServiceAccount: saImpersonationStatus.success ? `${saEmail} + Direct User Principal` : 'Direct Workforce Principal (User-Scoped)',
         impersonatedUser: targetUser,
+        saImpersonation: saImpersonationStatus,
+        subjectMapping: subjectCheck,
+        probedPermission: 'discoveryengine.notebooks.list',
+        probedProject: testProject,
+        notebookCount,
         tokenPrefix: `${stsToken.substring(0, 18)}...`
       });
     } catch (gcpErr: any) {
@@ -1304,13 +1406,15 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       return res.status(200).json({
         success: false,
         error: 'WorkforceVerificationIncomplete',
-        message: `STS token minted for workforce user "${targetUser}" (${stsToken.substring(0, 18)}...), but the live GCP authorization check could NOT be completed, so access is unverified: ${gcpErr.message}`,
+        message: `STS token minted for workforce user "${targetUser}" (${stsToken.substring(0, 18)}...), but the live Discovery Engine notebooks.list check could NOT be completed, so access is unverified: ${gcpErr.message}`,
         audience,
         tokenUrl,
         isWorkforcePool: isWorkforce,
         impersonatedPrincipal: principalString,
         impersonatedServiceAccount: 'Direct Workforce Principal',
         impersonatedUser: targetUser,
+        saImpersonation: saImpersonationStatus,
+        subjectMapping: subjectCheck,
         tokenPrefix: `${stsToken.substring(0, 18)}...`
       });
     }
