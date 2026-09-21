@@ -1145,17 +1145,53 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addBullet('**1-Click Project Override**: Operators holding `roles/orgpolicy.policyAdmin` can click the 1-Click Project Override button to automatically apply a project-scoped exemption (`enforce: false`) without modifying parent organizational policies.');
   b.addBullet('**Live DWD Impersonation Test**: Validates that minted user-scoped OAuth2 tokens function against Discovery Engine APIs.');
 
-  b.addHeading2('9.2 Workforce Identity Federation (WiF) — Keyless Enterprise Path');
+  b.addHeading2('9.2 Workforce Identity Federation (WiF) — Keyless Enterprise Path & Architecture');
   b.addBullet('**Keyless Architecture**: WiF exchanges external OIDC/SAML tokens with Google Cloud Security Token Service (`sts.googleapis.com`) to mint short-lived tokens and is **100% exempt from `iam.disableServiceAccountKeyCreation`** and key upload policies.');
-  b.addBullet('**Truthful Live SA Impersonation Verification (`generateAccessToken`)**: When testing WiF impersonation (`/api/wizard/test-wif`), the console performs a live token exchange against the **Google Cloud IAM Credentials API** (`serviceAccounts.generateAccessToken`). If the caller or workforce pool lacks `roles/iam.serviceAccountTokenCreator` on the target service account, the test fails truthfully with actionable error context rather than simulating success.');
-  b.addBullet('**Domain Sharing Validation**: Verifies that `iam.allowedPolicyMemberDomains` permits workforce pool principals (`is:principalSet://iam.googleapis.com/organizations/<org-id>`).');
-  b.addBullet('**Live GCP Verification**: The Verify Live in GCP button tests workforce pools and OIDC providers directly in Google Cloud.');
+  b.addBullet('**The Headless Migration Provider Pattern (`migration-dwd-provider`)**: Standard Okta/Entra providers require interactive logins and MFA redirects. To enable automated bulk migration without passwords, the platform registers a dedicated OIDC provider (`migration-dwd-provider`) directly inside the customer\'s existing Workforce Identity Pool using a local RSA keypair (`wif-migration-key.pem` and `wif-migration-jwks.json`).');
+  b.addBullet('**Direct Workforce User Tokens vs. Service Account Impersonation**: User-owned assets (NotebookLM notebooks, personalized memories, and chat sessions) **cannot** be accessed by a Service Account (`gemini-dwd-migrator@...`). The migration engine calls Discovery Engine APIs (`notebooks:listRecentlyViewed`) **directly using the minted Workforce User STS token** (`principal://.../subject/<USER>`). Service Account impersonation is optional and reserved for administrative infrastructure APIs.');
+  b.addBullet('**`google.subject` & `google.groups` Parity Architecture**: The migration provider must construct the identical principal as the production provider (e.g. `google.subject = assertion.email.lowerAscii()`). If the provider lacks `.lowerAscii()` or misses `google.groups = assertion.groups`, user calls fail with `HTTP 403: Permission discoveryengine.notebooks.list denied`. SAML `assertion.subject.lowerAscii()` and OIDC `assertion.email.lowerAscii()` are semantically equivalent.');
+  b.addBullet('**Automated GE App Workforce Discovery**: The Wizard automatically inspects Discovery Engine `aclConfig` and project IAM policies to detect production pools, discover group bindings, and auto-align the `--attribute-mapping` string via 1-click `update-oidc`.');
+  b.addBullet('**Stateless Federation & Wildcard IAM Pool Bindings**: GCP STS validates the RSA JWKS locally without contacting Okta/Entra. In sandbox projects with pool-wide wildcard IAM bindings (`workforcePools/<POOL>/*`), any email returns 200 OK with 0 notebooks. Step 4 displays an amber warning when 0 notebooks are returned to remind operators to test a user who owns >= 1 notebook.');
+  b.addBullet('**3-Stage End-to-End Live Verification**: Step 4 tests (1) STS Token Minting, (2) Subject Mapping Parity, and (3) Live User Notebooks API Probe (`discoveryengine.notebooks.list`) as the target user.');
 
   b.addHeading2('9.3 Permissions & Least-Privilege Auditor');
   b.addBullet('Evaluates Discovery Engine read/write scopes, NotebookLM source access, and Gmail API dispatch scopes.');
   b.addBullet('Flags over-provisioned permissions or destructive deletion privileges.');
   b.addBullet('Runs automated organization policy compliance audits on the target project.');
   b.addBullet('Offers 1-click IAM policy bindings auto-fixes for missing roles.');
+
+  b.addHeading2('9.4 Troubleshooting Guide & Enterprise Error Remediations');
+  b.addTable(
+    ['Error / Symptom', 'Root Cause', 'Actionable Resolution'],
+    [
+      [
+        'Permission discoveryengine.notebooks.list denied (HTTP 403)',
+        'Mismatched google.subject (missing .lowerAscii()), missing google.groups claim, or user lacks roles/discoveryengine.user',
+        '1. Align provider: gcloud iam workforce-pools providers update-oidc migration-dwd-provider --attribute-mapping="google.subject=assertion.email.lowerAscii(),google.groups=assertion.groups,attribute.user_email=assertion.email". 2. Grant roles/discoveryengine.user and serviceusage.serviceUsageConsumer.'
+      ],
+      [
+        'WorkforceSubjectMappingMismatch',
+        'Pool contains multiple providers with differing subject CEL expressions',
+        'Update migration-dwd-provider to match the canonical lowercase email format (assertion.email.lowerAscii()). The validator treats OIDC and SAML lowercase email mappings as semantically aligned.'
+      ],
+      [
+        'The issuer in ID Token does not match...',
+        'Configuration points to an interactive production provider instead of headless migration-dwd-provider',
+        'Select Migration DWD preset in Auth Wizard, or set providerId to migration-dwd-provider and issuer to https://gemini-migration.internal.'
+      ],
+      [
+        'USER_PROJECT_DENIED / serviceusage',
+        'Workforce principal or SA not authorized on quota project',
+        'Grant roles/serviceusage.serviceUsageConsumer to the workforce principal or pool.'
+      ],
+      [
+        'invalid_grant: Invalid email or User ID',
+        'Target user does not exist in Google Workspace directory',
+        'Verify target user exists in admin.google.com, or configure Cross-IdP transformation rules in Step 3.'
+      ]
+    ],
+    [30, 30, 40]
+  );
 
   b.addImage(
     'docs/images/13_auth_wif_wizard.png',
