@@ -13,6 +13,8 @@ export interface ChatSessionTurn {
   };
   answer?: string;
   assistAnswer?: string;
+  detailedAssistAnswer?: any;
+  detailedAnswer?: any;
   queryConfig?: {
     [key: string]: any;
   };
@@ -31,6 +33,7 @@ export interface ChatSession {
   startTime?: string;
   endTime?: string;
   expireTime?: string;
+  labels?: string[];
 }
 
 export class SessionMigrator {
@@ -421,8 +424,8 @@ export class SessionMigrator {
       }
 
       // Check if session labels have workflow summary text (for scheduled workflow agents)
-      if (!ansText && currentSession.labels) {
-        const wfSummary = currentSession.labels.find(l => l.startsWith('workflow-summary-text:'));
+      if (!ansText && currentSession.labels && Array.isArray(currentSession.labels)) {
+        const wfSummary = currentSession.labels.find((l: string) => l.startsWith('workflow-summary-text:'));
         if (wfSummary) {
           ansText = wfSummary.substring('workflow-summary-text:'.length);
         }
