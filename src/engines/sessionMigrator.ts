@@ -53,13 +53,79 @@ export class SessionMigrator {
     }
   }
 
+  private sessionCache = new Map<string, Promise<ChatSession>>();
+
   private async getAuthToken(userEmail?: string): Promise<string> {
     const email = userEmail || process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
     return this.auth.getAccessToken(email);
   }
 
-  public async getAnswer(resourceName: string): Promise<any> {
-    const token = await this.getAuthToken();
+  public async getSession(sessionName: string, userEmail?: string): Promise<ChatSession> {
+    const cached = this.sessionCache.get(sessionName);
+    if (cached) return cached;
+
+    const fetchPromise = (async () => {
+      const token = await this.getAuthToken(userEmail);
+      const projectId = sessionName.split('/')[1] || this.config.source.projectId;
+      const parts = sessionName.split('/');
+      const locIndex = parts.indexOf('locations');
+      const location = locIndex !== -1 ? parts[locIndex + 1] : this.config.source.appLocation || 'global';
+      const baseUrl = getSafeDiscoveryEngineUrl(location);
+      const url = `${baseUrl}/v1alpha/${sessionName}?includeAnswerDetails=true`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Goog-User-Project': projectId
+        }
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Failed to fetch session (${response.status}): ${errText}`);
+      }
+
+      return await response.json() as ChatSession;
+    })();
+
+    this.sessionCache.set(sessionName, fetchPromise);
+    try {
+      return await fetchPromise;
+    } catch (err) {
+      this.sessionCache.delete(sessionName);
+      throw err;
+    }
+  }
+
+  public async getAnswer(resourceName: string, userEmail?: string): Promise<any> {
+    // 1. If this is a session sub-resource (assistAnswers or answers), resolve via session hydration
+    if (resourceName.includes('/sessions/')) {
+      const sessionName = resourceName.replace(/\/(assistAnswers|answers)\/[^/]+$/, '');
+      try {
+        const sess = await this.getSession(sessionName, userEmail);
+        const turns = sess.turns || [];
+        for (const t of turns) {
+          const det = (t as any).detailedAssistAnswer || (t as any).detailedAnswer;
+          if (det && det.name === resourceName) {
+            return det;
+          }
+          if (t.assistAnswer === resourceName || t.answer === resourceName) {
+            if (det) return det;
+          }
+        }
+        const matchTurn = turns.find(t => t.assistAnswer === resourceName || t.answer === resourceName);
+        if (matchTurn) {
+          const matchDet = (matchTurn as any).detailedAssistAnswer || (matchTurn as any).detailedAnswer;
+          if (matchDet) return matchDet;
+        }
+      } catch (sessErr: any) {
+        logger.debug(`Session hydration for answer ${resourceName} failed: ${sessErr.message}`);
+      }
+    }
+
+    // 2. Direct fetch fallback
+    const token = await this.getAuthToken(userEmail);
     const projectId = resourceName.split('/')[1] || this.config.source.projectId;
     const parts = resourceName.split('/');
     const locIndex = parts.indexOf('locations');
@@ -179,7 +245,7 @@ export class SessionMigrator {
       }
     }
 
-    if (usersToScan.size === 0) {
+    if (usersToScan.size === 0 && !hasExplicitFilter) {
       const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
       if (defaultAdmin) usersToScan.add(defaultAdmin);
     }
@@ -187,7 +253,9 @@ export class SessionMigrator {
     const allSessions: ChatSession[] = [];
     const seenSessionIds = new Set<string>();
 
-    for (const email of usersToScan) {
+    const scanList = usersToScan.size > 0 ? Array.from(usersToScan) : [undefined];
+
+    for (const email of scanList) {
       try {
         const token = await this.getAuthToken(email);
         const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
@@ -195,7 +263,8 @@ export class SessionMigrator {
 
         do {
           const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
-          const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100${pageParam}`;
+          const userFilterParam = email ? `&filter=user_pseudo_id%3D%22${encodeURIComponent(email)}%22` : '';
+          const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100&view=SESSION_VIEW_FULL${userFilterParam}${pageParam}`;
 
           const response = await fetch(url, {
             method: 'GET',
@@ -211,7 +280,7 @@ export class SessionMigrator {
               const sid = s.name.split('/').pop() || s.name;
               if (!seenSessionIds.has(sid)) {
                 seenSessionIds.add(sid);
-                if (!s.userPseudoId || !s.userPseudoId.includes('@')) {
+                if (email && (!s.userPseudoId || !s.userPseudoId.includes('@'))) {
                   s.userPseudoId = email;
                 }
                 allSessions.push(s);
@@ -220,12 +289,12 @@ export class SessionMigrator {
             pageToken = data.nextPageToken || '';
           } else {
             const errText = await response.text();
-            logger.warn(`Could not list sessions for user ${email} (${response.status}): ${errText}`);
+            logger.warn(`Could not list sessions for user ${email || 'all'} (${response.status}): ${errText}`);
             break;
           }
         } while (pageToken);
       } catch (err: any) {
-        logger.warn(`Could not list sessions for user ${email}: ${err.message}`);
+        logger.warn(`Could not list sessions for user ${email || 'all'}: ${err.message}`);
       }
     }
 
@@ -295,8 +364,36 @@ export class SessionMigrator {
 
     const token = await this.getAuthToken(targetUserId.includes('@') ? targetUserId : undefined);
 
-    // Hydrate & sanitize turns with deduplication
-    const rawTurns = session.turns || [];
+    // If session has turns with answer references but lacks detailed answers, hydrate session once
+    let currentSession = session;
+    const srcUserEmail = currentSession.userPseudoId?.includes('@') ? currentSession.userPseudoId : undefined;
+    const needsSessionHydration = currentSession.turns?.some(
+      t => !((t as any).detailedAssistAnswer || (t as any).detailedAnswer) && (t.assistAnswer || (t.answer && t.answer.startsWith('projects/')))
+    );
+    if (needsSessionHydration && currentSession.name) {
+      try {
+        currentSession = await this.getSession(currentSession.name, srcUserEmail);
+      } catch (e: any) {
+        logger.debug(`Could not hydrate full session ${currentSession.name}: ${e.message}`);
+      }
+    }
+
+    const rawTurns = currentSession.turns || [];
+    const srcSessionId = currentSession.name.split('/').pop() || 'unknown';
+
+    // Derive a clean, meaningful displayName
+    const firstTurnWithQuery = rawTurns.find(t => t.query?.text || t.query?.parts?.some(p => p.text));
+    const firstQueryText = firstTurnWithQuery?.query?.text ||
+      firstTurnWithQuery?.query?.parts?.map(p => p.text || '').join(' ').trim() || '';
+
+    let displayName = (currentSession.displayName || '').trim();
+    if (!displayName || (displayName.length > 120 && firstQueryText && firstQueryText.length < 100)) {
+      displayName = firstQueryText || displayName || 'Untitled Chat';
+    }
+    if (displayName.length > 150) {
+      displayName = displayName.substring(0, 147) + '...';
+    }
+
     const pairedTurns: Array<{ queryText: string; answerText?: string }> = [];
 
     for (const turn of rawTurns) {
@@ -306,52 +403,85 @@ export class SessionMigrator {
       }
 
       let ansText = '';
-      const ansRef = turn.assistAnswer || turn.answer;
-      if (ansRef && typeof ansRef === 'string' && ansRef.startsWith('projects/')) {
-        try {
-          const ansData = await this.getAnswer(ansRef);
-          ansText = this.extractTextFromAnswer(ansData);
-        } catch (e: any) {
-          logger.warn(`Could not hydrate answer ${ansRef}: ${e.message}`);
+      if ((turn as any).detailedAssistAnswer || (turn as any).detailedAnswer) {
+        ansText = this.extractTextFromAnswer((turn as any).detailedAssistAnswer || (turn as any).detailedAnswer);
+      }
+      if (!ansText) {
+        const ansRef = turn.assistAnswer || turn.answer;
+        if (ansRef && typeof ansRef === 'string' && ansRef.startsWith('projects/')) {
+          try {
+            const ansData = await this.getAnswer(ansRef, srcUserEmail);
+            ansText = this.extractTextFromAnswer(ansData);
+          } catch (e: any) {
+            logger.debug(`Could not hydrate answer ${ansRef}: ${e.message}`);
+          }
+        } else if (turn.answer && typeof turn.answer === 'string' && !turn.answer.startsWith('projects/')) {
+          ansText = turn.answer;
         }
-      } else if (turn.answer && typeof turn.answer === 'string') {
-        ansText = turn.answer;
       }
 
-      // Option 1: Structured Historical Record Fallback for unhydrated or ephemeral responses
-      if (!ansText && qText) {
-        const timeStr = turn.createdAt || session.startTime || new Date().toISOString();
-        const srcProj = this.config.source?.projectId || 'source-workspace';
-        ansText = `> 📋 **Archived Dialogue Record**\n> * **Source Project**: \`${srcProj}\`\n> * **Recorded Query**: \`${qText}\`\n> * **Timestamp**: \`${timeStr}\`\n> * **Status**: Executed in source workspace. Restored for historical auditing and reference.`;
+      // Check if session labels have workflow summary text (for scheduled workflow agents)
+      if (!ansText && currentSession.labels) {
+        const wfSummary = currentSession.labels.find(l => l.startsWith('workflow-summary-text:'));
+        if (wfSummary) {
+          ansText = wfSummary.substring('workflow-summary-text:'.length);
+        }
       }
 
       if (qText) {
         const last = pairedTurns[pairedTurns.length - 1];
         if (last && last.queryText === qText) {
-          if (ansText && !last.answerText) {
+          if (ansText && (!last.answerText || last.answerText.startsWith('> 📋 **Archived Dialogue Record**'))) {
             last.answerText = ansText;
           }
         } else {
           pairedTurns.push({ queryText: qText, answerText: ansText || undefined });
         }
+      } else if (ansText && pairedTurns.length > 0 && (!pairedTurns[pairedTurns.length - 1].answerText || pairedTurns[pairedTurns.length - 1].answerText?.startsWith('> 📋 **Archived Dialogue Record**'))) {
+        pairedTurns[pairedTurns.length - 1].answerText = ansText;
+      }
+    }
+
+    // Only after ALL raw turns are processed, apply fallback to any turns that STILL lack an answer
+    for (const p of pairedTurns) {
+      if (!p.answerText) {
+        const timeStr = currentSession.startTime || new Date().toISOString();
+        const srcProj = this.config.source?.projectId || 'source-workspace';
+        p.answerText = `> 📋 **Archived Dialogue Record**\n> * **Source Project**: \`${srcProj}\`\n> * **Recorded Query**: \`${p.queryText}\`\n> * **Timestamp**: \`${timeStr}\`\n> * **Status**: Executed in source workspace. Restored for historical auditing and reference.`;
       }
     }
 
     const hydratedTurns: any[] = [];
+    const srcProj = this.config.source?.projectId || 'source-workspace';
 
     for (let i = 0; i < pairedTurns.length; i++) {
       const p = pairedTurns[i];
+      const isLast = i === pairedTurns.length - 1;
+
+      let turnContent = `${p.queryText}`;
+      if (p.answerText) {
+        turnContent += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n🤖 **Gemini Response:**\n\n${p.answerText}`;
+      }
+
+      if (isLast) {
+        turnContent += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n🔒 **Conversation Closed** — *Archived from \`${srcProj}\` for historical auditing and reference.*`;
+      }
 
       hydratedTurns.push({
-        query: { text: p.queryText },
-        answer: p.answerText || undefined
+        query: { text: turnContent }
       });
     }
 
+    const targetSessionLabels = [
+      `source-session-id:${srcSessionId}`,
+      `migrated-from-project:${this.config.source?.projectId || 'source'}`
+    ];
+
     const payload: any = {
-      displayName: session.displayName || 'Restored Chat Session',
+      displayName: displayName,
       userPseudoId: targetUserId,
-      state: session.state || 'IN_PROGRESS',
+      state: currentSession.state || 'IN_PROGRESS',
+      labels: targetSessionLabels,
       turns: hydratedTurns
     };
 
@@ -361,13 +491,27 @@ export class SessionMigrator {
     // Probe target engine to avoid duplicate session creation on retry
     try {
       const existingSessions = await this.listTargetSessions(targetUserId.includes('@') ? targetUserId : undefined);
-      const expectedName = session.displayName || 'Restored Chat Session';
-      const match = existingSessions.find(s =>
-        (s.displayName === expectedName) &&
-        (!hydratedTurns.length || (s.turns && s.turns.length === hydratedTurns.length))
-      );
+      const match = existingSessions.find(s => {
+        if (s.labels?.includes(`source-session-id:${srcSessionId}`)) {
+          return true;
+        }
+        if (
+          displayName !== 'Restored Chat Session' &&
+          displayName !== 'Untitled Chat' &&
+          s.displayName === displayName &&
+          hydratedTurns.length > 0 &&
+          s.turns?.length === hydratedTurns.length
+        ) {
+          const sFirstQuery = s.turns?.[0]?.query?.text || '';
+          const hFirstQuery = hydratedTurns[0]?.query?.text || '';
+          if (sFirstQuery && hFirstQuery && sFirstQuery === hFirstQuery) {
+            return true;
+          }
+        }
+        return false;
+      });
       if (match) {
-        logger.info(`Session "${session.displayName}" already exists in target engine (Target ID: ${match.name.split('/').pop()}). Skipping duplicate creation.`);
+        logger.info(`Session "${displayName}" already exists in target engine (Target ID: ${match.name.split('/').pop()}). Skipping duplicate creation.`);
         return match;
       }
     } catch (probeErr: any) {
@@ -390,7 +534,7 @@ export class SessionMigrator {
     }
 
     const created = await response.json() as any;
-    logger.info(`Restored session "${session.displayName}" for ${targetUserId} with ${hydratedTurns.length} turns -> Target ID: ${created.name.split('/').pop()}`);
+    logger.info(`Restored session "${displayName}" for ${targetUserId} with ${hydratedTurns.length} turns -> Target ID: ${created.name.split('/').pop()}`);
     return created as ChatSession;
   }
 }

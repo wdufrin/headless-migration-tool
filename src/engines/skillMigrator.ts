@@ -21,7 +21,7 @@ import { RegistrySkill, RegistrySkillRevision, Agent, IamPolicy } from '../types
 import { mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
-import { isAgentOwnedByUser, mapIamMember } from './agentMigrator.js';
+import { isAgentOwnedByUser, mapIamMember, normalizePrincipal } from './agentMigrator.js';
 
 export const PUBLIC_1P_SKILL_IDS = new Set([
   'email-writing-style',
@@ -42,6 +42,39 @@ export const PUBLIC_1P_SKILL_IDS = new Set([
   'bigquery-basics',
   'google-cloud-storage-basics'
 ]);
+
+/**
+ * Evaluates if an Agent Registry skill matches the specified user filter.
+ */
+export function isSkillOwnedByUser(skill: RegistrySkill, userFilter: string[] = []): boolean {
+  if (userFilter.length === 0 || userFilter.includes('*') || userFilter.includes('*@*')) {
+    return true;
+  }
+  const candidateOwners: string[] = [
+    skill.publisher,
+    (skill as any).owner,
+    (skill as any).creator,
+    (skill as any).metadata?.owner,
+    (skill as any).metadata?.creator,
+    (skill as any).metadata?.publisher
+  ].filter(Boolean) as string[];
+
+  if (candidateOwners.length === 0) {
+    return false;
+  }
+
+  const lowerFilters = userFilter.map(u => u.toLowerCase().trim().replace(/^user:/i, ''));
+  return candidateOwners.some(owner => {
+    const cleanOwner = normalizePrincipal(owner);
+    return lowerFilters.some(filter => {
+      if (filter.startsWith('*@')) {
+        const domain = filter.substring(2);
+        return cleanOwner.endsWith(`@${domain}`);
+      }
+      return cleanOwner === filter;
+    });
+  });
+}
 
 export class SkillMigrator {
   private client: AgentRegistryClient;
@@ -89,15 +122,26 @@ export class SkillMigrator {
       return true;
     });
 
-    if (allSkills.length > userRegistrySkills.length) {
-      logger.info(`Filtered ${allSkills.length} skills in Agent Registry -> ${userRegistrySkills.length} user-created skills (excluded ${allSkills.length - userRegistrySkills.length} public Google catalog skills).`);
+    const userFilter = options.userFilter || [];
+    const hasUserFilter = userFilter.length > 0 && !userFilter.includes('*') && !userFilter.includes('*@*');
+    const filteredRegistrySkills = userRegistrySkills.filter((skill: RegistrySkill) => {
+      if (!hasUserFilter) return true;
+      return isSkillOwnedByUser(skill, userFilter);
+    });
+
+    if (allSkills.length > filteredRegistrySkills.length) {
+      logger.info(`Filtered ${allSkills.length} skills in Agent Registry -> ${filteredRegistrySkills.length} matching skills (excluded public catalog & non-matching user skills).`);
     } else {
-      logger.info(`Found ${userRegistrySkills.length} user-created skills in Agent Registry.`);
+      logger.info(`Found ${filteredRegistrySkills.length} user-created skills in Agent Registry.`);
     }
 
-    await mapConcurrent(userRegistrySkills, concurrency, async (skill: RegistrySkill) => {
+    await mapConcurrent(filteredRegistrySkills, concurrency, async (skill: RegistrySkill) => {
       const resourceId = skill.name ? skill.name.split('/').pop()! : (skill.skillId || 'unknown-skill');
       const displayName = skill.displayName || resourceId;
+
+      const rawOwner = skill.publisher || (skill as any).owner || (skill as any).creator;
+      const originalOwner = rawOwner ? normalizePrincipal(rawOwner) : undefined;
+      const targetOwner = originalOwner ? IdentityMappingService.lookupTargetIdentity(originalOwner, identityMapping, originalOwner) : undefined;
 
       if (options.skipIds && (options.skipIds.includes(resourceId) || options.skipIds.includes(`SKILL:${resourceId}`))) {
         logger.info(`Skipping already-migrated Skill "${displayName}" (${resourceId}) from previous checkpoint.`);
@@ -122,7 +166,9 @@ export class SkillMigrator {
             displayName,
             type: 'SKILL',
             status: 'DRY_RUN',
-            targetId: resourceId
+            targetId: resourceId,
+            originalOwner,
+            targetOwner
           });
           return;
         }
@@ -198,7 +244,9 @@ export class SkillMigrator {
           displayName,
           type: 'SKILL',
           status: 'SUCCESS',
-          targetId: resourceId
+          targetId: resourceId,
+          originalOwner,
+          targetOwner
         });
       } catch (err: any) {
         logger.error(`Failed to migrate Skill "${displayName}" (${resourceId}): ${err.message}`);
@@ -207,7 +255,9 @@ export class SkillMigrator {
           displayName,
           type: 'SKILL',
           status: 'FAILED',
-          error: err.message
+          error: err.message,
+          originalOwner,
+          targetOwner
         });
       }
     });

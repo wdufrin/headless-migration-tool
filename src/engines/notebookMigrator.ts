@@ -21,6 +21,39 @@ import { mapConcurrent } from '../utils/concurrency.js';
 import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
+/**
+ * Compares two notebook sources to determine if they represent the same underlying resource.
+ */
+export function isSameSource(a: NotebookSource, b: NotebookSource): boolean {
+  if (!a || !b) return false;
+
+  // 1. Google Docs documentId
+  const aDocId = a.metadata?.googleDocsMetadata?.documentId || a.metadata?.google_docs_metadata?.documentId;
+  const bDocId = b.metadata?.googleDocsMetadata?.documentId || b.metadata?.google_docs_metadata?.documentId;
+  if (aDocId && bDocId && aDocId === bDocId) return true;
+
+  // 2. YouTube URL or videoId
+  const aYt = a.metadata?.youtubeMetadata?.youtubeUrl || a.metadata?.youtubeMetadata?.videoId || a.metadata?.youtubeMetadata?.uri || a.metadata?.youtubeMetadata?.url || a.metadata?.youtube_metadata?.youtubeUrl || a.metadata?.youtube_metadata?.videoId || a.metadata?.youtube_metadata?.uri || a.metadata?.youtube_metadata?.url;
+  const bYt = b.metadata?.youtubeMetadata?.youtubeUrl || b.metadata?.youtubeMetadata?.videoId || b.metadata?.youtubeMetadata?.uri || b.metadata?.youtubeMetadata?.url || b.metadata?.youtube_metadata?.youtubeUrl || b.metadata?.youtube_metadata?.videoId || b.metadata?.youtube_metadata?.uri || b.metadata?.youtube_metadata?.url;
+  if (aYt && bYt && aYt === bYt) return true;
+
+  // 3. Web URL
+  const aWeb = a.metadata?.webpageMetadata?.webpageUrl || a.metadata?.webpage_metadata?.webpageUrl || a.webScrapeConfig?.url || a.url;
+  const bWeb = b.metadata?.webpageMetadata?.webpageUrl || b.metadata?.webpage_metadata?.webpageUrl || b.webScrapeConfig?.url || b.url;
+  if (aWeb && bWeb && aWeb === bWeb) return true;
+
+  // 4. Agentspace document name
+  const aAs = a.metadata?.agentspaceMetadata?.documentName || a.metadata?.agentspace_metadata?.documentName;
+  const bAs = b.metadata?.agentspaceMetadata?.documentName || b.metadata?.agentspace_metadata?.documentName;
+  if (aAs && bAs && aAs === bAs) return true;
+
+  // 5. Title / DisplayName matching (e.g. for uploaded PDFs, documents, text files)
+  const aTitle = (a.displayName || a.title || '').trim().toLowerCase();
+  const bTitle = (b.displayName || b.title || '').trim().toLowerCase();
+  if (aTitle && bTitle && aTitle === bTitle) return true;
+
+  return false;
+}
 
 export class NotebookMigrator {
   private client: DiscoveryEngineClient;
@@ -472,10 +505,12 @@ export class NotebookMigrator {
         }
 
         let createdNotebook: Notebook | undefined;
+        let notebookAlreadyExisted = false;
         try {
           const targetNotebooks = await this.client.listNotebooks(targetEnv, userOwner);
           createdNotebook = targetNotebooks.find(n => (n.title || n.displayName) === notebookPayload.title);
           if (createdNotebook) {
+            notebookAlreadyExisted = true;
             logger.info(`Notebook "${result.displayName}" already exists in target environment (ID: ${createdNotebook.name.split('/').pop()}). Skipping duplicate creation.`);
           }
         } catch (probeErr: any) {
@@ -490,40 +525,101 @@ export class NotebookMigrator {
         const newNotebookId = createdNotebook.name.split('/').pop() || '';
         result.targetId = newNotebookId;
 
+        // Fetch existing target notebook state (sources, notes, artifacts) for deduplication if notebook already existed
+        let existingTargetSources: NotebookSource[] = [];
+        let existingNotes: NotebookNote[] = [];
+        let existingArtifacts: any[] = [];
+
+        if (notebookAlreadyExisted) {
+          try {
+            const existingNb = await this.client.getNotebook(newNotebookId, targetEnv, userOwner);
+            existingTargetSources = existingNb.sources || [];
+            if (existingTargetSources.length > 0) {
+              logger.info(`Found ${existingTargetSources.length} existing sources in target Notebook "${result.displayName}" (${newNotebookId}). Re-use will be deduplicated.`);
+            }
+          } catch (getErr: any) {
+            logger.debug(`Could not fetch existing target notebook sources: ${getErr.message}`);
+          }
+
+          try {
+            existingNotes = await this.client.listNotes(newNotebookId, targetEnv, userOwner);
+          } catch (notesErr: any) {
+            logger.debug(`Could not list existing target notes: ${notesErr.message}`);
+          }
+
+          try {
+            existingArtifacts = await this.client.listArtifacts(newNotebookId, targetEnv, userOwner);
+          } catch (artErr: any) {
+            logger.debug(`Could not list existing target artifacts: ${artErr.message}`);
+          }
+        }
+
         const sourceIdMap: Record<string, string> = {};
         const sourceDetails: MigratedSourceItem[] = [];
         let sourcesRestored = 0;
         let sourcesFailed = 0;
 
-        // 2. Batch inject sources
+        // 2. Batch inject sources with idempotency and deduplication
         if (rawSources.length > 0) {
-          const mappedSources: Array<{ raw: NotebookSource; payload: any | null }> = rawSources.map(s => ({
-            raw: s,
-            payload: this.mapSourceToPayload(s)
-          }));
+          // Internal deduplication within rawSources
+          const uniqueRawSources: NotebookSource[] = [];
+          for (const s of rawSources) {
+            const existingInUnique = uniqueRawSources.find(u => isSameSource(s, u));
+            if (existingInUnique) {
+              const oldId = s.name?.split('/').pop() || s.sourceId?.id;
+              const canonId = existingInUnique.name?.split('/').pop() || existingInUnique.sourceId?.id;
+              if (oldId && canonId) {
+                sourceIdMap[oldId] = canonId;
+              }
+            } else {
+              uniqueRawSources.push(s);
+            }
+          }
 
-          const validItems = mappedSources.filter(item => item.payload !== null);
-          const unextractableItems = mappedSources.filter(item => item.payload === null);
+          const itemsToCreate: Array<{ raw: NotebookSource; payload: any }> = [];
 
-          // Record unextractable items with transparent MANUAL_REUPLOAD_REQUIRED status
-          for (const item of unextractableItems) {
-            const s = item.raw;
+          for (const s of uniqueRawSources) {
+            const oldSourceId = s.name?.split('/').pop() || s.sourceId?.id;
             const sTitle = s.displayName || s.title || 'Source';
             const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
-            sourceDetails.push({
-              title: sTitle,
-              sourceId: s.name?.split('/').pop() || s.sourceId?.id,
-              type: sType,
-              status: 'MANUAL_REUPLOAD_REQUIRED',
-              error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
-            });
-            sourcesFailed++;
+
+            // Check if source already exists in target notebook
+            const existingMatch = existingTargetSources.find(ets => isSameSource(s, ets));
+            if (existingMatch) {
+              const existingTargetId = existingMatch.name?.split('/').pop() || existingMatch.sourceId?.id || oldSourceId;
+              if (oldSourceId && existingTargetId) {
+                sourceIdMap[oldSourceId] = existingTargetId;
+              }
+              sourceDetails.push({
+                title: sTitle,
+                sourceId: oldSourceId,
+                type: sType,
+                status: 'SUCCESS'
+              });
+              sourcesRestored++;
+              logger.info(`Source "${sTitle}" already exists in target Notebook ${newNotebookId}. Skipping re-creation.`);
+              continue;
+            }
+
+            const payload = this.mapSourceToPayload(s);
+            if (payload === null) {
+              sourceDetails.push({
+                title: sTitle,
+                sourceId: oldSourceId,
+                type: sType,
+                status: 'MANUAL_REUPLOAD_REQUIRED',
+                error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
+              });
+              sourcesFailed++;
+            } else {
+              itemsToCreate.push({ raw: s, payload });
+            }
           }
 
           const createdSources: any[] = [];
           const BATCH_SIZE = 5;
-          for (let i = 0; i < validItems.length; i += BATCH_SIZE) {
-            const chunkItems = validItems.slice(i, i + BATCH_SIZE);
+          for (let i = 0; i < itemsToCreate.length; i += BATCH_SIZE) {
+            const chunkItems = itemsToCreate.slice(i, i + BATCH_SIZE);
             const chunkPayloads = chunkItems.map(it => it.payload);
 
             try {
@@ -577,8 +673,8 @@ export class NotebookMigrator {
             }
           }
 
-          for (let i = 0; i < validItems.length; i++) {
-            const oldSourceId = validItems[i].raw.name?.split('/').pop() || validItems[i].raw.sourceId?.id;
+          for (let i = 0; i < itemsToCreate.length; i++) {
+            const oldSourceId = itemsToCreate[i].raw.name?.split('/').pop() || itemsToCreate[i].raw.sourceId?.id;
             const newSourceId = createdSources[i]?.name?.split('/').pop() || createdSources[i]?.sourceId?.id;
             if (oldSourceId && newSourceId) {
               sourceIdMap[oldSourceId] = newSourceId;
@@ -587,9 +683,20 @@ export class NotebookMigrator {
           logger.info(`Restored ${sourcesRestored} sources (${sourcesFailed} failed/manual) to Notebook ${newNotebookId}`);
         }
 
-        // 3. Recreate notes if available
+        // 3. Recreate notes if available (with deduplication against existing notes)
         if (notes && notes.length > 0) {
           for (const note of notes) {
+            const noteTitle = (note.title || 'Note').trim().toLowerCase();
+            const noteContent = (note.content || this.extractTextFromTailwindDoc(note) || '').trim();
+            const noteAlreadyExists = existingNotes.some(en => {
+              const enTitle = (en.title || 'Note').trim().toLowerCase();
+              const enContent = (en.content || this.extractTextFromTailwindDoc(en) || '').trim();
+              return enTitle === noteTitle && (!noteContent || enContent === noteContent);
+            });
+            if (noteAlreadyExists) {
+              logger.info(`Note "${note.title || 'Untitled'}" already exists in target Notebook. Skipping duplicate creation.`);
+              continue;
+            }
             try {
               const notePayload = {
                 title: note.title || 'Note',
@@ -602,10 +709,22 @@ export class NotebookMigrator {
           }
         }
 
-        // 4. Recreate artifacts / Studio outputs
+        // 4. Recreate artifacts / Studio outputs (with deduplication against existing artifacts)
         if (artifacts && artifacts.length > 0) {
           let restoredArtifactCount = 0;
           for (const artifact of artifacts) {
+            const artTitle = (artifact.title || this.formatArtifactTypeName(artifact.type) || '').trim().toLowerCase();
+            const artType = artifact.type;
+            const artifactAlreadyExists = existingArtifacts.some(ea => {
+              const eaTitle = (ea.title || this.formatArtifactTypeName(ea.type) || '').trim().toLowerCase();
+              return ea.type === artType && (artTitle ? eaTitle === artTitle : true);
+            });
+            if (artifactAlreadyExists) {
+              logger.info(`Artifact "${artifact.title || this.formatArtifactTypeName(artType)}" already exists in target Notebook. Skipping duplicate creation.`);
+              restoredArtifactCount++;
+              continue;
+            }
+
             try {
               // Rewrite source references
               const remappedSources = (artifact.sources || []).map((s: any) => {

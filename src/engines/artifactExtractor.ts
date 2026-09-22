@@ -52,10 +52,18 @@ export class ArtifactExtractor {
       for (let turnIdx = 0; turnIdx < turns.length; turnIdx++) {
         const turn = turns[turnIdx];
         const ansRef = turn.assistAnswer || turn.answer;
+        const inlineAnswer = turn.detailedAssistAnswer || turn.detailedAnswer;
 
-        if (ansRef && typeof ansRef === 'string' && ansRef.startsWith('projects/')) {
+        if (inlineAnswer) {
           try {
-            const ansData = await this.migrator.getAnswer(ansRef);
+            const extracted = this.extractArtifactsFromAnswer(inlineAnswer, sessionTitle, sessionId, turnIdx + 1, userPseudoId);
+            artifacts.push(...extracted);
+          } catch (err: any) {
+            logger.warn(`Failed to inspect inline answer for session ${sessionId} turn ${turnIdx + 1}: ${err.message}`);
+          }
+        } else if (ansRef && typeof ansRef === 'string' && ansRef.startsWith('projects/')) {
+          try {
+            const ansData = await this.migrator.getAnswer(ansRef, userPseudoId);
             const extracted = this.extractArtifactsFromAnswer(ansData, sessionTitle, sessionId, turnIdx + 1, userPseudoId);
             artifacts.push(...extracted);
           } catch (err: any) {

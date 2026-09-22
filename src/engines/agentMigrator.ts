@@ -56,7 +56,7 @@ export function mapIamMember(member: string, identityMapping: Record<string, str
 /**
  * Normalizes an IAM principal string for comparison against user filter criteria.
  */
-function normalizePrincipal(principal: string): string {
+export function normalizePrincipal(principal: string): string {
   let clean = principal
     .replace(/^.*\/subject\//i, '')
     .replace(/^.*_subject_/i, '')
@@ -94,7 +94,7 @@ export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boo
   }
 
   if (ownerCandidates.length > 0) {
-    const matchesOwner = ownerCandidates.some(member => {
+    return ownerCandidates.some(member => {
       const cleanOwner = normalizePrincipal(member);
       return lowerFilters.some(filter => {
         if (filter.startsWith('*@')) {
@@ -104,10 +104,9 @@ export function isAgentOwnedByUser(agent: Agent, userFilter: string[] = []): boo
         return cleanOwner === filter;
       });
     });
-    if (matchesOwner) return true;
   }
 
-  // 2. If no explicit owner matches, check all other IAM members across any binding
+  // 2. Only if no explicit owner role is attached, check other IAM members
   const otherMembers: string[] = [];
   if (agent.iamPolicy?.bindings) {
     for (const b of agent.iamPolicy.bindings) {

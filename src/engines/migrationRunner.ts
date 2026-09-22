@@ -349,11 +349,24 @@ export class MigrationRunner {
         const { SessionMigrator } = await import('./sessionMigrator.js');
         const sessionMigrator = new SessionMigrator(config, this.auth);
         const sourceSessions = await sessionMigrator.listSourceSessions(discoveredUsers);
-        logger.info(`Starting Multi-User Chat History Migration for ${sourceSessions.length} sessions (Sorted Chronologically: Oldest -> Newest)...`);
+
+        let filteredSessions = sourceSessions;
+        if (config.options?.userFilter && config.options.userFilter.length > 0) {
+          const allowedUsers = new Set(config.options.userFilter.map(f => f.replace(/^user:/i, '').trim().toLowerCase()));
+          if (!allowedUsers.has('*')) {
+            filteredSessions = sourceSessions.filter(s => {
+              const u = (s.userPseudoId || '').replace(/^user:/i, '').trim().toLowerCase();
+              return allowedUsers.has(u);
+            });
+            logger.info(`Filtered sessions from ${sourceSessions.length} down to ${filteredSessions.length} matching user filter: ${Array.from(allowedUsers).join(', ')}`);
+          }
+        }
+
+        logger.info(`Starting Multi-User Chat History Migration for ${filteredSessions.length} sessions (Sorted Chronologically: Oldest -> Newest)...`);
 
         // Sort chronologically (oldest first -> newest last) so that in the target engine,
         // the newest sessions are created last and appear at the top of the sidebar.
-        const chronologicalSessions = [...sourceSessions].sort((a, b) => {
+        const chronologicalSessions = [...filteredSessions].sort((a, b) => {
           const tA = new Date(a.startTime || a.endTime || 0).getTime();
           const tB = new Date(b.startTime || b.endTime || 0).getTime();
           return tA - tB;

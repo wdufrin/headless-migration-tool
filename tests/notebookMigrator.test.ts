@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { NotebookMigrator } from '../src/engines/notebookMigrator.js';
+import { describe, it, expect, vi } from 'vitest';
+import { NotebookMigrator, isSameSource } from '../src/engines/notebookMigrator.js';
 import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
 import { GcpAuthService } from '../src/services/gcpAuth.js';
 import { Notebook, NotebookSource } from '../src/types/index.js';
+import { EnvironmentConfig } from '../src/types/migration.js';
 
 describe('NotebookMigrator Engine', () => {
   const dummyAuth = new GcpAuthService({ staticToken: 'test-token' });
@@ -117,6 +118,175 @@ describe('NotebookMigrator Engine', () => {
 
       const mapped = migrator.mapSourceToPayload(emptySource);
       expect(mapped).toBeNull();
+    });
+  });
+
+  describe('Source Deduplication (isSameSource)', () => {
+    it('should identify identical Google Drive sources by documentId', () => {
+      const s1: NotebookSource = {
+        title: 'Doc A',
+        metadata: { googleDocsMetadata: { documentId: 'doc-123' } }
+      };
+      const s2: NotebookSource = {
+        title: 'Doc A Renamed',
+        metadata: { googleDocsMetadata: { documentId: 'doc-123' } }
+      };
+      const s3: NotebookSource = {
+        title: 'Doc B',
+        metadata: { googleDocsMetadata: { documentId: 'doc-456' } }
+      };
+
+      expect(isSameSource(s1, s2)).toBe(true);
+      expect(isSameSource(s1, s3)).toBe(false);
+    });
+
+    it('should identify identical YouTube sources by url', () => {
+      const s1: NotebookSource = {
+        metadata: { youtubeMetadata: { youtubeUrl: 'https://youtube.com/watch?v=abc' } }
+      };
+      const s2: NotebookSource = {
+        metadata: { youtubeMetadata: { youtubeUrl: 'https://youtube.com/watch?v=abc' } }
+      };
+      const s3: NotebookSource = {
+        metadata: { youtubeMetadata: { youtubeUrl: 'https://youtube.com/watch?v=xyz' } }
+      };
+
+      expect(isSameSource(s1, s2)).toBe(true);
+      expect(isSameSource(s1, s3)).toBe(false);
+    });
+
+    it('should identify identical Web URL sources', () => {
+      const s1: NotebookSource = {
+        url: 'https://example.com/guide'
+      };
+      const s2: NotebookSource = {
+        metadata: { webpageMetadata: { webpageUrl: 'https://example.com/guide' } }
+      };
+      const s3: NotebookSource = {
+        url: 'https://example.com/other'
+      };
+
+      expect(isSameSource(s1, s2)).toBe(true);
+      expect(isSameSource(s1, s3)).toBe(false);
+    });
+
+    it('should identify identical sources by matching title/displayName', () => {
+      const s1: NotebookSource = { title: 'Quarterly_Report_2026.pdf' };
+      const s2: NotebookSource = { displayName: 'Quarterly_Report_2026.pdf' };
+      const s3: NotebookSource = { title: 'Annual_Report_2026.pdf' };
+
+      expect(isSameSource(s1, s2)).toBe(true);
+      expect(isSameSource(s1, s3)).toBe(false);
+    });
+  });
+
+  describe('Deduplication in migrateNotebooks on Re-runs', () => {
+    it('should not duplicate sources when target notebook already contains matching sources', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'source-p', appLocation: 'global', appId: 'source-app' };
+      const targetEnv: EnvironmentConfig = { projectId: 'target-p', appLocation: 'global', appId: 'target-app' };
+
+      const existingSourceInTarget: NotebookSource = {
+        name: 'projects/target-p/locations/global/notebooks/nb-tgt-1/sources/src-tgt-1',
+        title: 'Existing Source 1',
+        metadata: {
+          googleDocsMetadata: { documentId: 'doc-existing-1' }
+        }
+      };
+
+      const existingTargetNotebook: Notebook = {
+        name: 'projects/target-p/locations/global/notebooks/nb-tgt-1',
+        title: 'Project Phoenix Research',
+        sources: [existingSourceInTarget]
+      };
+
+      const sourceNotebook: Notebook = {
+        name: 'projects/source-p/locations/global/notebooks/nb-src-1',
+        title: 'Project Phoenix Research',
+        owner: 'alice@company.com',
+        sources: [
+          // Source 1: Already exists in target
+          {
+            name: 'projects/source-p/locations/global/notebooks/nb-src-1/sources/src-1',
+            title: 'Existing Source 1',
+            metadata: {
+              googleDocsMetadata: { documentId: 'doc-existing-1' }
+            }
+          },
+          // Source 2: Brand new source
+          {
+            name: 'projects/source-p/locations/global/notebooks/nb-src-1/sources/src-2',
+            title: 'New Whitepaper.pdf',
+            content: 'Authentic whitepaper content'
+          }
+        ]
+      };
+
+      const mockClient = {
+        listNotebooks: vi.fn(),
+        getNotebook: vi.fn(),
+        getNotebookSource: vi.fn(),
+        createNotebook: vi.fn(),
+        batchCreateNotebookSources: vi.fn(),
+        listNotes: vi.fn().mockResolvedValue([]),
+        createNote: vi.fn(),
+        listArtifacts: vi.fn().mockResolvedValue([]),
+        createArtifact: vi.fn()
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+
+      // 1. listNotebooks in source returns sourceNotebook
+      vi.mocked(mockClient.listNotebooks).mockImplementation(async (env) => {
+        if (env.projectId === sourceEnv.projectId) return [sourceNotebook];
+        // Target already has the notebook
+        return [existingTargetNotebook];
+      });
+
+      // 2. getNotebook
+      vi.mocked(mockClient.getNotebook).mockImplementation(async (id, env) => {
+        if (env.projectId === sourceEnv.projectId) return sourceNotebook;
+        return existingTargetNotebook;
+      });
+
+      vi.mocked(mockClient.getNotebookSource).mockImplementation(async (nbId, srcId, env) => {
+        const found = sourceNotebook.sources?.find(s => s.name?.endsWith(srcId));
+        return found || { title: 'Unknown' };
+      });
+
+      // 3. batchCreateNotebookSources should only receive the NEW source
+      vi.mocked(mockClient.batchCreateNotebookSources).mockResolvedValue({
+        sources: [
+          {
+            name: 'projects/target-p/locations/global/notebooks/nb-tgt-1/sources/src-tgt-2',
+            title: 'New Whitepaper.pdf'
+          }
+        ]
+      });
+
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: false, userFilter: ['alice@company.com'] }
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('SUCCESS');
+      expect(results[0].targetId).toBe('nb-tgt-1');
+      // Should not call createNotebook because target notebook already exists
+      expect(mockClient.createNotebook).not.toHaveBeenCalled();
+
+      // batchCreateNotebookSources should be called with ONLY 1 payload (the new source), NOT 2!
+      expect(mockClient.batchCreateNotebookSources).toHaveBeenCalledTimes(1);
+      const batchArgs = vi.mocked(mockClient.batchCreateNotebookSources).mock.calls[0];
+      expect(batchArgs[0]).toBe('nb-tgt-1');
+      const payloads = batchArgs[1];
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0].textContent?.sourceName).toBe('New Whitepaper.pdf');
+
+      // Both sources should be accounted for in details
+      expect(results[0].details?.sourcesCount).toBe(2);
+      expect(results[0].details?.sourcesRestored).toBe(2);
+      expect(results[0].details?.sourcesFailed).toBe(0);
     });
   });
 });

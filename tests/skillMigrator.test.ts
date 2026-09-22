@@ -307,5 +307,58 @@ describe('SkillMigrator', () => {
         deTargetEnv
       );
     });
+
+    it('should respect userFilter in Phase 1 (Agent Registry) and populate originalOwner and targetOwner', async () => {
+      const { isSkillOwnedByUser } = await import('../src/engines/skillMigrator.js');
+
+      const adminSkill: RegistrySkill = {
+        name: 'projects/source-project/locations/global/skills/admin-skill',
+        skillId: 'admin-skill',
+        displayName: 'Admin Custom Skill',
+        type: 'SIMPLE',
+        publisher: 'admin@wdufrin.altostrat.com'
+      };
+
+      const unownedSkill: RegistrySkill = {
+        name: 'projects/source-project/locations/global/skills/acme-skill',
+        skillId: 'acme-skill',
+        displayName: 'Acme Sales Advisor',
+        type: 'SIMPLE'
+      };
+
+      const bryanSkill: RegistrySkill = {
+        name: 'projects/source-project/locations/global/skills/bryan-skill',
+        skillId: 'bryan-skill',
+        displayName: 'Bryan Weather Skill',
+        type: 'SIMPLE',
+        publisher: 'bryankelly@company.com'
+      };
+
+      expect(isSkillOwnedByUser(adminSkill, ['admin@wdufrin.altostrat.com'])).toBe(true);
+      expect(isSkillOwnedByUser(bryanSkill, ['admin@wdufrin.altostrat.com'])).toBe(false);
+      expect(isSkillOwnedByUser(unownedSkill, ['admin@wdufrin.altostrat.com'])).toBe(false);
+
+      vi.mocked(mockClient.listSkills).mockResolvedValue([adminSkill, unownedSkill, bryanSkill]);
+      vi.mocked(mockClient.getSkill).mockImplementation(async (name, env) => {
+        if (env.projectId === targetEnv.projectId) throw new Error('404 Not Found');
+        return adminSkill;
+      });
+      vi.mocked(mockClient.listSkillRevisions).mockResolvedValue([sampleRevision]);
+      vi.mocked(mockClient.createSkill).mockResolvedValue({} as any);
+
+      const results = await skillMigrator.migrateSkills(
+        sourceEnv,
+        targetEnv,
+        { dryRun: false, userFilter: ['admin@wdufrin.altostrat.com'] },
+        { 'admin@wdufrin.altostrat.com': 'admin@target.altostrat.com' }
+      );
+
+      // Only adminSkill should be migrated
+      expect(results).toHaveLength(1);
+      expect(results[0].displayName).toBe('Admin Custom Skill');
+      expect(results[0].originalOwner).toBe('admin@wdufrin.altostrat.com');
+      expect(results[0].targetOwner).toBe('admin@target.altostrat.com');
+      expect(mockClient.createSkill).toHaveBeenCalledTimes(1);
+    });
   });
 });

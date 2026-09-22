@@ -93,7 +93,8 @@ sessionsRouter.get('/sessions/answer', async (req, res) => {
     }
     const config = getDynamicConfig(req);
     const migrator = new SessionMigrator(config);
-    const answer = await migrator.getAnswer(resourceName);
+    const userEmail = (req.query.userEmail as string) || (req.query.userPseudoId as string);
+    const answer = await migrator.getAnswer(resourceName, userEmail);
     return res.status(200).json({ answer });
   } catch (err: any) {
     return res.status(500).json({ error: 'GetAnswerFailed', message: err.message });

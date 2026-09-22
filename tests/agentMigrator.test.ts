@@ -176,4 +176,28 @@ describe('AgentMigrator Engine', () => {
     // Unshared agents MUST NOT be patched with scope: ALL_USERS
     expect(patchSpy).not.toHaveBeenCalled();
   });
+
+  it('should not match user filter when user is merely an agentUser and an explicit owner exists', () => {
+    const sharedAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/weather-agent',
+      displayName: 'Get Current Weather',
+      iamPolicy: {
+        bindings: [
+          {
+            role: 'roles/discoveryengine.agentOwner',
+            members: ['user:bryankelly@company.com']
+          },
+          {
+            role: 'roles/discoveryengine.agentUser',
+            members: ['user:admin@wdufrin.altostrat.com']
+          }
+        ]
+      }
+    };
+
+    // bryankelly owns the agent
+    expect(migrator.isAgentOwnedByUser(sharedAgent, ['bryankelly@company.com'])).toBe(true);
+    // admin is only a user, NOT the owner, so filtering to admin must return false
+    expect(migrator.isAgentOwnedByUser(sharedAgent, ['admin@wdufrin.altostrat.com'])).toBe(false);
+  });
 });
