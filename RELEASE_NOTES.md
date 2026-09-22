@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
-## Release Notes — Version 1.5.5
+## Release Notes — Version 1.5.7
 
-**Release Date:** September 18, 2026  
+**Release Date:** September 22, 2026  
 **License:** Apache-2.0  
 **Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
 
@@ -9,44 +9,46 @@
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.5** introduces **CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`)**, an interactive **Source-to-Destination User Identity Mapping Report (`📊 Mapping Report`)** with collision and unmapped-user auditing, **Okta 2FA / MFA Compatibility & Browser Session Extractor**, case-insensitive identity lookup across all migration engines, and **285 automated tests passing at 100%**.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introduces **Resilient Multi-User Chat History Migration** with full session hydration (`getSession` with `includeAnswerDetails=true`) eliminating 404 errors on unroutable `assistAnswers` endpoints, **Authentic Companion-Turn Deduplication** preserving real Gemini responses and citations, **Target Duplicate Collision Prevention** via `source-session-id` tracking labels, **Strict Targeted User Filtering** on chat sessions, **Notebook Studio Source Deduplication**, and **307 automated tests passing at 100%**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 📊 CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`) & Mapping Report
-* **1-Click CSV Upload & 2-Column Paste**: Upload `.csv`/`.tsv`/`.txt` files or paste 2-column mappings (`first.last@XXXX.com,849201@YYYY.com`) directly in the User Selection & Identity Mapping Table. Supports comma, tab, semicolon, pipe, and arrow (`->`, `=>`) delimiters plus automatic domain appending for bare IDs.
-* **Interactive Mapping Report (`📊 Mapping Report`)**: Displays 5 real-time KPI cards (**Total Users**, **CSV / 1:1 Mapped**, **Domain Rule Mapped**, **Unmapped Warning**, **Target ID Collisions**), filter/search controls, and `.CSV` / `.JSON` audit report exports.
-* **Case-Insensitive Engine Lookup & Final Report Section 2b**: Added `IdentityMappingService.lookupTargetIdentity` across all 5 migration engines (`NotebookMigrator`, `AgentMigrator`, `SessionMigrator`, `MemoryMigrator`, `SkillMigrator`) and Section `2b. User Identity Mapping Report` in the final Markdown report.
+#### 1. 💬 Resilient Multi-User Chat History Migration & Full Session Hydration
+* **404 Elimination on Discovery Engine Assist Answers**: The Google Discovery Engine API Spanner model does not expose `assistAnswers` as publicly routable sub-resources. v1.5.7 implements single-flight session hydration (`getSession(sessionName, userEmail)`) querying `GET /v1alpha/{session}?includeAnswerDetails=true` with in-memory caching, eliminating all 404 errors during migration and artifact discovery.
+* **Full Turn Discovery View**: `SessionMigrator.listSourceSessions` now fetches sessions using `view=SESSION_VIEW_FULL` and per-user filtering (`filter=user_pseudo_id="..."`), providing complete conversational turns, citations, and interactive artifacts directly in-turn.
+* **Inline Artifact Discovery**: `ArtifactExtractor` scans inline `detailedAssistAnswer` and `detailedAnswer` before falling back to cached answers, dramatically speeding up artifact scans across large engines.
 
-#### 2. 🔐 Okta 2FA / MFA Compatibility & Browser Session Extractor
-* **Okta 2FA Guidance & OIDC/SAML Token Helper**: Added built-in support and guidance for Okta/Entra 2FA environments via OAuth 2.0 Client Credentials M2M or interactive browser session token extraction.
+#### 2. 🤖 Authentic Companion-Turn Deduplication
+* **Gemini Response Preservation**: In Discovery Engine, multi-turn conversations are recorded in split turns (query-only followed by query + `detailedAssistAnswer`). Turn consolidation now properly pairs companion turns so the authentic Gemini answer and reasoning are preserved, and fallback archived stubs are only applied when all turns in a session lack an answer.
+* **Thought & Citation Grounding**: Reasoning thoughts (`💭 *Reasoning:* ...`) and document citations (`[[section:...]]`) remain preserved and cleanly rendered in restored sessions.
 
-#### 3. 🔒 Least-Privilege DWD Impersonation Scopes & Token Cache Partitioning
-* **Restricted Scope Whitelisting Compatibility**: Defaults Google Workspace DWD impersonation to least-privilege Discovery Engine scopes with automatic step-down fallback and auth-mode token cache partitioning (`DWD`, `WIF`, `ADMIN`).
+#### 3. 🎯 Targeted User Session Filtering & Duplicate Collision Prevention
+* **Strict User Filtering**: Step 5 of `MigrationRunner` enforces strict filtering against `config.options.userFilter`, ensuring only sessions belonging to selected users are migrated rather than background engine sessions.
+* **Source Session Tracking Labels**: Restored sessions are stamped with `source-session-id:${srcSessionId}` labels and query fingerprints to guarantee idempotency and avoid duplicate session creation collisions in target engines.
 
-#### 4. 🧪 Automated Test Suite Stability (285/285 Tests Passing)
-* Full 285-test automated suite across 26 test suites running at 100% pass rate.
+#### 4. 📓 Notebook Studio Source Deduplication
+* **Duplicate Source Prevention**: Fixed source file restoration in `NotebookMigrator` to prevent duplicate source attachments during notebook re-creation in target workspaces.
+
+#### 5. 🧪 Automated Test Suite Stability (307/307 Tests Passing)
+* Full 307-test automated suite across 26 test suites running at 100% pass rate with zero skipped or fake assertions.
 
 ---
 
-### 📦 Upgrade Guide (v1.5.3 &rarr; v1.5.5)
+### 📦 Upgrade Guide (v1.5.5 &rarr; v1.5.7)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
    git pull origin main
    npm install
    ```
-2. **Recompile TypeScript**:
+2. **Verify Environment & Run Tests**:
    ```bash
-   npm run build
-   ```
-3. **Run Test Suite (All 285 Tests Passing)**:
-   ```bash
+   npm run typecheck
    npm test
    ```
-4. **Launch Web Console or Run Headless**:
+3. **Launch Platform**:
    ```bash
    # Web Console
    npm run ui
@@ -59,7 +61,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.5** introdu
 
 ### 📜 Version History
 
-* **v1.5.5** *(Current)*: CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`), interactive Mapping Report panel & CSV/JSON export, Okta 2FA compatibility, case-insensitive identity resolution across all engines, and 285 passing tests.
+* **v1.5.7** *(Current)*: Resilient Chat History Migration with full session hydration (`includeAnswerDetails=true`), companion-turn deduplication, target duplicate collision prevention, strict user session filtering, notebook source deduplication, and 307 passing tests.
+* **v1.5.5**: CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`), interactive Mapping Report panel & CSV/JSON export, Okta 2FA compatibility, case-insensitive identity resolution across all engines, and 285 passing tests.
 * **v1.5.3**: Least-privilege DWD impersonation scopes with multi-tier fallback, token cache partitioning by auth mode, documentation and console version parity.
 * **v1.5.1**: Multi-project IAM wizard and setup generator, hardened WiF impersonation live testing, iframe sandbox security fix.
 * **v1.5.0**: Interactive Step 2 environment selector and bi-directional sync, streamlined Step 3 action bar, forensic SWE pagination and fail-closed auth hardening.

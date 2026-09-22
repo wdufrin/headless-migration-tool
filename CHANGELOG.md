@@ -5,6 +5,26 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.7] - 2026-09-22
+
+### Added
+- **Multi-User Chat History Migration & Full Session Hydration**:
+  - Implemented `SessionMigrator.getSession(sessionName, userEmail)` using `includeAnswerDetails=true` with single-flight session caching to resolve Discovery Engine 404 errors on `assistAnswers`.
+  - Re-routed `SessionMigrator.getAnswer` through session cache hydration instead of unroutable sub-resource HTTP calls.
+  - Added `view=SESSION_VIEW_FULL` and per-user filtering (`filter=user_pseudo_id="..."`) in `SessionMigrator.listSourceSessions`.
+  - Enhanced `migrateSession` turn deduplication to preserve authentic Gemini answers and citations across companion turns.
+  - Added `source-session-id:${srcSessionId}` labels and query fingerprinting to target session creation to prevent false duplicate collisions.
+  - Added strict user filtering in `MigrationRunner` Step 5 (`userFilter`).
+  - Added inline artifact extraction in `ArtifactExtractor` from `detailedAssistAnswer` and `detailedAnswer`.
+- **Notebook Studio Migration Deduplication**:
+  - Deduplicated source files in `NotebookMigrator` to prevent duplicate sources during notebook restoration.
+
+### Changed
+- Updated `ChatSessionTurn` and `ChatSession` interfaces with `detailedAssistAnswer`, `detailedAnswer`, and `labels` properties.
+- Expanded test suite to 307 passing automated tests across 26 test suites.
+
+---
+
 ## [1.5.5] - 2026-09-18
 
 ### Added

@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.5.5-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.7-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.5-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.7-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -14,6 +14,21 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.5.7
+
+* **💬 Resilient Chat History Migration & Full Session Hydration**:
+  * Resolved Discovery Engine 404 errors on unroutable `assistAnswers` endpoints by implementing single-flight session hydration (`getSession` with `includeAnswerDetails=true` and in-memory cache).
+  * In `listSourceSessions`, automatically requests `view=SESSION_VIEW_FULL` and per-user filtering (`filter=user_pseudo_id="..."`).
+  * Intelligent companion-turn deduplication preserves real Gemini responses and citations, eliminating premature archived placeholder stubs.
+  * Migrated sessions receive `source-session-id:${srcSessionId}` labels and query fingerprinting to prevent duplicate creation collisions in target engines.
+* **🎯 Targeted User Session Filtering & Notebook Source Deduplication**:
+  * Chat sessions are strictly filtered to configured users in `userFilter`, preventing background engine sessions from being loaded.
+  * Notebook studio migration deduplicates source files to prevent duplicate source entries during target re-creation.
+* **🧪 100% Passing Automated Tests (307/307 Tests)**:
+  * Full 307 automated tests passing across 26 test suites with zero skipped or stubbed tests.
 
 ---
 
