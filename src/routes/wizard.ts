@@ -1295,16 +1295,27 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
     // (`discoveryengine.notebooks.list` — the exact permission granted by `roles/discoveryengine.user`
     // and required to migrate user notebooks/sessions).
     try {
-      const notebooksProbeUrl = `https://discoveryengine.googleapis.com/v1alpha/projects/${testProject}/locations/global/notebooks:listRecentlyViewed?pageSize=1`;
-      const gcpRes = await fetch(notebooksProbeUrl, {
-        headers: {
-          'Authorization': `Bearer ${stsToken}`,
-          'x-goog-user-project': testProject
-        }
-      });
+      const requestedLoc = (req.body?.location || req.body?.sourceLocation || 'global').toLowerCase();
+      const candidateLocs = Array.from(new Set([requestedLoc, 'global', 'us', 'eu']));
+      let gcpRes: Response | null = null;
 
-      if (!gcpRes.ok) {
-        const errText = await gcpRes.text();
+      for (const loc of candidateLocs) {
+        const hostPrefix = loc === 'us' ? 'us-' : loc === 'eu' ? 'eu-' : '';
+        const notebooksProbeUrl = `https://${hostPrefix}discoveryengine.googleapis.com/v1alpha/projects/${testProject}/locations/${loc}/notebooks:listRecentlyViewed?pageSize=1`;
+        const attemptRes = await fetch(notebooksProbeUrl, {
+          headers: {
+            'Authorization': `Bearer ${stsToken}`,
+            'x-goog-user-project': testProject
+          }
+        });
+        gcpRes = attemptRes;
+        if (attemptRes.ok || attemptRes.status === 403) {
+          break;
+        }
+      }
+
+      if (!gcpRes || !gcpRes.ok) {
+        const errText = gcpRes ? await gcpRes.text() : 'No response from Discovery Engine';
         let errMsg = errText;
         try {
           const errJson = JSON.parse(errText);

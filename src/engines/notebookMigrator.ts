@@ -94,20 +94,59 @@ export class NotebookMigrator {
 
   /**
    * Extracts readable text content from rich text / Tailwind doc structures.
+   * Supports Studio Notes (body.content[].paragraph.elements[].textRun.content)
+   * as well as Notebook Source tailwindDoc structures (chunks[], text, sections[], etc.).
    */
   private extractTextFromTailwindDoc(doc: any): string {
-    if (!doc?.body?.content) return '';
+    if (!doc) return '';
+    if (typeof doc === 'string') return doc;
+
     let text = '';
-    for (const block of doc.body.content) {
-      if (block.paragraph?.elements) {
-        for (const element of block.paragraph.elements) {
-          if (element.textRun?.content) {
-            text += element.textRun.content;
+
+    // 1. Direct text/content string on tailwindDoc
+    if (typeof doc.text === 'string' && doc.text.trim()) {
+      text += doc.text;
+    } else if (typeof doc.content === 'string' && doc.content.trim()) {
+      text += doc.content;
+    }
+
+    // 2. Chunks array (common in NotebookLM getNotebookSource responses)
+    if (Array.isArray(doc.chunks)) {
+      for (const chunk of doc.chunks) {
+        if (typeof chunk === 'string') {
+          text += chunk + '\n';
+        } else if (chunk && typeof chunk === 'object') {
+          const chunkText = chunk.text || chunk.content || chunk.rawText || chunk.markdown || '';
+          if (typeof chunkText === 'string' && chunkText) {
+            text += chunkText + '\n';
+          } else if (chunk.body || chunk.paragraph) {
+            text += this.extractTextFromTailwindDoc(chunk) + '\n';
           }
         }
       }
     }
-    return text;
+
+    // 3. Sections / blocks array
+    const blockList = doc.body?.content || doc.sections || doc.blocks || (Array.isArray(doc.content) ? doc.content : undefined);
+    if (Array.isArray(blockList)) {
+      for (const block of blockList) {
+        if (typeof block === 'string') {
+          text += block + '\n';
+        } else if (block?.paragraph?.elements) {
+          for (const element of block.paragraph.elements) {
+            if (element.textRun?.content) {
+              text += element.textRun.content;
+            }
+          }
+        } else if (typeof block?.text === 'string') {
+          text += block.text + '\n';
+        } else if (typeof block?.content === 'string') {
+          text += block.content + '\n';
+        }
+      }
+    }
+
+    return text.trim();
   }
 
   /**
@@ -248,8 +287,15 @@ export class NotebookMigrator {
       };
     }
 
-    // Fallback: Check for inline text or tailwindDoc text
-    const textContent = source.content || source.text || this.extractTextFromTailwindDoc(source.tailwindDoc);
+    // Fallback: Check for inline text or tailwindDoc text across all possible API response fields
+    const textContent =
+      source.content ||
+      source.text ||
+      source.rawText ||
+      source.markdown ||
+      source.userContent?.textContent?.content ||
+      source.documentContent?.content ||
+      this.extractTextFromTailwindDoc(source.tailwindDoc || source.tailwindDocContent || (source.chunks ? { chunks: source.chunks } : undefined));
     if (textContent) {
       return {
         textContent: {
