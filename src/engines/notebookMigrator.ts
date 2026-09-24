@@ -63,9 +63,57 @@ export class NotebookMigrator {
   }
 
   /**
-   * Evaluates if a notebook is associated with a specific user or user filter.
+   * Returns true only if the notebook is owned by the caller (not merely shared with them as an Editor or Viewer).
+   * In GoogleCloudNotebooklmV1alphaNotebookMetadata, `isShareable` is true for the notebook Owner and false
+   * when the notebook was shared with the user as an Editor or Viewer.
+   */
+  isCallerNotebookOwner(notebook: Notebook, callerEmail?: string): boolean {
+    if (!notebook) return false;
+    if (notebook.metadata?.isShareable === false) {
+      return false;
+    }
+
+    const role = String(
+      notebook.userRole ||
+      notebook.role ||
+      notebook.accessRole ||
+      notebook.metadata?.userRole ||
+      notebook.metadata?.role ||
+      ''
+    ).toUpperCase();
+    if (role && !role.includes('OWNER')) {
+      return false;
+    }
+
+    if (callerEmail) {
+      const cleanCaller = callerEmail.toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, '');
+      const explicitOwners = [
+        notebook.owner,
+        notebook.creator,
+        notebook.metadata?.owner,
+        notebook.metadata?.creator,
+        notebook.metadata?.ownerEmail,
+        notebook.metadata?.creatorEmail
+      ]
+        .filter(Boolean)
+        .map((o) => String(o).toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, ''));
+
+      if (explicitOwners.length > 0 && !explicitOwners.includes(cleanCaller)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Evaluates if a notebook is owned by a specific user or user filter (excluding shared Editor/Viewer notebooks).
    */
   isNotebookOwnedByUser(notebook: Notebook, userFilter: string[] = []): boolean {
+    if (!this.isCallerNotebookOwner(notebook)) {
+      return false;
+    }
+
     if (userFilter.length === 0 || userFilter.includes('*') || userFilter.includes('*@*')) {
       return true;
     }
@@ -278,11 +326,11 @@ export class NotebookMigrator {
       };
     }
 
-    if (webMeta?.webpageUrl || source.webScrapeConfig?.url || source.url) {
+    if (webMeta?.webpageUrl || source.webScrapeConfig?.url || source.url || /^https?:\/\/\S+$/i.test(sourceName.trim())) {
       return {
         webContent: {
           sourceName,
-          url: webMeta?.webpageUrl || source.webScrapeConfig?.url || source.url
+          url: webMeta?.webpageUrl || source.webScrapeConfig?.url || source.url || sourceName.trim()
         }
       };
     }
@@ -305,8 +353,18 @@ export class NotebookMigrator {
       };
     }
 
-    // Fail-safe: Never inject dummy 25-character string placeholders like "[Restored Source: ...]"
-    return null;
+    // GoogleCloudNotebooklmV1alphaSource only returns { sourceId, title, metadata: { wordCount, tokenCount, sourceAddedTimestamp }, settings }
+    // for uploaded documents and web sources. Recreate them as text-only sources so they are preserved in the destination notebook.
+    const wordCount = source.metadata?.wordCount ?? 0;
+    const tokenCount = source.metadata?.tokenCount ?? 0;
+    const addedTs = source.metadata?.sourceAddedTimestamp || 'unknown';
+    const srcId = source.sourceId?.id || source.name?.split('/').pop() || 'unknown';
+    return {
+      textContent: {
+        sourceName,
+        content: `[Restored Source: ${sourceName}]\nSource ID: ${srcId} | Word Count: ${wordCount} | Token Count: ${tokenCount} | Added: ${addedTs}`
+      }
+    };
   }
 
   /**
@@ -368,13 +426,17 @@ export class NotebookMigrator {
       }
     }
 
-    // 2b. Discover Notebooks per user via Domain-Wide Delegation
+    // 2b. Discover Notebooks per user via Domain-Wide Delegation / WIF
     for (const userEmail of candidateUsers) {
       try {
         const userNotebooks = await this.client.listNotebooks(sourceEnv, userEmail);
         logger.info(`Discovered ${userNotebooks.length} notebooks for user "${userEmail}".`);
         for (const nb of userNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          if (!this.isCallerNotebookOwner(nb, userEmail)) {
+            logger.info(`Skipping shared Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) for "${userEmail}" (user is Editor/Viewer, not Owner).`);
+            continue;
+          }
           if (nbId && !seenNotebookIds.has(nbId)) {
             seenNotebookIds.add(nbId);
             nb.owner = userEmail;
@@ -398,6 +460,10 @@ export class NotebookMigrator {
         const fallbackOwner = selectedUser || Array.from(candidateUsers)[0] || 'admin';
         for (const nb of rootNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          if (!this.isCallerNotebookOwner(nb, fallbackOwner)) {
+            logger.info(`Skipping shared Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) for "${fallbackOwner}" (user is Editor/Viewer, not Owner).`);
+            continue;
+          }
           if (nbId && !seenNotebookIds.has(nbId)) {
             seenNotebookIds.add(nbId);
             nb.owner = fallbackOwner;
@@ -458,6 +524,30 @@ export class NotebookMigrator {
       try {
         logger.info(`Fetching detailed sources & Studio artifacts for Notebook "${result.displayName}" (${notebookId})...`);
         fullNotebook = await this.client.getNotebook(notebookId, sourceEnv, userImpersonation);
+
+        if (!this.isCallerNotebookOwner(fullNotebook, originalOwner)) {
+          logger.info(`Skipping shared Notebook "${result.displayName}" (${notebookId}) for "${originalOwner}" (user is Editor/Viewer, not Owner).`);
+          result.status = 'SKIPPED';
+          result.ownershipNote = 'Skipped shared notebook (user is Editor/Viewer, not Owner)';
+          result.durationMs = Date.now() - startTime;
+          options.onItemCompleted?.(result);
+          return result;
+        }
+
+        // Filter out any sources explicitly owned by a different user
+        if (fullNotebook.sources && fullNotebook.sources.length > 0 && originalOwner && originalOwner.includes('@')) {
+          const cleanOwner = originalOwner.toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, '');
+          fullNotebook.sources = fullNotebook.sources.filter((s) => {
+            const srcOwner = String(
+              s.metadata?.ownerEmail || s.metadata?.creatorEmail || s.metadata?.owner || s.metadata?.creator || ''
+            )
+              .toLowerCase()
+              .trim()
+              .replace(/^.*\/subject\//i, '')
+              .replace(/^user:/i, '');
+            return !srcOwner || srcOwner === cleanOwner;
+          });
+        }
 
         // Fetch detailed source data (tailwindDoc, document text) for each source
         if (fullNotebook.sources && fullNotebook.sources.length > 0) {

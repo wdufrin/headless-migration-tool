@@ -309,9 +309,16 @@ export class DiscoveryEngineClient {
     );
     if (forUserEmail) {
       for (const nb of notebooks) {
-        nb.owner = forUserEmail;
         if (!nb.metadata) nb.metadata = {};
-        nb.metadata.ownerEmail = forUserEmail;
+        const role = String(nb.userRole || nb.role || nb.accessRole || nb.metadata.userRole || nb.metadata.role || '').toUpperCase();
+        const isNonOwnerRole = Boolean(role && !role.includes('OWNER'));
+        const isSharedWithCallerAsNonOwner = nb.metadata.isShareable === false || isNonOwnerRole;
+        const existingOwner = nb.owner || nb.creator || nb.metadata.ownerEmail || nb.metadata.creatorEmail || nb.metadata.owner || nb.metadata.creator;
+
+        if (!isSharedWithCallerAsNonOwner && !existingOwner) {
+          nb.owner = forUserEmail;
+          nb.metadata.ownerEmail = forUserEmail;
+        }
       }
     }
     return notebooks;

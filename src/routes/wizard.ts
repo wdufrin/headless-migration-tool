@@ -1345,16 +1345,17 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
           );
         }
 
+        const statusCode = gcpRes?.status || 500;
         if (saImpersonationStatus.attempted && saImpersonationStatus.success) {
           remediation.push(
-            `NOTE: Service Account impersonation (${saEmail}) succeeded, but Service Accounts CANNOT read or write user-scoped NotebookLM notebooks. The direct workforce user token (${principalString}) failed notebooks:listRecentlyViewed with HTTP ${gcpRes.status}.`
+            `NOTE: Service Account impersonation (${saEmail}) succeeded, but Service Accounts CANNOT read or write user-scoped NotebookLM notebooks. The direct workforce user token (${principalString}) failed notebooks:listRecentlyViewed with HTTP ${statusCode}.`
           );
         }
 
         return res.status(200).json({
           success: false,
           error: subjectCheck.verdict === 'MISMATCH' ? 'WorkforceSubjectMappingMismatch' : 'WorkforcePrincipalNotAuthorized',
-          message: `STS token was minted for workforce user "${targetUser}"${saImpersonationStatus.success ? ` (and SA "${saEmail}" impersonation succeeded)` : ''}, BEFORE migration can work: direct user call to Discovery Engine (discoveryengine.notebooks.list) in project "${testProject}" FAILED (${gcpRes.status}): ${errMsg}`,
+          message: `STS token was minted for workforce user "${targetUser}"${saImpersonationStatus.success ? ` (and SA "${saEmail}" impersonation succeeded)` : ''}, BEFORE migration can work: direct user call to Discovery Engine (discoveryengine.notebooks.list) in project "${testProject}" FAILED (${statusCode}): ${errMsg}`,
           audience,
           tokenUrl,
           isWorkforcePool: isWorkforce,

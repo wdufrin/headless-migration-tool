@@ -33,6 +33,43 @@ describe('NotebookMigrator Engine', () => {
       expect(migrator.isNotebookOwnedByUser(sampleNotebook, [])).toBe(true);
       expect(migrator.isNotebookOwnedByUser(sampleNotebook, ['*'])).toBe(true);
     });
+
+    it('should reject shared Editor/Viewer notebooks where metadata.isShareable is false or role is non-OWNER', () => {
+      const sharedEditorNotebook: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-shared-1',
+        title: 'Team Shared Notebook',
+        metadata: {
+          isShared: true,
+          isShareable: false,
+          ownerEmail: 'alice@fedex.com'
+        }
+      };
+      const roleEditorNotebook: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-shared-2',
+        title: 'Role Editor Notebook',
+        userRole: 'EDITOR',
+        metadata: {
+          isShared: true,
+          isShareable: true
+        }
+      };
+      const ownedSharedNotebook: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-owned-1',
+        title: 'My Shared Notebook (Owner)',
+        metadata: {
+          isShared: true,
+          isShareable: true,
+          ownerEmail: 'alice@fedex.com'
+        }
+      };
+
+      expect(migrator.isCallerNotebookOwner(sharedEditorNotebook, 'alice@fedex.com')).toBe(false);
+      expect(migrator.isNotebookOwnedByUser(sharedEditorNotebook, ['alice@fedex.com'])).toBe(false);
+      expect(migrator.isCallerNotebookOwner(roleEditorNotebook, 'alice@fedex.com')).toBe(false);
+      expect(migrator.isNotebookOwnedByUser(roleEditorNotebook, ['alice@fedex.com'])).toBe(false);
+      expect(migrator.isCallerNotebookOwner(ownedSharedNotebook, 'alice@fedex.com')).toBe(true);
+      expect(migrator.isNotebookOwnedByUser(ownedSharedNotebook, ['alice@fedex.com'])).toBe(true);
+    });
   });
 
   describe('Source Payload Mapping', () => {
@@ -108,16 +145,40 @@ describe('NotebookMigrator Engine', () => {
       expect(mapped.textContent.content).toBe('Chapter 1: The Nightmare Painter.\nNikaro walked down the neon-lit street.');
     });
 
-    it('should return null instead of a 25-character placeholder dummy string when content is missing (Fix 2.4)', () => {
-      const emptySource: NotebookSource = {
-        title: 'Opaque_Encrypted_Document.pdf',
+    it('should recreate metadata-only v1alpha sources as textContent with source metadata', () => {
+      const metadataOnlySource: NotebookSource = {
+        sourceId: { id: '73ad2b63-5747-41a8-b488-a74f141caab5' },
+        title: 'Agent Designer overview | Gemini Enterprise | Google Cloud Documentation',
         metadata: {
-          originalSourceContentType: 'DOCUMENT'
+          wordCount: 969,
+          tokenCount: 1577,
+          sourceAddedTimestamp: '2026-05-14T12:11:15.762355Z'
         }
       };
 
-      const mapped = migrator.mapSourceToPayload(emptySource);
-      expect(mapped).toBeNull();
+      const mapped = migrator.mapSourceToPayload(metadataOnlySource);
+      expect(mapped).not.toBeNull();
+      expect(mapped.textContent).toBeDefined();
+      expect(mapped.textContent.sourceName).toBe('Agent Designer overview | Gemini Enterprise | Google Cloud Documentation');
+      expect(mapped.textContent.content).toContain('Word Count: 969');
+      expect(mapped.textContent.content).toContain('Token Count: 1577');
+    });
+
+    it('should extract text from tailwindDoc.chunks when present', () => {
+      const chunkedSource: NotebookSource = {
+        title: 'Architecture_Spec.pdf',
+        tailwindDoc: {
+          chunks: [
+            { text: 'Section 1: Overview.' },
+            { content: 'Section 2: Security Controls.' }
+          ]
+        }
+      };
+
+      const mapped = migrator.mapSourceToPayload(chunkedSource);
+      expect(mapped.textContent).toBeDefined();
+      expect(mapped.textContent.sourceName).toBe('Architecture_Spec.pdf');
+      expect(mapped.textContent.content).toBe('Section 1: Overview.\nSection 2: Security Controls.');
     });
   });
 
