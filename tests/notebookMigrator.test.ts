@@ -416,5 +416,94 @@ describe('NotebookMigrator Engine', () => {
       expect(results[0].details?.sourcesRestored).toBe(2);
       expect(results[0].details?.sourcesFailed).toBe(0);
     });
+
+    it('should disambiguate owned-shared notebooks (get.isShared=false) from editor/viewer shared notebooks (get.isShared=true) and emit [DIAGNOSTIC] logs in debugMode', async () => {
+      const sourceEnv: EnvironmentConfig = {
+        projectId: 'source-us',
+        appLocation: 'us',
+        collectionId: 'default_collection',
+        appId: 'app-src',
+        assistantId: 'default_assistant'
+      };
+      const targetEnv: EnvironmentConfig = {
+        projectId: 'target-us',
+        appLocation: 'us',
+        collectionId: 'default_collection',
+        appId: 'app-tgt',
+        assistantId: 'default_assistant'
+      };
+
+      // In regional v1alpha (`us`), listNotebooks omits `userRole` and sets `isShared: true` for all shared notebooks
+      const listPrivateOwned: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-private-owned',
+        notebookId: 'nb-private-owned',
+        title: 'Private Owned Notebook',
+        metadata: { isShared: false, isShareable: true }
+      };
+      const listSharedOwned: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-shared-owned',
+        notebookId: 'nb-shared-owned',
+        title: 'Owned Notebook Shared With Team',
+        metadata: { isShared: true, isShareable: true }
+      };
+      const listSharedEditor: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-shared-editor',
+        notebookId: 'nb-shared-editor',
+        title: 'Colleague Notebook Shared With User As Editor',
+        metadata: { isShared: true, isShareable: true }
+      };
+
+      const mockClient = {
+        listNotebooks: vi.fn().mockImplementation(async (env) => {
+          if (env.projectId === 'source-us') {
+            return [listPrivateOwned, listSharedOwned, listSharedEditor];
+          }
+          return [];
+        }),
+        getNotebook: vi.fn().mockImplementation(async (id) => {
+          if (id === 'nb-shared-owned') {
+            // GetNotebook returns isShared: false for the Owner of a shared notebook!
+            return {
+              ...listSharedOwned,
+              metadata: { isShared: false, isShareable: true },
+              premiumFeatureInfo: { canEditAdvancedSettings: true },
+              sources: []
+            };
+          }
+          if (id === 'nb-shared-editor') {
+            // GetNotebook returns isShared: true for an Editor/Viewer!
+            return {
+              ...listSharedEditor,
+              metadata: { isShared: true, isShareable: true },
+              premiumFeatureInfo: { canEditAdvancedSettings: true },
+              sources: []
+            };
+          }
+          return { ...listPrivateOwned, sources: [] };
+        }),
+        createNotebook: vi.fn().mockImplementation(async (nb) => ({
+          ...nb,
+          name: `projects/456/locations/us/notebooks/new-${nb.notebookId || 'id'}`
+        })),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({ sources: [] }),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listAudioOverviews: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: true, debugMode: true, userFilter: ['owner@company.com'] } as any
+      );
+
+      // Should migrate BOTH the private owned notebook AND the owned-shared notebook, while skipping the editor notebook!
+      expect(results).toHaveLength(2);
+      const migratedTitles = results.map(r => r.displayName);
+      expect(migratedTitles).toContain('Private Owned Notebook');
+      expect(migratedTitles).toContain('Owned Notebook Shared With Team');
+      expect(migratedTitles).not.toContain('Colleague Notebook Shared With User As Editor');
+    });
   });
 });

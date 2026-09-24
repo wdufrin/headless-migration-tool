@@ -37,6 +37,14 @@ export class Logger {
     this.level = level;
   }
 
+  getLevel(): LogLevel {
+    return this.level;
+  }
+
+  isDebugEnabled(): boolean {
+    return LOG_LEVELS[this.level] <= LOG_LEVELS.DEBUG;
+  }
+
   subscribe(listener: (level: LogLevel, line: string, message: string) => void): () => void {
     this.listeners.push(listener);
     return () => {
@@ -60,27 +68,33 @@ export class Logger {
       .replace(/"access_token":\s*"[^"]+"/gi, '"access_token": "[REDACTED]"');
   }
 
+  private formatMessageWithMeta(message: string, meta?: any): string {
+    const metaStr = meta ? ` | ${this.redact(JSON.stringify(meta))}` : '';
+    return `${this.redact(message)}${metaStr}`;
+  }
+
   private format(level: LogLevel, message: string, meta?: any): string {
     const timestamp = new Date().toISOString();
-    const metaStr = meta ? ` | ${this.redact(JSON.stringify(meta))}` : '';
-    return `[${timestamp}] [${level}] ${this.redact(message)}${metaStr}`;
+    return `[${timestamp}] [${level}] ${this.formatMessageWithMeta(message, meta)}`;
   }
 
   debug(message: string, meta?: any) {
     if (LOG_LEVELS[this.level] <= LOG_LEVELS.DEBUG) {
+      const fullMsg = this.formatMessageWithMeta(message, meta);
       const line = this.format('DEBUG', message, meta);
       console.debug(line);
       this.logBuffer.push(line);
-      this.notify('DEBUG', line, message);
+      this.notify('DEBUG', line, fullMsg);
     }
   }
 
   info(message: string, meta?: any) {
     if (LOG_LEVELS[this.level] <= LOG_LEVELS.INFO) {
+      const fullMsg = this.formatMessageWithMeta(message, meta);
       const line = this.format('INFO', message, meta);
       console.info(line);
       this.logBuffer.push(line);
-      this.notify('INFO', line, message);
+      this.notify('INFO', line, fullMsg);
     }
   }
 

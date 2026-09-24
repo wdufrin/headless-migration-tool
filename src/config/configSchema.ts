@@ -49,6 +49,7 @@ export const MigrationOptionsSchema = z.object({
   allowOverwrite: z.boolean().default(false),
   resumeFrom: z.string().optional(),
   skipIds: z.array(z.string()).default([]),
+  debugMode: z.boolean().optional().default(false),
   logLevel: z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR']).default('INFO')
 }).default({});
 

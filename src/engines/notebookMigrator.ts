@@ -77,6 +77,9 @@ export class NotebookMigrator {
       ''
     ).toUpperCase().trim();
 
+    if (meta?.isOwnerVerifiedByGet === true) {
+      return 'OWNER (shared by owner: list.isShared=true, get.isShared=false)';
+    }
     if (rawRole === 'PROJECT_ROLE_OWNER' || rawRole === 'OWNER' || rawRole.endsWith('_OWNER')) {
       return `OWNER (${rawRole})`;
     }
@@ -92,6 +95,9 @@ export class NotebookMigrator {
     if (meta?.isShareable === false) {
       return 'EDITOR/VIEWER (isShareable=false)';
     }
+    if (meta?.inferredRoleFromGet) {
+      return String(meta.inferredRoleFromGet);
+    }
     if (meta?.isShared === true) {
       return 'SHARED_NON_OWNER (isShared=true, userRole=UNSPECIFIED)';
     }
@@ -102,17 +108,19 @@ export class NotebookMigrator {
   }
 
   /**
-   * Mirrors `isNotebookOwnedByUser` from Backup_Restore_App (`src/BackupPage.tsx:492-548`).
-   * Determines whether the notebook is owned by the user (excluding shared Editor/Viewer notebooks):
-   * 1. Explicit `metadata.userRole`: if present, must be `PROJECT_ROLE_OWNER` (rejects `PROJECT_ROLE_WRITER`, `PROJECT_ROLE_READER`, etc.).
-   * 2. Explicit `metadata.isShareable === false`: rejects non-owner shared notebooks.
-   * 3. Explicit owner/creator email fields on the notebook (when provided by the API).
-   * 4. Fallback (from `Backup_Restore_App` lines 539-547): if `metadata.isShared === false`, it is private to the user who fetched it (`true`);
-   *    if `metadata.isShared === true` (and `userRole` is not `PROJECT_ROLE_OWNER`), returns `false` because `v1alpha` omits `userRole` in regional endpoints and sets `isShareable=true` for shared notebooks.
+   * Mirrors `isNotebookOwnedByUser` from Backup_Restore_App (`src/BackupPage.tsx:492-548`)
+   * plus `GetNotebook` (`GET .../notebooks/{id}`) disambiguation when `listRecentlyViewed`
+   * omits `userRole` in regional (`us`/`eu`) endpoints:
+   * - In `listRecentlyViewed`, `isShared: true` means the notebook has collaborators (true for BOTH Owner-who-shared and Editor/Viewer).
+   * - In `getNotebook`, `isShared: false` is returned for the Owner (`PROJECT_ROLE_OWNER`), while `isShared: true` is returned for Editor/Viewer.
    */
   isCallerNotebookOwner(notebook: Notebook, callerEmail?: string): boolean {
     if (!notebook) return false;
     const meta = notebook.metadata;
+
+    if (meta?.isOwnerVerifiedByGet === true) {
+      return true;
+    }
 
     // 1. Standard project role check (from Backup_Restore_App BackupPage.tsx:508)
     const role = String(
@@ -528,15 +536,86 @@ export class NotebookMigrator {
     }
 
     // 2b. Discover Notebooks per user via Domain-Wide Delegation / WIF
+    const isDebug = Boolean((options as any).debugMode) || logger.isDebugEnabled();
     for (const userEmail of candidateUsers) {
       try {
         const userNotebooks = await this.client.listNotebooks(sourceEnv, userEmail);
         logger.info(`Discovered ${userNotebooks.length} notebooks for user "${userEmail}".`);
         for (const nb of userNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          const listSnapshot = nb.metadata ? { ...nb.metadata } : {};
+          let getProbeNotebook: Notebook | undefined;
+          const listRole = String(
+            nb.metadata?.userRole ||
+            nb.userRole ||
+            nb.role ||
+            nb.accessRole ||
+            nb.metadata?.role ||
+            ''
+          ).toUpperCase().trim();
+
+          // When regional v1alpha (`us`/`eu`) omits `userRole` in `listRecentlyViewed`,
+          // `list.metadata.isShared = true` applies to BOTH:
+          //   (a) Notebooks the user OWNS and shared with others, AND
+          //   (b) Notebooks shared WITH the user as Editor/Viewer.
+          // Calling `getNotebook` (`GET .../notebooks/{id}`) disambiguates them because
+          // `GetNotebook` returns `metadata.isShared: false` for the Owner (`PROJECT_ROLE_OWNER`)
+          // and `metadata.isShared: true` for Editors/Viewers.
+          if (!listRole && nb.metadata?.isShared === true && nbId) {
+            try {
+              getProbeNotebook = await this.client.getNotebook(nbId, sourceEnv, userEmail);
+              const getRole = String(
+                getProbeNotebook?.metadata?.userRole ||
+                getProbeNotebook?.userRole ||
+                getProbeNotebook?.role ||
+                ''
+              ).toUpperCase().trim();
+              const getIsShared = getProbeNotebook?.metadata?.isShared;
+              const canEdit = Boolean((getProbeNotebook as any)?.premiumFeatureInfo?.canEditAdvancedSettings);
+
+              if (!nb.metadata) nb.metadata = {};
+              if (getRole === 'PROJECT_ROLE_OWNER' || getRole === 'OWNER' || getRole.endsWith('_OWNER') || getIsShared === false) {
+                nb.metadata.isOwnerVerifiedByGet = true;
+                if (getRole) nb.metadata.userRole = getRole;
+                if (getProbeNotebook?.sources && (!nb.sources || nb.sources.length === 0)) {
+                  nb.sources = getProbeNotebook.sources;
+                }
+              } else {
+                nb.metadata.inferredRoleFromGet = canEdit
+                  ? 'EDITOR (shared with user: list.isShared=true, get.isShared=true, canEdit=true)'
+                  : 'VIEWER (shared with user: list.isShared=true, get.isShared=true, canEdit=false)';
+              }
+            } catch (probeErr: any) {
+              if (isDebug) {
+                logger.info(`[DIAGNOSTIC] getNotebook ownership probe failed for "${nb.title || nbId}" (${nbId}): ${probeErr.message}`);
+              }
+            }
+          }
+
           const roleLabel = this.describeNotebookAccessRole(nb);
-          const isSharedFlag = Boolean(nb.metadata?.isShared);
-          if (!this.isCallerNotebookOwner(nb, userEmail)) {
+          const isSharedFlag = Boolean(listSnapshot.isShared ?? nb.metadata?.isShared);
+          const isOwner = this.isCallerNotebookOwner(nb, userEmail);
+
+          if (isDebug) {
+            const listDiag = {
+              userRole: listSnapshot.userRole ?? 'UNSPECIFIED',
+              isShared: listSnapshot.isShared ?? 'UNSPECIFIED',
+              isShareable: listSnapshot.isShareable ?? 'UNSPECIFIED',
+              createTime: listSnapshot.createTime,
+              lastViewed: listSnapshot.lastViewed,
+              canEditAdvancedSettings: (nb as any).premiumFeatureInfo?.canEditAdvancedSettings
+            };
+            const getDiag = getProbeNotebook ? {
+              userRole: getProbeNotebook.metadata?.userRole ?? 'UNSPECIFIED',
+              isShared: getProbeNotebook.metadata?.isShared ?? 'UNSPECIFIED',
+              isShareable: getProbeNotebook.metadata?.isShareable ?? 'UNSPECIFIED',
+              sourceCount: (getProbeNotebook.sources || []).length,
+              canEditAdvancedSettings: (getProbeNotebook as any).premiumFeatureInfo?.canEditAdvancedSettings
+            } : 'NOT_PROBED (list metadata was unambiguous)';
+            logger.info(`[DIAGNOSTIC] Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) user="${userEmail}" | listMetadata=${JSON.stringify(listDiag)} | getMetadata=${JSON.stringify(getDiag)} | verdict=${isOwner ? 'INCLUDED_OWNER' : 'SKIPPED_NON_OWNER'} (${roleLabel})`);
+          }
+
+          if (!isOwner) {
             logger.info(`[Notebook Access] "${nb.title || nb.displayName || nbId}" (${nbId}) -> User "${userEmail}" role is ${roleLabel} [isShared=${isSharedFlag}] -> SKIPPING (user is not Owner).`);
             continue;
           }

@@ -515,6 +515,13 @@
                     <input type="checkbox" id="optDryRun" onchange="onDryRunOptionChange()" class="rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-500">
                     <span class="text-amber-300 font-medium">🧪 Dry Run (Simulate Only)</span>
                   </label>
+                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer pt-1.5 border-t border-gray-800/70">
+                    <input type="checkbox" id="optDebugMode" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
+                    <div>
+                      <span class="font-medium text-cyan-300">🔬 Forensic Troubleshooting & Debug Logging</span>
+                      <span class="block text-[10px] text-gray-400">Logs raw API metadata (list vs get), role/ownership verdicts & writes <code class="font-mono text-cyan-400">diagnostic-troubleshoot-*.json</code></span>
+                    </div>
+                  </label>
                 </div>
 
                 <!-- Agent Type & Lifecycle Filters -->
@@ -7345,6 +7352,7 @@ ${projectIamBlock}`;
       if (level === 'ERROR') color = 'text-red-400 font-semibold';
       else if (level === 'WARN') color = 'text-amber-400';
       else if (level === 'SUCCESS') color = 'text-emerald-400 font-medium';
+      else if (level === 'DEBUG' || (typeof msg === 'string' && msg.includes('[DIAGNOSTIC]'))) color = 'text-cyan-300 font-mono text-[11px]';
 
       const line = document.createElement('div');
       line.className = color;
@@ -8443,6 +8451,8 @@ ${projectIamBlock}`;
           preserveSharing: false,
           publishAgents: false,
           dryRun: isDryRun,
+          debugMode: document.getElementById('optDebugMode') ? document.getElementById('optDebugMode').checked : false,
+          logLevel: (document.getElementById('optDebugMode') && document.getElementById('optDebugMode').checked) ? 'DEBUG' : 'INFO',
           concurrency: 10,
           preserveOwnership: true
         }

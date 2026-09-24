@@ -92,6 +92,7 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       allowOverwrite: process.env.ALLOW_OVERWRITE === 'true',
       resumeFrom: process.env.RESUME_FROM || undefined,
       skipIds: [],
+      debugMode: process.env.DEBUG_MODE === 'true',
       logLevel: (process.env.LOG_LEVEL as any) || 'INFO'
     }
   };

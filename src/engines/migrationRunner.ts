@@ -97,7 +97,9 @@ export class MigrationRunner {
     const startTime = startTimeDate.toISOString();
     const startMs = Date.now();
 
-    if (config.options?.logLevel) {
+    if (config.options?.debugMode) {
+      logger.setLevel('DEBUG');
+    } else if (config.options?.logLevel) {
       logger.setLevel(config.options.logLevel);
     }
     logger.clearLogs();
@@ -107,6 +109,29 @@ export class MigrationRunner {
     logger.info(`Source: ${config.source.projectId} (${config.source.appLocation}) -> Target: ${config.target.projectId} (${config.target.appLocation})`);
     if (config.options?.dryRun) {
       logger.info('Mode: DRY RUN (Simulation only, no target modifications will be made)');
+    }
+    if (config.options?.debugMode) {
+      logger.info(`[DIAGNOSTIC] Forensic Troubleshooting & Debug Mode ENABLED (Node ${process.version}, Platform: ${process.platform}/${process.arch})`);
+      logger.info(`[DIAGNOSTIC] Config Snapshot: ${JSON.stringify({
+        source: config.source,
+        target: config.target,
+        authType: config.auth?.authType,
+        idpMapping: config.idpMapping,
+        options: {
+          migrateNotebooks: config.options.migrateNotebooks,
+          migrateAgents: config.options.migrateAgents,
+          migrateSkills: config.options.migrateSkills,
+          migrateSessions: config.options.migrateSessions,
+          migrateMemories: config.options.migrateMemories,
+          exportArtifacts: config.options.exportArtifacts,
+          dryRun: config.options.dryRun,
+          debugMode: config.options.debugMode,
+          userFilter: config.options.userFilter,
+          notebookIds: config.options.notebookIds,
+          agentTypes: config.options.agentTypes,
+          agentStatusFilter: config.options.agentStatusFilter
+        }
+      })}`);
     }
 
     // Step 1: Pre-Flight Health Check
@@ -602,6 +627,32 @@ export class MigrationRunner {
       logger.info(`  - Markdown Report: ${mdPath}`);
       logger.info(`  - JSON Report:     ${jsonPath}`);
       logger.info(`  - Live Checkpoint: ${checkpointManager.getFilePath()}`);
+      if (config.options?.debugMode) {
+        const diagPath = path.join(this.outputDir, `diagnostic-troubleshoot-${migrationId}.json`);
+        const diagPayload = {
+          migrationId,
+          generatedAt: new Date().toISOString(),
+          environment: {
+            nodeVersion: process.version,
+            platform: process.platform,
+            arch: process.arch
+          },
+          config: {
+            source: config.source,
+            target: config.target,
+            authType: config.auth?.authType,
+            idpMapping: config.idpMapping,
+            options: config.options,
+            identityMapping: config.identityMapping
+          },
+          preFlight,
+          summary: report.summary,
+          results: report.results,
+          logs: logger.getLogs()
+        };
+        fs.writeFileSync(diagPath, JSON.stringify(diagPayload, null, 2), 'utf8');
+        logger.info(`  - Diagnostic Bundle: ${diagPath}`);
+      }
     } catch (reportErr: any) {
       logger.warn(`Could not save report files: ${reportErr.message}`);
     }
