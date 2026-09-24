@@ -63,56 +63,90 @@ export class NotebookMigrator {
   }
 
   /**
-   * Returns true only if the notebook is owned by the caller (not merely shared with them as an Editor or Viewer).
-   * In GoogleCloudNotebooklmV1alphaNotebookMetadata, `isShareable` is true for the notebook Owner and false
-   * when the notebook was shared with the user as an Editor or Viewer.
+   * Mirrors `isNotebookOwnedByUser` from Backup_Restore_App (`src/BackupPage.tsx:492-548`).
+   * Determines whether the notebook is owned by the user (excluding shared Editor/Viewer notebooks):
+   * 1. Explicit `metadata.userRole`: if present, must be `PROJECT_ROLE_OWNER` (rejects `PROJECT_ROLE_WRITER`, `PROJECT_ROLE_READER`, etc.).
+   * 2. Explicit `metadata.isShareable === false`: rejects non-owner shared notebooks.
+   * 3. Explicit owner/creator email fields on the notebook (when provided by the API).
+   * 4. Fallback: if `metadata.isShared === false`, it is private to the user who fetched it (`true`); if `metadata.isShared === true` without `PROJECT_ROLE_OWNER`, returns `false`.
    */
   isCallerNotebookOwner(notebook: Notebook, callerEmail?: string): boolean {
     if (!notebook) return false;
     const meta = notebook.metadata;
-    if (meta) {
-      if (meta.isShareable === false) {
-        return false;
-      }
-      // In Google Cloud REST APIs (Protobuf v3 JSON), `false` booleans are omitted (`undefined`).
-      // When real NotebookMetadata fields (`createTime`, `lastViewed`, or `isShared`) are present,
-      // an Owner always has `isShareable: true`, whereas an Editor/Viewer has `isShareable` omitted (`undefined`).
-      const hasProtoMetadata =
-        meta.createTime !== undefined ||
-        meta.lastViewed !== undefined ||
-        meta.isShared !== undefined;
-      if (hasProtoMetadata && meta.isShareable !== true) {
-        return false;
-      }
-    }
 
+    // 1. Standard project role check (from Backup_Restore_App BackupPage.tsx:508)
     const role = String(
+      meta?.userRole ||
       notebook.userRole ||
       notebook.role ||
       notebook.accessRole ||
-      notebook.metadata?.userRole ||
-      notebook.metadata?.role ||
+      meta?.role ||
       ''
-    ).toUpperCase();
-    if (role && !role.includes('OWNER')) {
+    ).toUpperCase().trim();
+
+    if (role) {
+      if (role === 'PROJECT_ROLE_OWNER' || role === 'OWNER' || role.endsWith('_OWNER')) {
+        // Still verify explicit owner email if a different owner email is explicitly stamped
+        if (callerEmail) {
+          const cleanCaller = callerEmail.toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, '');
+          const explicitOwners = [
+            notebook.owner,
+            notebook.creator,
+            meta?.owner,
+            meta?.creator,
+            meta?.ownerEmail,
+            meta?.creatorEmail
+          ]
+            .filter(Boolean)
+            .map((o) => String(o).toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, ''));
+          if (explicitOwners.length > 0 && !explicitOwners.includes(cleanCaller)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      // Any non-OWNER role (PROJECT_ROLE_WRITER, PROJECT_ROLE_READER, EDITOR, VIEWER, etc.) is NOT the owner
       return false;
     }
 
+    if (meta?.isShareable === false) {
+      return false;
+    }
+
+    // 2. Email checks against possible owner/creator fields (from Backup_Restore_App BackupPage.tsx:520)
     if (callerEmail) {
       const cleanCaller = callerEmail.toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, '');
       const explicitOwners = [
         notebook.owner,
         notebook.creator,
-        notebook.metadata?.owner,
-        notebook.metadata?.creator,
-        notebook.metadata?.ownerEmail,
-        notebook.metadata?.creatorEmail
+        meta?.owner,
+        meta?.creator,
+        meta?.ownerEmail,
+        meta?.creatorEmail
       ]
         .filter(Boolean)
         .map((o) => String(o).toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, ''));
 
-      if (explicitOwners.length > 0 && !explicitOwners.includes(cleanCaller)) {
+      if (explicitOwners.length > 0) {
+        return explicitOwners.includes(cleanCaller);
+      }
+    }
+
+    // 3. Fallback (from Backup_Restore_App BackupPage.tsx:539):
+    // If `isShared` is explicitly true (or Protobuf v3 metadata is present without `isShareable: true`), reject as non-owner
+    if (meta) {
+      if (meta.isShared === true && meta.isShareable !== true) {
         return false;
+      }
+      const hasProtoMetadata =
+        meta.createTime !== undefined ||
+        meta.lastViewed !== undefined ||
+        meta.isShared !== undefined;
+      if (hasProtoMetadata && meta.isShareable !== true && meta.isShared !== false) {
+        return false;
+      }
+      if (meta.isShared === false) {
+        return true;
       }
     }
 
@@ -426,9 +460,14 @@ export class NotebookMigrator {
         const nbId = rawId.includes('/') ? rawId.split('/').pop()! : rawId;
         if (nbId && !seenNotebookIds.has(nbId)) {
           try {
-            const nb = await this.client.getNotebook(nbId, sourceEnv);
+            const candidateOwner = Array.from(candidateUsers)[0] || 'admin';
+            const nb = await this.client.getNotebook(nbId, sourceEnv, candidateOwner !== 'admin' ? candidateOwner : undefined);
+            const owner = nb.owner || (nb.metadata?.ownerEmail as string) || candidateOwner;
+            if (!this.isCallerNotebookOwner(nb, owner)) {
+              logger.info(`Skipping explicitly specified Notebook "${nb.title || nbId}" (${nbId}) for "${owner}" (user is Editor/Viewer, not Owner).`);
+              continue;
+            }
             seenNotebookIds.add(nbId);
-            const owner = nb.owner || (nb.metadata?.ownerEmail as string) || Array.from(candidateUsers)[0] || 'admin';
             nb.owner = owner;
             allSourceNotebooks.push(nb);
             logger.info(`Explicitly added Notebook "${nb.title || nbId}" (ID: ${nbId}) for owner "${owner}".`);
@@ -537,6 +576,21 @@ export class NotebookMigrator {
       try {
         logger.info(`Fetching detailed sources & Studio artifacts for Notebook "${result.displayName}" (${notebookId})...`);
         fullNotebook = await this.client.getNotebook(notebookId, sourceEnv, userImpersonation);
+
+        // Preserve `userRole`, `isShared`, and `isShareable` from `listRecentlyViewed` (`nb.metadata`)
+        // because `getNotebook` can omit or reset `isShared` to false even on shared notebooks.
+        if (nb.metadata) {
+          fullNotebook.metadata = {
+            ...nb.metadata,
+            ...(fullNotebook.metadata || {}),
+            userRole: fullNotebook.metadata?.userRole || nb.metadata.userRole,
+            isShared: nb.metadata.isShared === true ? true : fullNotebook.metadata?.isShared,
+            isShareable:
+              nb.metadata.isShareable === false
+                ? false
+                : (fullNotebook.metadata?.isShareable ?? nb.metadata.isShareable)
+          };
+        }
 
         if (!this.isCallerNotebookOwner(fullNotebook, originalOwner)) {
           logger.info(`Skipping shared Notebook "${result.displayName}" (${notebookId}) for "${originalOwner}" (user is Editor/Viewer, not Owner).`);

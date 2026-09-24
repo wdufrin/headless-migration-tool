@@ -74,12 +74,40 @@ describe('NotebookMigrator Engine', () => {
         }
       };
 
+      const projectRoleWriterNotebook: Notebook = {
+        name: 'projects/123/locations/global/notebooks/nb-writer-1',
+        title: 'Shared Writer Notebook',
+        metadata: {
+          userRole: 'PROJECT_ROLE_WRITER',
+          isShared: true,
+          isShareable: true,
+          createTime: '2026-07-21T17:36:45.440384Z',
+          lastViewed: '2026-09-24T18:13:50.004970Z'
+        }
+      };
+
+      const projectRoleReaderNotebook: Notebook = {
+        name: 'projects/123/locations/global/notebooks/nb-reader-1',
+        title: 'Shared Reader Notebook',
+        metadata: {
+          userRole: 'PROJECT_ROLE_READER',
+          isShared: true,
+          isShareable: true,
+          createTime: '2026-07-21T17:36:45.440384Z',
+          lastViewed: '2026-09-24T18:13:48.870310Z'
+        }
+      };
+
       expect(migrator.isCallerNotebookOwner(sharedEditorNotebook, 'alice@fedex.com')).toBe(false);
       expect(migrator.isNotebookOwnedByUser(sharedEditorNotebook, ['alice@fedex.com'])).toBe(false);
       expect(migrator.isCallerNotebookOwner(protoOmittedEditorNotebook, 'alice@fedex.com')).toBe(false);
       expect(migrator.isNotebookOwnedByUser(protoOmittedEditorNotebook, ['alice@fedex.com'])).toBe(false);
       expect(migrator.isCallerNotebookOwner(roleEditorNotebook, 'alice@fedex.com')).toBe(false);
       expect(migrator.isNotebookOwnedByUser(roleEditorNotebook, ['alice@fedex.com'])).toBe(false);
+      expect(migrator.isCallerNotebookOwner(projectRoleWriterNotebook, 'editor@example.com')).toBe(false);
+      expect(migrator.isNotebookOwnedByUser(projectRoleWriterNotebook, ['editor@example.com'])).toBe(false);
+      expect(migrator.isCallerNotebookOwner(projectRoleReaderNotebook, 'viewer@example.com')).toBe(false);
+      expect(migrator.isNotebookOwnedByUser(projectRoleReaderNotebook, ['viewer@example.com'])).toBe(false);
       expect(migrator.isCallerNotebookOwner(ownedSharedNotebook, 'alice@fedex.com')).toBe(true);
       expect(migrator.isNotebookOwnedByUser(ownedSharedNotebook, ['alice@fedex.com'])).toBe(true);
     });
