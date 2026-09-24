@@ -131,6 +131,11 @@ describe('Host allowlist middleware (DNS rebinding protection)', () => {
     expect(res.status).toBe(200);
   });
 
+  it('allows Google Cloud Shell Web Preview (*.cloudshell.dev) hostnames', async () => {
+    const res = await rawRequest(`8080-cs-123456789-default.cs-us-east1-vpcf.cloudshell.dev`);
+    expect(res.status).toBe(200);
+  });
+
   // ---- Adversarial cases: each of these must NOT reach the handler. ----
 
   it('rejects a rebound attacker-controlled hostname and does not run the side effect', async () => {
@@ -140,6 +145,21 @@ describe('Host allowlist middleware (DNS rebinding protection)', () => {
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body).error).toBe('ForbiddenHost');
     // The actual security property: the handler never executed.
+    expect(sideEffectCount).toBe(before);
+  });
+
+  it('rejects spoofed hostnames that mimic cloudshell.dev', async () => {
+    const before = sideEffectCount;
+
+    for (const hostHeader of [
+      `cloudshell.dev.attacker.example:${port}`,
+      `8080-cs-123.notcloudshell.dev:${port}`,
+      `cloudshell.dev:${port}`
+    ]) {
+      const res = await rawRequest(hostHeader);
+      expect(res.status, `expected ${hostHeader} to be rejected`).toBe(403);
+    }
+
     expect(sideEffectCount).toBe(before);
   });
 

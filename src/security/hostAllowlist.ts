@@ -95,7 +95,8 @@ export function createHostAllowlistMiddleware(options: HostAllowlistOptions = {}
       });
     }
 
-    if (!allowed.has(hostname)) {
+    const isCloudShellHost = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.cloudshell\.dev$/i.test(hostname);
+    if (!allowed.has(hostname) && !isCloudShellHost) {
       return res.status(403).json({
         error: 'ForbiddenHost',
         message:

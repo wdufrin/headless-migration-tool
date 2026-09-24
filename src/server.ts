@@ -50,15 +50,26 @@ if (!requireAuth && !isLoopback && process.env.NODE_ENV !== 'test') {
 
 // Mitigation #3: Lock CORS to authorized origin (Localhost & 127.0.0.1)
 const allowedOriginEnv = process.env.CORS_ALLOWED_ORIGIN;
+const CLOUD_SHELL_ORIGIN_REGEX = /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.cloudshell\.dev$/i;
 app.use(cors({
   origin: (origin, callback) => {
     // Direct requests, curl, or same-origin has undefined origin
     if (!origin) return callback(null, true);
-    if (allowedOriginEnv && allowedOriginEnv !== '*') {
-      return callback(null, allowedOriginEnv === origin);
+    if (allowedOriginEnv === '*') {
+      return callback(null, true);
     }
-    // Allow local workstation ports
-    if (origin.startsWith('http://127.0.0.1:') || origin.startsWith('http://localhost:')) {
+    if (allowedOriginEnv) {
+      const allowedList = allowedOriginEnv.split(',').map(o => o.trim()).filter(Boolean);
+      if (allowedList.includes(origin)) {
+        return callback(null, true);
+      }
+    }
+    // Allow local workstation ports and Google Cloud Shell Web Preview (*.cloudshell.dev)
+    if (
+      origin.startsWith('http://127.0.0.1:') ||
+      origin.startsWith('http://localhost:') ||
+      CLOUD_SHELL_ORIGIN_REGEX.test(origin)
+    ) {
       return callback(null, true);
     }
     return callback(new Error('CORS policy: Access blocked from unauthorized origin'));
