@@ -69,8 +69,21 @@ export class NotebookMigrator {
    */
   isCallerNotebookOwner(notebook: Notebook, callerEmail?: string): boolean {
     if (!notebook) return false;
-    if (notebook.metadata?.isShareable === false) {
-      return false;
+    const meta = notebook.metadata;
+    if (meta) {
+      if (meta.isShareable === false) {
+        return false;
+      }
+      // In Google Cloud REST APIs (Protobuf v3 JSON), `false` booleans are omitted (`undefined`).
+      // When real NotebookMetadata fields (`createTime`, `lastViewed`, or `isShared`) are present,
+      // an Owner always has `isShareable: true`, whereas an Editor/Viewer has `isShareable` omitted (`undefined`).
+      const hasProtoMetadata =
+        meta.createTime !== undefined ||
+        meta.lastViewed !== undefined ||
+        meta.isShared !== undefined;
+      if (hasProtoMetadata && meta.isShareable !== true) {
+        return false;
+      }
     }
 
     const role = String(

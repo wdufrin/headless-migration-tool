@@ -63,8 +63,21 @@ describe('NotebookMigrator Engine', () => {
         }
       };
 
+      const protoOmittedEditorNotebook: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-shared-proto',
+        title: 'Proto3 Omitted isShareable Shared Notebook',
+        metadata: {
+          isShared: true,
+          createTime: '2026-09-01T12:00:00Z',
+          lastViewed: '2026-09-24T12:00:00Z'
+          // isShareable is omitted (undefined) by Google Protobuf v3 JSON when false
+        }
+      };
+
       expect(migrator.isCallerNotebookOwner(sharedEditorNotebook, 'alice@fedex.com')).toBe(false);
       expect(migrator.isNotebookOwnedByUser(sharedEditorNotebook, ['alice@fedex.com'])).toBe(false);
+      expect(migrator.isCallerNotebookOwner(protoOmittedEditorNotebook, 'alice@fedex.com')).toBe(false);
+      expect(migrator.isNotebookOwnedByUser(protoOmittedEditorNotebook, ['alice@fedex.com'])).toBe(false);
       expect(migrator.isCallerNotebookOwner(roleEditorNotebook, 'alice@fedex.com')).toBe(false);
       expect(migrator.isNotebookOwnedByUser(roleEditorNotebook, ['alice@fedex.com'])).toBe(false);
       expect(migrator.isCallerNotebookOwner(ownedSharedNotebook, 'alice@fedex.com')).toBe(true);

@@ -310,9 +310,16 @@ export class DiscoveryEngineClient {
     if (forUserEmail) {
       for (const nb of notebooks) {
         if (!nb.metadata) nb.metadata = {};
+        const hasProtoMetadata =
+          nb.metadata.createTime !== undefined ||
+          nb.metadata.lastViewed !== undefined ||
+          nb.metadata.isShared !== undefined;
         const role = String(nb.userRole || nb.role || nb.accessRole || nb.metadata.userRole || nb.metadata.role || '').toUpperCase();
         const isNonOwnerRole = Boolean(role && !role.includes('OWNER'));
-        const isSharedWithCallerAsNonOwner = nb.metadata.isShareable === false || isNonOwnerRole;
+        const isSharedWithCallerAsNonOwner =
+          nb.metadata.isShareable === false ||
+          (hasProtoMetadata && nb.metadata.isShareable !== true) ||
+          isNonOwnerRole;
         const existingOwner = nb.owner || nb.creator || nb.metadata.ownerEmail || nb.metadata.creatorEmail || nb.metadata.owner || nb.metadata.creator;
 
         if (!isSharedWithCallerAsNonOwner && !existingOwner) {
