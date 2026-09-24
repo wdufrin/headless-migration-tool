@@ -63,6 +63,42 @@ export class NotebookMigrator {
   }
 
   /**
+   * Formats the caller's role on a source notebook as a human-readable label
+   * (e.g., `OWNER (PROJECT_ROLE_OWNER)`, `EDITOR (PROJECT_ROLE_WRITER)`, `VIEWER (PROJECT_ROLE_READER)`).
+   */
+  describeNotebookAccessRole(notebook: Notebook): string {
+    const meta = notebook?.metadata;
+    const rawRole = String(
+      meta?.userRole ||
+      notebook?.userRole ||
+      notebook?.role ||
+      notebook?.accessRole ||
+      meta?.role ||
+      ''
+    ).toUpperCase().trim();
+
+    if (rawRole === 'PROJECT_ROLE_OWNER' || rawRole === 'OWNER' || rawRole.endsWith('_OWNER')) {
+      return `OWNER (${rawRole})`;
+    }
+    if (rawRole === 'PROJECT_ROLE_WRITER' || rawRole === 'WRITER' || rawRole === 'EDITOR' || rawRole.endsWith('_WRITER') || rawRole.endsWith('_EDITOR')) {
+      return `EDITOR (${rawRole})`;
+    }
+    if (rawRole === 'PROJECT_ROLE_READER' || rawRole === 'READER' || rawRole === 'VIEWER' || rawRole.endsWith('_READER') || rawRole.endsWith('_VIEWER')) {
+      return `VIEWER (${rawRole})`;
+    }
+    if (rawRole) {
+      return rawRole;
+    }
+    if (meta?.isShareable === false) {
+      return 'EDITOR/VIEWER (isShareable=false)';
+    }
+    if (meta?.isShared === false) {
+      return 'OWNER (private, isShared=false)';
+    }
+    return `UNSPECIFIED (isShared=${meta?.isShared ?? 'unknown'}, isShareable=${meta?.isShareable ?? 'unknown'})`;
+  }
+
+  /**
    * Mirrors `isNotebookOwnedByUser` from Backup_Restore_App (`src/BackupPage.tsx:492-548`).
    * Determines whether the notebook is owned by the user (excluding shared Editor/Viewer notebooks):
    * 1. Explicit `metadata.userRole`: if present, must be `PROJECT_ROLE_OWNER` (rejects `PROJECT_ROLE_WRITER`, `PROJECT_ROLE_READER`, etc.).
@@ -485,10 +521,13 @@ export class NotebookMigrator {
         logger.info(`Discovered ${userNotebooks.length} notebooks for user "${userEmail}".`);
         for (const nb of userNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          const roleLabel = this.describeNotebookAccessRole(nb);
+          const isSharedFlag = Boolean(nb.metadata?.isShared);
           if (!this.isCallerNotebookOwner(nb, userEmail)) {
-            logger.info(`Skipping shared Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) for "${userEmail}" (user is Editor/Viewer, not Owner).`);
+            logger.info(`[Notebook Access] "${nb.title || nb.displayName || nbId}" (${nbId}) -> User "${userEmail}" role is ${roleLabel} [isShared=${isSharedFlag}] -> SKIPPING (user is not Owner).`);
             continue;
           }
+          logger.info(`[Notebook Access] "${nb.title || nb.displayName || nbId}" (${nbId}) -> User "${userEmail}" role is ${roleLabel} [isShared=${isSharedFlag}] -> INCLUDED (user is Owner).`);
           if (nbId && !seenNotebookIds.has(nbId)) {
             seenNotebookIds.add(nbId);
             nb.owner = userEmail;
@@ -512,10 +551,13 @@ export class NotebookMigrator {
         const fallbackOwner = selectedUser || Array.from(candidateUsers)[0] || 'admin';
         for (const nb of rootNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
+          const roleLabel = this.describeNotebookAccessRole(nb);
+          const isSharedFlag = Boolean(nb.metadata?.isShared);
           if (!this.isCallerNotebookOwner(nb, fallbackOwner)) {
-            logger.info(`Skipping shared Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) for "${fallbackOwner}" (user is Editor/Viewer, not Owner).`);
+            logger.info(`[Notebook Access] "${nb.title || nb.displayName || nbId}" (${nbId}) -> User "${fallbackOwner}" role is ${roleLabel} [isShared=${isSharedFlag}] -> SKIPPING (user is not Owner).`);
             continue;
           }
+          logger.info(`[Notebook Access] "${nb.title || nb.displayName || nbId}" (${nbId}) -> User "${fallbackOwner}" role is ${roleLabel} [isShared=${isSharedFlag}] -> INCLUDED (user is Owner).`);
           if (nbId && !seenNotebookIds.has(nbId)) {
             seenNotebookIds.add(nbId);
             nb.owner = fallbackOwner;
@@ -592,10 +634,11 @@ export class NotebookMigrator {
           };
         }
 
+        const detailRoleLabel = this.describeNotebookAccessRole(fullNotebook);
         if (!this.isCallerNotebookOwner(fullNotebook, originalOwner)) {
-          logger.info(`Skipping shared Notebook "${result.displayName}" (${notebookId}) for "${originalOwner}" (user is Editor/Viewer, not Owner).`);
+          logger.info(`[Notebook Access] "${result.displayName}" (${notebookId}) -> User "${originalOwner}" role is ${detailRoleLabel} -> SKIPPING shared notebook (not Owner).`);
           result.status = 'SKIPPED';
-          result.ownershipNote = 'Skipped shared notebook (user is Editor/Viewer, not Owner)';
+          result.ownershipNote = `Skipped shared notebook (user role: ${detailRoleLabel})`;
           result.durationMs = Date.now() - startTime;
           options.onItemCompleted?.(result);
           return result;
