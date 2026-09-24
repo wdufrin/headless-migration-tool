@@ -471,7 +471,7 @@ export class NotebookMigrator {
                 const fullSource = await this.client.getNotebookSource(notebookId, sourceId, sourceEnv, userImpersonation);
                 return { ...s, ...fullSource };
               } catch (err: any) {
-                logger.debug(`Could not fetch detailed source ${sourceId}: ${err.message}`);
+                logger.warn(`Could not fetch detailed source "${s.title || s.displayName || sourceId}" (${sourceId}) in notebook ${notebookId}: ${err.message}`);
                 return s;
               }
             }
