@@ -315,11 +315,13 @@ export class DiscoveryEngineClient {
           nb.metadata.lastViewed !== undefined ||
           nb.metadata.isShared !== undefined;
         const role = String(nb.userRole || nb.role || nb.accessRole || nb.metadata.userRole || nb.metadata.role || '').toUpperCase();
-        const isNonOwnerRole = Boolean(role && !role.includes('OWNER'));
+        const isOwnerRole = Boolean(role && (role === 'PROJECT_ROLE_OWNER' || role === 'OWNER' || role.endsWith('_OWNER')));
+        const isNonOwnerRole = Boolean(role && !isOwnerRole);
         const isSharedWithCallerAsNonOwner =
           nb.metadata.isShareable === false ||
-          (hasProtoMetadata && nb.metadata.isShareable !== true) ||
-          isNonOwnerRole;
+          isNonOwnerRole ||
+          (nb.metadata.isShared === true && !isOwnerRole) ||
+          (hasProtoMetadata && nb.metadata.isShareable !== true);
         const existingOwner = nb.owner || nb.creator || nb.metadata.ownerEmail || nb.metadata.creatorEmail || nb.metadata.owner || nb.metadata.creator;
 
         if (!isSharedWithCallerAsNonOwner && !existingOwner) {
