@@ -620,10 +620,23 @@ export async function inspectGeAppWorkforceConfig(options: {
         ]);
         policy = JSON.parse(stdout || '{}');
       }
+      const ADMIN_DELETE_ROLES = new Set([
+        'roles/discoveryengine.admin',
+        'roles/discoveryengine.agentspaceadmin',
+        'roles/discoveryengine.notebooklmowner',
+        'roles/discoveryengine.notebookowner',
+        'roles/owner',
+        'roles/editor'
+      ]);
       for (const binding of policy?.bindings || []) {
         const role: string = binding?.role || '';
+        const lowerRole = role.toLowerCase().trim();
         const isDiscoveryRole =
           role.includes('discoveryengine') || role === 'roles/viewer' || role === 'roles/editor' || role === 'roles/owner';
+        // Never inject groups bound to project-level admin/delete roles into end-user WIF tokens:
+        // project-wide `discoveryengine.notebooks.delete` causes Google's GetNotebook handler
+        // to classify the caller as PROJECT_ROLE_OWNER on colleagues' shared notebooks.
+        const isSafeEndUserGroupRole = isDiscoveryRole && !ADMIN_DELETE_ROLES.has(lowerRole);
         for (const member of binding?.members || []) {
           if (typeof member !== 'string') continue;
           const poolMatch = member.match(/workforcePools\/([^/]+)/);
@@ -636,7 +649,7 @@ export async function inspectGeAppWorkforceConfig(options: {
             }
             if (!detectedPoolId || pId === detectedPoolId) {
               const groupMatch = member.match(/\/group\/(.+)$/);
-              if (groupMatch && groupMatch[1] && isDiscoveryRole) {
+              if (groupMatch && groupMatch[1] && isSafeEndUserGroupRole) {
                 discoveredIamGroups.add(groupMatch[1]);
               }
               const subjMatch = member.match(/\/subject\/(.+)$/);

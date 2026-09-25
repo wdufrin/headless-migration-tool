@@ -4,6 +4,7 @@ import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
 import { GcpAuthService } from '../src/services/gcpAuth.js';
 import { Notebook, NotebookSource } from '../src/types/index.js';
 import { EnvironmentConfig } from '../src/types/migration.js';
+import { logger } from '../src/utils/logger.js';
 
 describe('NotebookMigrator Engine', () => {
   const dummyAuth = new GcpAuthService({ staticToken: 'test-token' });
@@ -504,6 +505,52 @@ describe('NotebookMigrator Engine', () => {
       expect(migratedTitles).toContain('Private Owned Notebook');
       expect(migratedTitles).toContain('Owned Notebook Shared With Team');
       expect(migratedTitles).not.toContain('Colleague Notebook Shared With User As Editor');
+    });
+
+    it('should detect and log [OWNERSHIP WARNING] when caller holds project-level discoveryengine.notebooks.delete', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'cei-vertex-prd-01', appLocation: 'us', appId: 'app-1' };
+      const targetEnv: EnvironmentConfig = { projectId: 'cei-gemini-prd-01', appLocation: 'us', appId: 'app-2' };
+
+      const listSharedColleague: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-colleague',
+        notebookId: 'nb-colleague',
+        title: 'Colleague Shared Notebook',
+        metadata: { userRole: 'UNSPECIFIED', isShared: true, isShareable: true }
+      };
+
+      const testProjectIamPermissionsMock = vi.fn().mockResolvedValue(['discoveryengine.notebooks.delete']);
+      const warnSpy = vi.spyOn(logger, 'warn');
+
+      const mockClient = {
+        listNotebooks: vi.fn().mockImplementation(async (env) => (env.projectId === 'cei-vertex-prd-01' ? [listSharedColleague] : [])),
+        getNotebook: vi.fn().mockResolvedValue({
+          ...listSharedColleague,
+          metadata: { userRole: 'UNSPECIFIED', isShared: false, isShareable: true },
+          sources: []
+        }),
+        testProjectIamPermissions: testProjectIamPermissionsMock,
+        createNotebook: vi.fn(),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({ sources: [] }),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listAudioOverviews: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: true, debugMode: true, userFilter: ['azzolinig@coned.com'] } as any
+      );
+
+      expect(testProjectIamPermissionsMock).toHaveBeenCalledWith(
+        'cei-vertex-prd-01',
+        ['discoveryengine.notebooks.delete'],
+        'azzolinig@coned.com'
+      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ADMIN PERMISSION ELEVATION DETECTED'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[DRY RUN AUDIT: PERMISSION ELEVATION]'));
+      warnSpy.mockRestore();
     });
   });
 });

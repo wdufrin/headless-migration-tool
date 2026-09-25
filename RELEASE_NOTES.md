@@ -1,4 +1,34 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.5.8
+
+**Release Date:** September 25, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.8** introduces **Dry Run Permission Elevation Detection for NotebookLM**, identifying when an impersonated user's token holds project-level `discoveryengine.notebooks.delete` (Admin permissions) which causes Google's Discovery Engine API to classify the user as `PROJECT_ROLE_OWNER` on ALL shared notebooks across the project (causing colleague-owned shared notebooks to be migrated under their account). v1.5.8 hardens the **Workforce Identity Federation (WiF) Role Architecture** by standardizing on `roles/discoveryengine.user` for the Workforce Pool, excludes admin roles from WiF group injection, and provides 313 passing automated tests at 100%.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. 🔍 Dry Run Permission Elevation Detection for NotebookLM
+* **Detection of Project-Level Admin Permissions**: When migrating notebooks for federated users, the tool checks whether the impersonated token holds `discoveryengine.notebooks.delete` at the GCP project level (typically inherited from `roles/discoveryengine.admin` or `roles/owner` on the Workforce Pool or an admin group).
+* **Blast Radius Explanation**: Google Cloud's Discovery Engine / NotebookLM API checks IAM `TestPermissions` on each notebook for `discoveryengine.notebooks.delete`. If granted (even via project inheritance), the backend classifies the user as `PROJECT_ROLE_OWNER` (`get.isShared = false`), causing the tool to treat colleague-created shared notebooks as if they were owned by the current user.
+* **Actionable Remediation Warnings**: Emits high-visibility `[DRY RUN AUDIT: PERMISSION ELEVATION]` warnings during pre-flight checks and per-user notebook discovery with exact `gcloud` remediation commands to replace `roles/discoveryengine.admin` with `roles/discoveryengine.user`.
+
+#### 2. 🛡️ Workforce Identity Federation (WiF) Least-Privilege Role Hardening
+* **Setup Wizard Role Realignment**: The Setup Wizard (`Step 1: Auth & Prerequisites`) now generates `gcloud projects add-iam-policy-binding` with `roles/discoveryengine.user` (instead of `roles/discoveryengine.admin`) for `principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*`.
+* **Admin Group Filtering in Group Scraper**: `wifPreflight.ts` explicitly filters out admin roles (`roles/discoveryengine.admin`, `roles/discoveryengine.agentspaceAdmin`, `roles/discoveryengine.notebookLmOwner`, `roles/owner`, `roles/editor`) during pool group discovery so that impersonated end-user tokens never inherit unintended project-wide delete privileges.
+
+#### 3. 🧪 Automated Test Suite Stability (313/313 Tests Passing)
+* Full 313 automated tests passing across 26 test suites with zero failures.
+
+---
+
 ## Release Notes — Version 1.5.7
 
 **Release Date:** September 22, 2026  
@@ -61,7 +91,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.5.7** *(Current)*: Resilient Chat History Migration with full session hydration (`includeAnswerDetails=true`), companion-turn deduplication, target duplicate collision prevention, strict user session filtering, notebook source deduplication, and 307 passing tests.
+* **v1.5.8** *(Current)*: Dry Run Permission Elevation Detection for NotebookLM, Workforce Identity Federation (WiF) role hardening (`roles/discoveryengine.user`), admin group filtering in group scraper, and 313 passing tests.
+* **v1.5.7**: Resilient Chat History Migration with full session hydration (`includeAnswerDetails=true`), companion-turn deduplication, target duplicate collision prevention, strict user session filtering, notebook source deduplication, and 307 passing tests.
 * **v1.5.5**: CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`), interactive Mapping Report panel & CSV/JSON export, Okta 2FA compatibility, case-insensitive identity resolution across all engines, and 285 passing tests.
 * **v1.5.3**: Least-privilege DWD impersonation scopes with multi-tier fallback, token cache partitioning by auth mode, documentation and console version parity.
 * **v1.5.1**: Multi-project IAM wizard and setup generator, hardened WiF impersonation live testing, iframe sandbox security fix.

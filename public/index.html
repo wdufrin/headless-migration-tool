@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.7</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.8</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -5665,7 +5665,7 @@ gcloud projects add-iam-policy-binding "${proj}" \\
     --member="principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*"
 
 gcloud projects add-iam-policy-binding "${proj}" \\
-    --role="roles/discoveryengine.admin" \\
+    --role="roles/discoveryengine.user" \\
     --member="principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*"
 
 gcloud iam service-accounts add-iam-policy-binding "${saName}@${proj}.iam.gserviceaccount.com" \\

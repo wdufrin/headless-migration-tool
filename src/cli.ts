@@ -31,7 +31,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.5.7')
+  .version('1.5.8')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')

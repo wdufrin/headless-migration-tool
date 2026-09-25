@@ -636,5 +636,22 @@ export class DiscoveryEngineClient {
       forUserEmail
     );
   }
+
+  /**
+   * Tests whether the caller (or impersonated user token) holds specific GCP project-level
+   * IAM permissions on `projectId` via Cloud Resource Manager `projects.testIamPermissions`.
+   */
+  async testProjectIamPermissions(projectId: string, permissions: string[], forUserEmail?: string): Promise<string[]> {
+    const url = `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:testIamPermissions`;
+    const res = await this.request<{ permissions?: string[] }>(
+      url,
+      'POST',
+      { permissions },
+      projectId,
+      undefined,
+      forUserEmail
+    );
+    return Array.isArray(res?.permissions) ? res.permissions : [];
+  }
 }
 

@@ -390,6 +390,8 @@ wizardRouter.post('/wizard/audit-permissions', async (req, res) => {
 // Strict allowlist of approved IAM roles for automated migration provisioning
 export const ALLOWED_MIGRATION_ROLES = new Set([
   'roles/discoveryengine.admin',
+  'roles/discoveryengine.user',
+  'roles/discoveryengine.notebookLmUser',
   'roles/discoveryengine.viewer',
   'roles/discoveryengine.editor',
   'roles/serviceusage.serviceUsageConsumer',

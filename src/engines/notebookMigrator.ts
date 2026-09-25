@@ -78,6 +78,9 @@ export class NotebookMigrator {
     ).toUpperCase().trim();
 
     if (meta?.isOwnerVerifiedByGet === true) {
+      if (meta?.hasProjectLevelAdminElevation) {
+        return 'OWNER (WARNING: user has project-level Admin permissions; shared colleague notebooks appear as owned)';
+      }
       return 'OWNER (shared by owner: list.isShared=true, get.isShared=false)';
     }
     if (rawRole === 'PROJECT_ROLE_OWNER' || rawRole === 'OWNER' || rawRole.endsWith('_OWNER')) {
@@ -541,6 +544,9 @@ export class NotebookMigrator {
       try {
         const userNotebooks = await this.client.listNotebooks(sourceEnv, userEmail);
         logger.info(`Discovered ${userNotebooks.length} notebooks for user "${userEmail}".`);
+        let projectLevelDeleteChecked = false;
+        let callerHasProjectLevelDelete = false;
+
         for (const nb of userNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
           const listSnapshot = nb.metadata ? { ...nb.metadata } : {};
@@ -560,8 +566,44 @@ export class NotebookMigrator {
           //   (b) Notebooks shared WITH the user as Editor/Viewer.
           // Calling `getNotebook` (`GET .../notebooks/{id}`) disambiguates them because
           // `GetNotebook` returns `metadata.isShared: false` for the Owner (`PROJECT_ROLE_OWNER`)
-          // and `metadata.isShared: true` for Editors/Viewers.
-          if (!listRole && nb.metadata?.isShared === true && nbId) {
+          // and `metadata.isShared: true` for Editors/Viewers -- UNLESS the caller's token holds
+          // project-level `discoveryengine.notebooks.delete` (e.g., `roles/discoveryengine.admin`
+          // granted to `workforcePools/<pool>/*`), which forces `PROJECT_ROLE_OWNER` on all notebooks.
+          if ((!listRole || listRole === 'UNSPECIFIED') && nb.metadata?.isShared === true && nbId) {
+            if (!projectLevelDeleteChecked && typeof (this.client as any).testProjectIamPermissions === 'function') {
+              projectLevelDeleteChecked = true;
+              try {
+                const granted = await (this.client as any).testProjectIamPermissions(
+                  sourceEnv.projectId,
+                  ['discoveryengine.notebooks.delete'],
+                  userEmail
+                );
+                callerHasProjectLevelDelete = granted.includes('discoveryengine.notebooks.delete');
+                if (callerHasProjectLevelDelete) {
+                  const elevationBanner =
+                    `[DRY RUN AUDIT: ADMIN PERMISSION ELEVATION DETECTED]\n` +
+                    `================================================================================\n` +
+                    `⚠️  User "${userEmail}" holds project-level "discoveryengine.notebooks.delete" (Admin permissions) on source project "${sourceEnv.projectId}".\n` +
+                    `   WHY THIS MATTERS IN NOTEBOOKLM:\n` +
+                    `   When an impersonated user has project-level Admin permissions (e.g. "roles/discoveryengine.admin" on the Workforce Pool),\n` +
+                    `   Google's Discovery Engine API classifies them as PROJECT_ROLE_OWNER on ALL shared notebooks in the project.\n` +
+                    `   This causes the user to see and include MORE notebooks than expected (shared colleague notebooks will appear as owned).\n\n` +
+                    `   RECOMMENDED FIX BEFORE LIVE MIGRATION:\n` +
+                    `   Ensure the Workforce Pool on "${sourceEnv.projectId}" uses "roles/discoveryengine.user" (User permissions),\n` +
+                    `   NOT "roles/discoveryengine.admin" (Admin permissions):\n` +
+                    `     gcloud projects add-iam-policy-binding "${sourceEnv.projectId}" \\\n` +
+                    `       --member="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL>/*" \\\n` +
+                    `       --role="roles/discoveryengine.user"\n` +
+                    `     gcloud projects remove-iam-policy-binding "${sourceEnv.projectId}" \\\n` +
+                    `       --member="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL>/*" \\\n` +
+                    `       --role="roles/discoveryengine.admin"\n` +
+                    `================================================================================`;
+                  logger.warn(elevationBanner);
+                }
+              } catch (permErr: any) {
+                logger.debug(`Could not probe project-level discoveryengine.notebooks.delete for "${userEmail}": ${permErr.message}`);
+              }
+            }
             try {
               getProbeNotebook = await this.client.getNotebook(nbId, sourceEnv, userEmail);
               const getRole = String(
@@ -576,6 +618,9 @@ export class NotebookMigrator {
               if (!nb.metadata) nb.metadata = {};
               if (getRole === 'PROJECT_ROLE_OWNER' || getRole === 'OWNER' || getRole.endsWith('_OWNER') || getIsShared === false) {
                 nb.metadata.isOwnerVerifiedByGet = true;
+                if (callerHasProjectLevelDelete) {
+                  nb.metadata.hasProjectLevelAdminElevation = true;
+                }
                 if (getRole) nb.metadata.userRole = getRole;
                 if (getProbeNotebook?.sources && (!nb.sources || nb.sources.length === 0)) {
                   nb.sources = getProbeNotebook.sources;
@@ -595,6 +640,12 @@ export class NotebookMigrator {
           const roleLabel = this.describeNotebookAccessRole(nb);
           const isSharedFlag = Boolean(listSnapshot.isShared ?? nb.metadata?.isShared);
           const isOwner = this.isCallerNotebookOwner(nb, userEmail);
+
+          if (callerHasProjectLevelDelete && nb.metadata?.isShared === true && isOwner) {
+            logger.warn(
+              `[DRY RUN AUDIT: PERMISSION ELEVATION] Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) was marked INCLUDED_OWNER because "${userEmail}" has project-level Admin permissions. If this notebook was actually created by a colleague, it will be migrated under this user's account unless Workforce Pool permissions are changed to "roles/discoveryengine.user".`
+            );
+          }
 
           if (isDebug) {
             const listDiag = {

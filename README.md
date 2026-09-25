@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.5.7-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.5.8-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.7-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.8-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -14,6 +14,20 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.5.8
+
+* **🔍 Dry Run Permission Elevation Detection for NotebookLM**:
+  * Highlights when an impersonated user token holds project-level `discoveryengine.notebooks.delete` (Admin permissions, e.g. from `roles/discoveryengine.admin` on the Workforce Pool or an admin group).
+  * Explains the exact blast radius: project-level Admin permissions cause Google Discovery Engine / NotebookLM's backend API to classify the user as `PROJECT_ROLE_OWNER` on ALL shared notebooks across the project, causing colleague-authored shared notebooks to appear as owned notebooks.
+  * Emits high-visibility `[DRY RUN AUDIT: PERMISSION ELEVATION]` warnings during pre-flight checks and per-user notebook discovery with exact `gcloud` remediation commands to replace `roles/discoveryengine.admin` with `roles/discoveryengine.user`.
+* **🛡️ Workforce Identity Federation (WiF) Least-Privilege Role Hardening**:
+  * Setup Wizard now binds `roles/discoveryengine.user` (instead of `roles/discoveryengine.admin`) to `principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*`.
+  * WiF group scraper in `wifPreflight.ts` explicitly filters out admin roles (`roles/discoveryengine.admin`, `roles/discoveryengine.agentspaceAdmin`, `roles/discoveryengine.notebookLmOwner`, `roles/owner`, `roles/editor`), preventing impersonated end-user tokens from inheriting unintended project-wide delete privileges.
+* **🧪 100% Passing Automated Tests (313/313 Tests)**:
+  * Full 313 automated tests passing across 26 test suites with zero failures or skipped assertions.
 
 ---
 

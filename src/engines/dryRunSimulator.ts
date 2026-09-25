@@ -66,6 +66,31 @@ export class DryRunSimulator {
       warnings.push(`Could not list target DataStores: ${err.message}`);
     }
 
+    // 3. Check Impersonated User Permissions on Source (Admin vs User Elevation in NotebookLM)
+    if (config.options?.migrateNotebooks !== false) {
+      const candidateUsers = (config.options?.userFilter || []).filter(u => u && u.includes('@') && !u.includes('*'));
+      for (const sampleUser of candidateUsers) {
+        if (typeof (this.client as any).testProjectIamPermissions === 'function') {
+          try {
+            const granted = await (this.client as any).testProjectIamPermissions(
+              config.source.projectId,
+              ['discoveryengine.notebooks.delete'],
+              sampleUser
+            );
+            if (granted.includes('discoveryengine.notebooks.delete')) {
+              warnings.push(
+                `User "${sampleUser}" holds project-level "discoveryengine.notebooks.delete" (Admin permissions) on source project "${config.source.projectId}". ` +
+                `In NotebookLM, project-level Admin permissions cause all shared notebooks (including notebooks owned by colleagues) to appear as owned notebooks. ` +
+                `To ensure authentic user-scoped notebook migration, change the Workforce Pool role on "${config.source.projectId}" from "roles/discoveryengine.admin" to "roles/discoveryengine.user".`
+              );
+            }
+          } catch (permErr: any) {
+            logger.debug(`Pre-flight permission check skipped for "${sampleUser}": ${permErr.message}`);
+          }
+        }
+      }
+    }
+
     return {
       passed: errors.length === 0,
       warnings,

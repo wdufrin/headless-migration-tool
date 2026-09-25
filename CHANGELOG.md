@@ -5,6 +5,24 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8] - 2026-09-25
+
+### Added
+- **Dry Run Permission Elevation Detection for NotebookLM**:
+  - Implemented `testProjectIamPermissions` on `DiscoveryEngineClient` to test `discoveryengine.notebooks.delete` on source projects.
+  - Added Dry Run pre-flight permission check in `DryRunSimulator` to detect when impersonated users hold project-level Admin permissions.
+  - Added prominent `[DRY RUN AUDIT: ADMIN PERMISSION ELEVATION DETECTED]` warning banners and per-notebook `[DRY RUN AUDIT: PERMISSION ELEVATION]` notices in `NotebookMigrator`.
+  - Added `hasProjectLevelAdminElevation` tracking in notebook metadata and `describeNotebookAccessRole` to highlight when ownership is influenced by project-level admin roles.
+- **Workforce Identity Federation Role Hardening**:
+  - Updated Setup Wizard (`public/index.html`) to grant `roles/discoveryengine.user` (instead of `roles/discoveryengine.admin`) to `principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*`.
+  - Filtered out admin/delete-granting roles (`roles/discoveryengine.admin`, `roles/discoveryengine.agentspaceAdmin`, `roles/discoveryengine.notebookLmOwner`, `roles/owner`, `roles/editor`) from `discoveredIamGroups` in `wifPreflight.ts` so impersonated WIF tokens never inherit project-wide delete privileges.
+  - Added `roles/discoveryengine.user` and `roles/discoveryengine.notebookLmUser` to `ALLOWED_MIGRATION_ROLES` in `src/routes/wizard.ts`.
+
+### Changed
+- Expanded automated test suite to 313 passing tests with full coverage for permission elevation detection.
+
+---
+
 ## [1.5.7] - 2026-09-22
 
 ### Added
