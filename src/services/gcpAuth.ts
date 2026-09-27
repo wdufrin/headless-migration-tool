@@ -94,9 +94,13 @@ export class GcpAuthService {
   private authType: 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS' = 'SERVICE_ACCOUNT_KEY';
   private cachedAdcToken?: { token: string; expiresAt: number };
   private cachedWifToken?: { token: string; expiresAt: number };
-  private userTokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
+  private userTokenCache: Map<string, { token: string; expiresAt: number; mode?: 'DWD' | 'WIF' }> = new Map();
   private userMechanismCache: Map<string, 'DWD' | 'WIF'> = new Map();
   private failedDwdUsers: Set<string> = new Set();
+
+  public getAuthType(): 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS' {
+    return this.authType;
+  }
 
   public getLastUsedImpersonationMode(forUserEmail?: string): 'DWD' | 'WIF' | undefined {
     if (!forUserEmail) return undefined;
@@ -108,7 +112,7 @@ export class GcpAuthService {
     this.staticToken = options.staticToken;
     this.authType = options.authType || 'SERVICE_ACCOUNT_KEY';
     this.wifConfigPath = options.wifConfigPath;
-    // Auto-load Workforce Identity Federation (WiF) Config if present
+    // Auto-load Workforce Identity Federation (WiF) Config only when explicitly passed or when authType is WORKFORCE_IDENTITY_FEDERATION
     if (options.wifConfigJson) {
       this.wifConfig = options.wifConfigJson;
     } else if (options.wifConfigPath && fs.existsSync(options.wifConfigPath)) {
@@ -119,7 +123,11 @@ export class GcpAuthService {
       } catch (err: any) {
         logger.warn(`Failed to parse WiF config file: ${err.message}`);
       }
-    } else if (!isCredentialAutoloadDisabled() && fs.existsSync('./workforce-identity-config.json')) {
+    } else if (
+      this.authType === 'WORKFORCE_IDENTITY_FEDERATION' &&
+      !isCredentialAutoloadDisabled() &&
+      fs.existsSync('./workforce-identity-config.json')
+    ) {
       try {
         const content = fs.readFileSync('./workforce-identity-config.json', 'utf-8');
         this.wifConfig = JSON.parse(content);
@@ -260,6 +268,9 @@ export class GcpAuthService {
 
     const cached = this.userTokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now() + 60000) {
+      if (cleanEmail && cached.mode) {
+        this.userMechanismCache.set(cleanEmail.toLowerCase(), cached.mode);
+      }
       return cached.token;
     }
 
@@ -321,7 +332,7 @@ export class GcpAuthService {
               const dwdToken = await tryMintDwd(cleanEmail);
               if (dwdToken) {
                 this.userMechanismCache.set(lower, 'DWD');
-                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
+                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000, mode: 'DWD' });
                 return dwdToken;
               }
             } catch (err: any) {
@@ -332,13 +343,13 @@ export class GcpAuthService {
               }
             }
           }
-          // Only fall back to WIF when the caller did NOT explicitly request 'DWD' (e.g. during a retry)
-          if (!isStrictMode) {
+          // Only fall back to WIF when WIF is actually configured and the caller did NOT explicitly request 'DWD'
+          if (!isStrictMode && this.wifConfig?.audience) {
             try {
               const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
               if (wifToken) {
                 this.userMechanismCache.set(lower, 'WIF');
-                this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
+                this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000, mode: 'WIF' });
                 return wifToken;
               }
             } catch (wifErr: any) {
@@ -351,7 +362,7 @@ export class GcpAuthService {
             const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
             if (wifToken) {
               this.userMechanismCache.set(lower, 'WIF');
-              this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000 });
+              this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000, mode: 'WIF' });
               return wifToken;
             }
           } catch (wifErr: any) {
@@ -364,7 +375,7 @@ export class GcpAuthService {
               const dwdToken = await tryMintDwd(cleanEmail);
               if (dwdToken) {
                 this.userMechanismCache.set(lower, 'DWD');
-                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000 });
+                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000, mode: 'DWD' });
                 return dwdToken;
               }
             } catch (err: any) {

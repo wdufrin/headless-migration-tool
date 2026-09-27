@@ -74,10 +74,16 @@ configAuditRouter.post('/audit/config', async (req, res) => {
 
     const callerToken = req.accessToken;
     const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
+    const usesWif =
+      authType === 'WORKFORCE_IDENTITY_FEDERATION' ||
+      (validatedConfig.idpMapping?.sourceIdp && validatedConfig.idpMapping.sourceIdp !== 'GOOGLE_CLOUD_IDENTITY') ||
+      (validatedConfig.idpMapping?.targetIdp && validatedConfig.idpMapping.targetIdp !== 'GOOGLE_CLOUD_IDENTITY');
     const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH ||
       (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
-    const wifPath = validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
-      (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
+    const wifPath = usesWif
+      ? (validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
+         (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined))
+      : undefined;
 
     const authService = new GcpAuthService({
       staticToken: callerToken,
@@ -147,10 +153,16 @@ configAuditRouter.post('/audit/sync-engine-settings', async (req, res) => {
 
     const callerToken = req.accessToken;
     const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
+    const usesWif =
+      authType === 'WORKFORCE_IDENTITY_FEDERATION' ||
+      (validatedConfig.idpMapping?.sourceIdp && validatedConfig.idpMapping.sourceIdp !== 'GOOGLE_CLOUD_IDENTITY') ||
+      (validatedConfig.idpMapping?.targetIdp && validatedConfig.idpMapping.targetIdp !== 'GOOGLE_CLOUD_IDENTITY');
     const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH ||
       (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
-    const wifPath = validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
-      (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
+    const wifPath = usesWif
+      ? (validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
+         (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined))
+      : undefined;
 
     const authService = new GcpAuthService({
       staticToken: callerToken,

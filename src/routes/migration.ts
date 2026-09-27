@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { randomUUID } from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import { MigrationConfigSchema } from '../config/configSchema.js';
@@ -21,27 +22,42 @@ import { MigrationRunner } from '../engines/migrationRunner.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DryRunSimulator } from '../engines/dryRunSimulator.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
+import { AdminHitlNotebookCandidate } from '../types/migration.js';
 import { logger } from '../utils/logger.js';
 
 export const migrationRouter = express.Router();
+
+const pendingAdminHitlPrompts = new Map<
+  string,
+  { resolve: (approvedIds: string[]) => void; candidates: AdminHitlNotebookCandidate[] }
+>();
+
+function resolveAuthServiceOptions(validatedConfig: any, callerToken?: string) {
+  const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
+  const usesWif =
+    authType === 'WORKFORCE_IDENTITY_FEDERATION' ||
+    (validatedConfig.idpMapping?.sourceIdp && validatedConfig.idpMapping.sourceIdp !== 'GOOGLE_CLOUD_IDENTITY') ||
+    (validatedConfig.idpMapping?.targetIdp && validatedConfig.idpMapping.targetIdp !== 'GOOGLE_CLOUD_IDENTITY');
+  const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH ||
+    (fs.existsSync('./sa-dwd-key.json') && fs.statSync('./sa-dwd-key.json').size > 0 ? './sa-dwd-key.json' : undefined);
+  const wifPath = usesWif
+    ? (validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
+       (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined))
+    : undefined;
+
+  return {
+    staticToken: callerToken,
+    authType,
+    serviceAccountKeyPath: saKeyPath,
+    wifConfigPath: wifPath
+  };
+}
 
 // Admin Migration Trigger Endpoint (JSON)
 migrationRouter.post('/migrate', async (req, res) => {
   try {
     const validatedConfig = MigrationConfigSchema.parse(req.body);
-    const callerToken = req.accessToken;
-    const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
-    const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH || 
-      (fs.existsSync('./sa-dwd-key.json') && fs.statSync('./sa-dwd-key.json').size > 0 ? './sa-dwd-key.json' : undefined);
-    const wifPath = validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
-      (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
-
-    const authService = new GcpAuthService({
-      staticToken: callerToken,
-      authType,
-      serviceAccountKeyPath: saKeyPath,
-      wifConfigPath: wifPath
-    });
+    const authService = new GcpAuthService(resolveAuthServiceOptions(validatedConfig, req.accessToken));
     const runner = new MigrationRunner({ authService });
 
     logger.info(`Admin Migration API invoked by user: ${req.user?.email || 'authenticated-caller'}`);
@@ -78,26 +94,31 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
     sendEvent('log', { level, line, message, timestamp: new Date().toISOString() });
   });
 
+  let activePromptId: string | null = null;
+  res.on('close', () => {
+    if (activePromptId && pendingAdminHitlPrompts.has(activePromptId)) {
+      const pending = pendingAdminHitlPrompts.get(activePromptId);
+      pendingAdminHitlPrompts.delete(activePromptId);
+      pending?.resolve([]);
+    }
+  });
+
   try {
     const validatedConfig = MigrationConfigSchema.parse(req.body);
-    const callerToken = req.accessToken;
-    const authType = validatedConfig.auth?.authType || 'SERVICE_ACCOUNT_KEY';
-    const saKeyPath = validatedConfig.auth?.serviceAccountKeyPath || process.env.SERVICE_ACCOUNT_KEY_PATH || 
-      (fs.existsSync('./sa-dwd-key.json') && fs.statSync('./sa-dwd-key.json').size > 0 ? './sa-dwd-key.json' : undefined);
-    const wifPath = validatedConfig.auth?.wifConfigPath || process.env.WORKFORCE_IDENTITY_CONFIG_PATH ||
-      (fs.existsSync('./workforce-identity-config.json') ? './workforce-identity-config.json' : undefined);
-
-    const authService = new GcpAuthService({
-      staticToken: callerToken,
-      authType,
-      serviceAccountKeyPath: saKeyPath,
-      wifConfigPath: wifPath
-    });
+    const authService = new GcpAuthService(resolveAuthServiceOptions(validatedConfig, req.accessToken));
     // Forward real phase transitions from the engine. The browser previously had to
     // guess progress by substring-matching log text.
     const runner = new MigrationRunner({
       authService,
-      onStage: (stage, status) => sendEvent('stage', { stage, status })
+      onStage: (stage, status) => sendEvent('stage', { stage, status }),
+      onAdminNotebookHitlPrompt: (candidates: AdminHitlNotebookCandidate[]) => {
+        return new Promise<string[]>((resolve) => {
+          const promptId = randomUUID();
+          activePromptId = promptId;
+          pendingAdminHitlPrompts.set(promptId, { resolve, candidates });
+          sendEvent('admin_notebook_hitl', { promptId, candidates });
+        });
+      }
     });
 
     sendEvent('stage', { stage: 'preflight', status: 'active' });
@@ -119,16 +140,41 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
     sendEvent('error', { message: err.message, issues: err.issues || undefined });
     res.end();
   } finally {
+    if (activePromptId && pendingAdminHitlPrompts.has(activePromptId)) {
+      pendingAdminHitlPrompts.delete(activePromptId);
+    }
     unsubscribe();
   }
+});
+
+// Human-in-the-Loop (HITL) Response Endpoint for Shared Admin Notebooks
+migrationRouter.post('/migrate/hitl-response', (req, res) => {
+  const { promptId, approvedNotebookIds } = req.body || {};
+  if (!promptId || typeof promptId !== 'string') {
+    return res.status(400).json({ error: 'InvalidPromptId', message: 'A valid promptId string is required.' });
+  }
+  const pending = pendingAdminHitlPrompts.get(promptId);
+  if (!pending) {
+    return res.status(404).json({ error: 'PromptNotFound', message: `No active HITL prompt found for ID "${promptId}".` });
+  }
+  const normalizedIds = Array.isArray(approvedNotebookIds)
+    ? approvedNotebookIds.map((id: any) => String(id).trim()).filter(Boolean)
+    : [];
+  pendingAdminHitlPrompts.delete(promptId);
+  pending.resolve(normalizedIds);
+  logger.info(`[ADMIN HITL VALIDATION] Operator submitted HITL decision for prompt ${promptId}: ${normalizedIds.length} of ${pending.candidates.length} shared Admin notebook(s) approved.`);
+  return res.status(200).json({
+    ok: true,
+    approvedCount: normalizedIds.length,
+    totalCandidates: pending.candidates.length
+  });
 });
 
 // Pre-Flight Validation Endpoint
 migrationRouter.post('/preflight', async (req, res) => {
   try {
     const validatedConfig = MigrationConfigSchema.parse(req.body);
-    const callerToken = req.accessToken;
-    const authService = new GcpAuthService({ staticToken: callerToken });
+    const authService = new GcpAuthService(resolveAuthServiceOptions(validatedConfig, req.accessToken));
     const client = new DiscoveryEngineClient(authService);
     const simulator = new DryRunSimulator(client);
 

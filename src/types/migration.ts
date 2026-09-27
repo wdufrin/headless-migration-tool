@@ -24,6 +24,18 @@ export interface EnvironmentConfig {
   assistantId?: string;
 }
 
+export interface AdminHitlNotebookCandidate {
+  id: string;
+  title: string;
+  adminEmail: string;
+  targetOwner: string;
+  isShared: boolean;
+  createTime?: string;
+  lastViewed?: string;
+  sourceCount: number;
+  roleDescription: string;
+}
+
 export interface MigrationOptions {
   migrateNotebooks?: boolean;
   migrateAgents?: boolean;
@@ -46,6 +58,9 @@ export interface MigrationOptions {
   allowOverwrite?: boolean;
   resumeFrom?: string;
   skipIds?: string[];
+  promptForAdminNotebookHitl?: boolean;
+  approvedAdminNotebookIds?: string[];
+  onAdminNotebookHitlPrompt?: (candidates: AdminHitlNotebookCandidate[]) => Promise<string[]>;
   logLevel?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
   onItemCompleted?: (item: MigrationItemResult) => void;
 }

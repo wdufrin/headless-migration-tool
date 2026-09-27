@@ -4,6 +4,7 @@ import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
 import { GcpAuthService } from '../src/services/gcpAuth.js';
 import { Notebook, NotebookSource } from '../src/types/index.js';
 import { EnvironmentConfig } from '../src/types/migration.js';
+import { MigrationOptionsSchema } from '../src/config/configSchema.js';
 import { logger } from '../src/utils/logger.js';
 
 describe('NotebookMigrator Engine', () => {
@@ -551,6 +552,396 @@ describe('NotebookMigrator Engine', () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ADMIN PERMISSION ELEVATION DETECTED'));
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[DRY RUN AUDIT: PERMISSION ELEVATION]'));
       warnSpy.mockRestore();
+    });
+
+    it('should defer Admin users to the end of bulk runs, remove standard user-owned notebooks first, and flag remaining shared Admin notebooks', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'cei-vertex-prd-01', appLocation: 'us', appId: 'app-src' };
+      const targetEnv: EnvironmentConfig = { projectId: 'cei-gemini-prd-01', appLocation: 'us', appId: 'app-tgt' };
+
+      const minglaeSharedNb: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-minglae-owned-shared',
+        notebookId: 'nb-minglae-owned-shared',
+        title: 'Minglae Shared Notebook',
+        metadata: { userRole: 'UNSPECIFIED', isShared: true, isShareable: true }
+      };
+      const adminPrivateNb: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-admin-private',
+        notebookId: 'nb-admin-private',
+        title: 'Admin Private Notebook',
+        metadata: { userRole: 'UNSPECIFIED', isShared: false, isShareable: true }
+      };
+      const adminAmbiguousSharedNb: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-admin-ambiguous-shared',
+        notebookId: 'nb-admin-ambiguous-shared',
+        title: 'Ambiguous Shared Notebook Seen By Admin',
+        metadata: { userRole: 'UNSPECIFIED', isShared: true, isShareable: true }
+      };
+
+      const discoveryOrder: string[] = [];
+      const migrationCreationOrder: string[] = [];
+
+      const mockClient = {
+        testProjectIamPermissions: vi.fn().mockImplementation(async (_proj: string, _perms: string[], userEmail?: string) => {
+          // Admin holds project-level delete; standard user minglae does not
+          if (userEmail === 'admin@coned.com') return ['discoveryengine.notebooks.delete'];
+          return [];
+        }),
+        listNotebooks: vi.fn().mockImplementation(async (env: EnvironmentConfig, userEmail?: string) => {
+          if (env.projectId !== 'cei-vertex-prd-01') return [];
+          discoveryOrder.push(userEmail || 'root');
+          if (userEmail === 'admin@coned.com') {
+            // Admin sees their private notebook, Minglae's shared notebook, and another shared notebook
+            return [
+              { ...adminPrivateNb, metadata: { ...adminPrivateNb.metadata } },
+              { ...minglaeSharedNb, metadata: { ...minglaeSharedNb.metadata } },
+              { ...adminAmbiguousSharedNb, metadata: { ...adminAmbiguousSharedNb.metadata } }
+            ];
+          }
+          if (userEmail === 'minglae@coned.com') {
+            return [{ ...minglaeSharedNb, metadata: { ...minglaeSharedNb.metadata } }];
+          }
+          return [];
+        }),
+        getNotebook: vi.fn().mockImplementation(async (id: string) => {
+          // Both return isShared: false on getNotebook (minglae because she is true owner; admin because of delete elevation)
+          if (id === 'nb-minglae-owned-shared') {
+            return { ...minglaeSharedNb, metadata: { isShared: false, isShareable: true }, sources: [] };
+          }
+          if (id === 'nb-admin-ambiguous-shared') {
+            return { ...adminAmbiguousSharedNb, metadata: { isShared: false, isShareable: true }, sources: [] };
+          }
+          return { ...adminPrivateNb, metadata: { isShared: false, isShareable: true }, sources: [] };
+        }),
+        createNotebook: vi.fn().mockImplementation(async (_env: EnvironmentConfig, payload: any, owner?: string) => {
+          migrationCreationOrder.push(`${owner}:${payload.title}`);
+          return {
+            name: `projects/456/locations/us/notebooks/tgt-${payload.title.replace(/\s+/g, '-').toLowerCase()}`,
+            title: payload.title
+          };
+        }),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({ sources: [] }),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+
+      // Pass admin FIRST in userFilter to verify that NotebookMigrator reorders standard users before admins
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        {
+          dryRun: false,
+          concurrency: 1,
+          userFilter: ['admin@coned.com', 'minglae@coned.com']
+        }
+      );
+
+      // 1. Standard user minglae must be discovered BEFORE admin@coned.com
+      expect(discoveryOrder).toEqual(['minglae@coned.com', 'admin@coned.com']);
+
+      // 2. Minglae's shared notebook must be owned by minglae@coned.com and deduplicated from admin@coned.com
+      expect(results).toHaveLength(3);
+      const minglaeRes = results.find(r => r.id === 'nb-minglae-owned-shared')!;
+      expect(minglaeRes.originalOwner).toBe('minglae@coned.com');
+      expect(minglaeRes.details?.adminValidationFlagged).toBeUndefined();
+
+      // 3. Admin's private notebook is NOT flagged as ambiguous shared
+      const adminPrivateRes = results.find(r => r.id === 'nb-admin-private')!;
+      expect(adminPrivateRes.originalOwner).toBe('admin@coned.com');
+      expect(adminPrivateRes.details?.adminValidationFlagged).toBeFalsy();
+
+      // 4. Remaining shared Admin notebook IS flagged for validation and migrated LAST (at the end of the run)
+      const adminSharedRes = results.find(r => r.id === 'nb-admin-ambiguous-shared')!;
+      expect(adminSharedRes.originalOwner).toBe('admin@coned.com');
+      expect(adminSharedRes.details?.adminValidationFlagged).toBe(true);
+      expect(adminSharedRes.details?.hasProjectLevelAdminElevation).toBe(true);
+      expect(adminSharedRes.ownershipNote).toContain('FLAGGED FOR VALIDATION');
+
+      expect(migrationCreationOrder).toEqual([
+        'minglae@coned.com:Minglae Shared Notebook',
+        'admin@coned.com:Admin Private Notebook',
+        'admin@coned.com:Ambiguous Shared Notebook Seen By Admin'
+      ]);
+    });
+
+    it('should prompt for HITL at the end of the migration when promptForAdminNotebookHitl is enabled, migrating approved and skipping rejected notebooks', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'cei-vertex-prd-01', appLocation: 'us', appId: 'app-src' };
+      const targetEnv: EnvironmentConfig = { projectId: 'cei-gemini-prd-01', appLocation: 'us', appId: 'app-tgt' };
+
+      const adminSharedApprove: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-admin-shared-approve',
+        notebookId: 'nb-admin-shared-approve',
+        title: 'Admin True Shared Notebook',
+        metadata: { userRole: 'UNSPECIFIED', isShared: true, isShareable: true }
+      };
+      const adminSharedReject: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-admin-shared-reject',
+        notebookId: 'nb-admin-shared-reject',
+        title: 'External Colleague Shared Notebook',
+        metadata: { userRole: 'UNSPECIFIED', isShared: true, isShareable: true }
+      };
+
+      const mockClient = {
+        testProjectIamPermissions: vi.fn().mockResolvedValue(['discoveryengine.notebooks.delete']),
+        listNotebooks: vi.fn().mockImplementation(async (env: EnvironmentConfig) => {
+          if (env.projectId === 'cei-vertex-prd-01') {
+            return [
+              { ...adminSharedApprove, metadata: { ...adminSharedApprove.metadata } },
+              { ...adminSharedReject, metadata: { ...adminSharedReject.metadata } }
+            ];
+          }
+          return [];
+        }),
+        getNotebook: vi.fn().mockImplementation(async (id: string) => ({
+          name: `projects/123/locations/us/notebooks/${id}`,
+          notebookId: id,
+          title: id === 'nb-admin-shared-approve' ? 'Admin True Shared Notebook' : 'External Colleague Shared Notebook',
+          metadata: { isShared: false, isShareable: true },
+          sources: []
+        })),
+        createNotebook: vi.fn().mockImplementation(async (_env: EnvironmentConfig, payload: any) => ({
+          name: `projects/456/locations/us/notebooks/new-${payload.title}`,
+          title: payload.title
+        })),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({ sources: [] }),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const hitlPromptSpy = vi.fn().mockImplementation(async (candidates) => {
+        expect(candidates).toHaveLength(2);
+        // Operator approves ONLY nb-admin-shared-approve and rejects nb-admin-shared-reject
+        return ['nb-admin-shared-approve'];
+      });
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        {
+          dryRun: false,
+          promptForAdminNotebookHitl: true,
+          onAdminNotebookHitlPrompt: hitlPromptSpy,
+          userFilter: ['admin@coned.com']
+        }
+      );
+
+      expect(hitlPromptSpy).toHaveBeenCalledTimes(1);
+      expect(results).toHaveLength(2);
+
+      const approved = results.find(r => r.id === 'nb-admin-shared-approve')!;
+      expect(approved.status).toBe('SUCCESS');
+      expect(approved.details?.adminValidationFlagged).toBe(true);
+      expect(approved.details?.adminHitlDecision).toBe('APPROVED');
+
+      const rejected = results.find(r => r.id === 'nb-admin-shared-reject')!;
+      expect(rejected.status).toBe('SKIPPED');
+      expect(rejected.details?.adminValidationFlagged).toBe(true);
+      expect(rejected.details?.adminHitlDecision).toBe('REJECTED');
+      expect(rejected.ownershipNote).toContain('Skipped by operator during Admin Shared Notebook HITL validation');
+
+      // Only the 1 approved notebook should have been created in target
+      expect(mockClient.createNotebook).toHaveBeenCalledTimes(1);
+    });
+
+    it('should safely skip unverified shared Admin notebooks when promptForAdminNotebookHitl is true but no interactive callback or approvedAdminNotebookIds is provided (adversarial/headless guard)', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'cei-vertex-prd-01', appLocation: 'us', appId: 'app-src' };
+      const targetEnv: EnvironmentConfig = { projectId: 'cei-gemini-prd-01', appLocation: 'us', appId: 'app-tgt' };
+
+      const unverifiedShared: Notebook = {
+        name: 'projects/123/locations/us/notebooks/nb-unverified-shared',
+        notebookId: 'nb-unverified-shared',
+        title: 'Unverified Shared Admin Notebook',
+        metadata: { userRole: 'UNSPECIFIED', isShared: true, isShareable: true }
+      };
+
+      const mockClient = {
+        testProjectIamPermissions: vi.fn().mockResolvedValue(['discoveryengine.notebooks.delete']),
+        listNotebooks: vi.fn().mockResolvedValue([unverifiedShared]),
+        getNotebook: vi.fn().mockResolvedValue({
+          ...unverifiedShared,
+          metadata: { isShared: false, isShareable: true },
+          sources: []
+        }),
+        createNotebook: vi.fn(),
+        batchCreateNotebookSources: vi.fn(),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        {
+          dryRun: false,
+          promptForAdminNotebookHitl: true,
+          userFilter: ['admin@coned.com']
+        }
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('SKIPPED');
+      expect(results[0].details?.adminHitlDecision).toBe('REJECTED');
+      expect(mockClient.createNotebook).not.toHaveBeenCalled();
+    });
+
+    it('should explicitly reject malformed promptForAdminNotebookHitl and approvedAdminNotebookIds options with ZodError', () => {
+      expect(() =>
+        MigrationOptionsSchema.parse({
+          promptForAdminNotebookHitl: 'yes-please' as any
+        })
+      ).toThrow(/Expected boolean/);
+
+      expect(() =>
+        MigrationOptionsSchema.parse({
+          promptForAdminNotebookHitl: true,
+          approvedAdminNotebookIds: [12345, { malicious: true }] as any
+        })
+      ).toThrow(/Expected string/);
+    });
+
+    it('should skip listing and recreating Studio artifacts when exportArtifacts is false', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'ancient-sandbox-322523', appLocation: 'global', appId: 'app-src' };
+      const targetEnv: EnvironmentConfig = { projectId: 'testgebackupandrestorev3', appLocation: 'global', appId: 'app-tgt' };
+
+      const privateNotebook: Notebook = {
+        name: 'projects/123/locations/global/notebooks/nb-no-artifacts',
+        notebookId: 'nb-no-artifacts',
+        title: 'Private Notebook',
+        metadata: { userRole: 'PROJECT_ROLE_OWNER', isShared: false, isShareable: true }
+      };
+
+      const listArtifactsSpy = vi.fn().mockResolvedValue([{ title: 'Should Not Be Fetched', type: 'SLIDE_DECK' }]);
+      const createArtifactSpy = vi.fn().mockResolvedValue({});
+
+      const mockClient = {
+        testProjectIamPermissions: vi.fn().mockResolvedValue([]),
+        listNotebooks: vi.fn().mockImplementation(async (env: EnvironmentConfig) => {
+          if (env.projectId === sourceEnv.projectId) return [privateNotebook];
+          return [];
+        }),
+        getNotebook: vi.fn().mockResolvedValue({
+          ...privateNotebook,
+          sources: []
+        }),
+        createNotebook: vi.fn().mockResolvedValue({
+          name: 'projects/456/locations/global/notebooks/nb-created',
+          title: 'Private Notebook'
+        }),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({ sources: [] }),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: listArtifactsSpy,
+        createArtifact: createArtifactSpy
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        {
+          dryRun: false,
+          exportArtifacts: false,
+          userFilter: ['wdufrin@wdufrin.altostrat.com']
+        }
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('SUCCESS');
+      expect(listArtifactsSpy).not.toHaveBeenCalled();
+      expect(createArtifactSpy).not.toHaveBeenCalled();
+    });
+
+    it('should accurately detect Admin vs Standard users under DWD mode via Project IAM Policy and Custom Role inspection without failing on narrow DWD token scopes', async () => {
+      const mockAuth = {
+        getAuthType: () => 'SERVICE_ACCOUNT_KEY' as const,
+        getServiceAccountProjectId: () => 'testgebackupandrestorev3',
+        getLastUsedImpersonationMode: () => 'DWD' as const,
+        getImpersonationMechanismStatus: (_email: string, mode: 'DWD' | 'WIF') => ({
+          available: mode === 'DWD',
+          reason: mode === 'DWD' ? 'DWD configured' : 'WIF not configured'
+        }),
+        getAccessToken: vi.fn().mockResolvedValue('base-or-user-token')
+      };
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+        const url = String(input);
+        if (url.includes(':getIamPolicy')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              bindings: [
+                {
+                  role: 'projects/ancient-sandbox-322523/roles/agentspace',
+                  members: ['user:admin@wdufrin.altostrat.com']
+                },
+                {
+                  role: 'roles/editor',
+                  members: ['user:mikesh@wdufrin.altostrat.com']
+                },
+                {
+                  role: 'projects/ancient-sandbox-322523/roles/customRestrictedEndUser',
+                  members: ['user:wdufrin@wdufrin.altostrat.com']
+                },
+                {
+                  role: 'roles/discoveryengine.user',
+                  members: ['user:bryankelly@wdufrin.altostrat.com']
+                }
+              ]
+            })
+          } as any;
+        }
+        if (url.includes('iam.googleapis.com/v1/projects/ancient-sandbox-322523/roles/agentspace')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              includedPermissions: ['discoveryengine.notebooks.delete', 'discoveryengine.notebooks.get']
+            })
+          } as any;
+        }
+        if (url.includes('iam.googleapis.com/v1/projects/ancient-sandbox-322523/roles/customRestrictedEndUser')) {
+          return {
+            ok: false,
+            status: 403,
+            text: async () => JSON.stringify({ error: { message: 'iam.roles.get denied' } })
+          } as any;
+        }
+        throw new Error(`Unexpected URL in test: ${url}`);
+      });
+
+      try {
+        const realClient = new DiscoveryEngineClient(mockAuth as any);
+        const adminPerms = await realClient.testProjectIamPermissions(
+          'ancient-sandbox-322523',
+          ['discoveryengine.notebooks.delete'],
+          'admin@wdufrin.altostrat.com'
+        );
+        const editorPerms = await realClient.testProjectIamPermissions(
+          'ancient-sandbox-322523',
+          ['discoveryengine.notebooks.delete'],
+          'mikesh@wdufrin.altostrat.com'
+        );
+        const restrictedPerms = await realClient.testProjectIamPermissions(
+          'ancient-sandbox-322523',
+          ['discoveryengine.notebooks.delete'],
+          'wdufrin@wdufrin.altostrat.com'
+        );
+        const standardPerms = await realClient.testProjectIamPermissions(
+          'ancient-sandbox-322523',
+          ['discoveryengine.notebooks.delete'],
+          'bryankelly@wdufrin.altostrat.com'
+        );
+
+        expect(adminPerms).toEqual(['discoveryengine.notebooks.delete']);
+        expect(editorPerms).toEqual(['discoveryengine.notebooks.delete']);
+        expect(restrictedPerms).toEqual([]);
+        expect(standardPerms).toEqual([]);
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
   });
 });

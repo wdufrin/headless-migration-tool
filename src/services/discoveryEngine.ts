@@ -637,21 +637,214 @@ export class DiscoveryEngineClient {
     );
   }
 
+  private projectIamPolicyCache: Map<string, IamPolicy | null> = new Map();
+  private rolePermissionsCache: Map<string, string[] | null> = new Map();
+
+  /**
+   * Fetches and caches the project-level IAM policy using base/admin credentials.
+   */
+  private async getProjectIamPolicyCached(projectId: string): Promise<IamPolicy | null> {
+    if (this.projectIamPolicyCache.has(projectId)) {
+      return this.projectIamPolicyCache.get(projectId) ?? null;
+    }
+    try {
+      const url = `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:getIamPolicy`;
+      const res = await this.request<IamPolicy>(url, 'POST', {}, projectId);
+      if (res && Array.isArray(res.bindings)) {
+        this.projectIamPolicyCache.set(projectId, res);
+        return res;
+      }
+    } catch (err: any) {
+      logger.debug(`Could not fetch project IAM policy for "${projectId}": ${err.message}`);
+    }
+    this.projectIamPolicyCache.set(projectId, null);
+    return null;
+  }
+
+  /**
+   * Checks whether a given IAM role (predefined or custom) includes `permission`.
+   */
+  private async roleGrantsPermission(role: string, permission: string, projectId: string): Promise<boolean> {
+    const normalizedRole = (role || '').trim();
+    if (!normalizedRole) return false;
+
+    if (
+      normalizedRole === 'roles/owner' ||
+      normalizedRole === 'roles/editor' ||
+      normalizedRole === 'roles/discoveryengine.admin'
+    ) {
+      return true;
+    }
+
+    if (
+      normalizedRole === 'roles/viewer' ||
+      normalizedRole === 'roles/browser' ||
+      normalizedRole === 'roles/discoveryengine.user' ||
+      normalizedRole === 'roles/discoveryengine.viewer'
+    ) {
+      return false;
+    }
+
+    // Predefined roles for other GCP services do not grant discoveryengine.* permissions
+    if (normalizedRole.startsWith('roles/') && !normalizedRole.startsWith('roles/discoveryengine.')) {
+      return false;
+    }
+
+    if (!this.rolePermissionsCache.has(normalizedRole)) {
+      try {
+        const cleanRolePath = normalizedRole.replace(/^\/+/, '');
+        const roleUrl = `https://iam.googleapis.com/v1/${cleanRolePath}`;
+        const roleDef = await this.request<{ includedPermissions?: string[] }>(roleUrl, 'GET', undefined, projectId);
+        if (roleDef && Array.isArray(roleDef.includedPermissions)) {
+          this.rolePermissionsCache.set(normalizedRole, roleDef.includedPermissions);
+        } else {
+          this.rolePermissionsCache.set(normalizedRole, null);
+        }
+      } catch (err: any) {
+        logger.debug(`Could not inspect IAM role definition "${normalizedRole}": ${err.message}`);
+        this.rolePermissionsCache.set(normalizedRole, null);
+      }
+    }
+
+    const cachedPerms = this.rolePermissionsCache.get(normalizedRole);
+    if (Array.isArray(cachedPerms)) {
+      return cachedPerms.includes(permission);
+    }
+
+    // Fallback heuristic when iam.roles.get is unavailable (e.g., caller lacks iam.roles.get on custom role)
+    if (permission === 'discoveryengine.notebooks.delete') {
+      const roleId = (normalizedRole.split('/').pop() || normalizedRole).toLowerCase();
+      if (
+        roleId.includes('restricted') ||
+        roleId.includes('enduser') ||
+        roleId.includes('viewer') ||
+        roleId.includes('reader') ||
+        roleId.endsWith('user')
+      ) {
+        return false;
+      }
+      if (
+        roleId.includes('admin') ||
+        roleId.includes('owner') ||
+        roleId.includes('editor') ||
+        roleId.includes('agentspace')
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Evaluates whether `forUserEmail` holds `permissions` on `projectId` by inspecting
+   * the project's IAM policy bindings using base/admin credentials (avoiding DWD user token
+   * `cloud-platform` OAuth scope restrictions on Cloud Resource Manager).
+   */
+  private async evaluatePermissionsFromProjectIamPolicy(
+    projectId: string,
+    permissions: string[],
+    forUserEmail: string
+  ): Promise<string[] | null> {
+    const policy = await this.getProjectIamPolicyCached(projectId);
+    if (!policy || !Array.isArray(policy.bindings)) {
+      return null;
+    }
+
+    const cleanEmail = forUserEmail.replace(/^user:/i, '').trim().toLowerCase();
+    const domain = cleanEmail.includes('@') ? cleanEmail.split('@')[1] : '';
+    const wifAvailable =
+      typeof this.auth.getImpersonationMechanismStatus === 'function'
+        ? this.auth.getImpersonationMechanismStatus(cleanEmail, 'WIF').available
+        : false;
+    const isWifUser =
+      wifAvailable &&
+      (this.auth.getAuthType?.() === 'WORKFORCE_IDENTITY_FEDERATION' ||
+        GcpAuthService.isExternalIdentityDomain(cleanEmail) ||
+        this.auth.getLastUsedImpersonationMode?.(cleanEmail) === 'WIF');
+
+    const matchedRoles = new Set<string>();
+    for (const binding of policy.bindings) {
+      if (!binding?.role || !Array.isArray(binding.members)) continue;
+      for (const rawMember of binding.members) {
+        const m = String(rawMember || '').trim().toLowerCase();
+        const isDirectUser = m === `user:${cleanEmail}`;
+        const isDomainMatch = Boolean(domain && m === `domain:${domain}`);
+        const isPublicMatch = m === 'allauthenticatedusers' || m === 'allusers';
+        const isExplicitPrincipalSubject = m.endsWith(`/subject/${cleanEmail}`);
+        const isWorkforcePoolWildcard =
+          isWifUser &&
+          m.startsWith('principalset://iam.googleapis.com/locations/global/workforcepools/') &&
+          m.endsWith('/*');
+
+        if (
+          isDirectUser ||
+          isDomainMatch ||
+          isPublicMatch ||
+          isExplicitPrincipalSubject ||
+          isWorkforcePoolWildcard
+        ) {
+          matchedRoles.add(binding.role);
+          break;
+        }
+      }
+    }
+
+    const granted: string[] = [];
+    for (const perm of permissions) {
+      for (const role of matchedRoles) {
+        if (await this.roleGrantsPermission(role, perm, projectId)) {
+          granted.push(perm);
+          break;
+        }
+      }
+    }
+    return granted;
+  }
+
   /**
    * Tests whether the caller (or impersonated user token) holds specific GCP project-level
-   * IAM permissions on `projectId` via Cloud Resource Manager `projects.testIamPermissions`.
+   * IAM permissions on `projectId` via Project IAM Policy inspection and/or Cloud Resource Manager
+   * `projects.testIamPermissions`.
    */
   async testProjectIamPermissions(projectId: string, permissions: string[], forUserEmail?: string): Promise<string[]> {
+    const cleanEmail = forUserEmail ? forUserEmail.replace(/^user:/i, '').trim().toLowerCase() : undefined;
+    const isDwdModeForUser =
+      Boolean(cleanEmail) &&
+      this.auth.getAuthType?.() !== 'WORKFORCE_IDENTITY_FEDERATION' &&
+      !GcpAuthService.isExternalIdentityDomain(cleanEmail!);
+
+    // For DWD-impersonated users, DWD tokens only carry Discovery Engine scopes (not cloud-platform),
+    // so calling cloudresourcemanager.googleapis.com:testIamPermissions with the user's DWD token
+    // fails with HTTP 403 "Request had insufficient authentication scopes". Evaluate via the project's
+    // IAM policy (using base/admin credentials) first.
+    if (cleanEmail && isDwdModeForUser) {
+      const fromPolicy = await this.evaluatePermissionsFromProjectIamPolicy(projectId, permissions, cleanEmail);
+      if (fromPolicy !== null) {
+        return fromPolicy;
+      }
+    }
+
     const url = `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:testIamPermissions`;
-    const res = await this.request<{ permissions?: string[] }>(
-      url,
-      'POST',
-      { permissions },
-      projectId,
-      undefined,
-      forUserEmail
-    );
-    return Array.isArray(res?.permissions) ? res.permissions : [];
+    try {
+      const res = await this.request<{ permissions?: string[] }>(
+        url,
+        'POST',
+        { permissions },
+        projectId,
+        undefined,
+        forUserEmail
+      );
+      return Array.isArray(res?.permissions) ? res.permissions : [];
+    } catch (err: any) {
+      if (cleanEmail) {
+        const fromPolicy = await this.evaluatePermissionsFromProjectIamPolicy(projectId, permissions, cleanEmail);
+        if (fromPolicy !== null) {
+          return fromPolicy;
+        }
+      }
+      throw err;
+    }
   }
 }
 

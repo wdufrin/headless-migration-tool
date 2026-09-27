@@ -92,6 +92,8 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       allowOverwrite: process.env.ALLOW_OVERWRITE === 'true',
       resumeFrom: process.env.RESUME_FROM || undefined,
       skipIds: [],
+      promptForAdminNotebookHitl: process.env.PROMPT_ADMIN_NOTEBOOK_HITL === 'true',
+      approvedAdminNotebookIds: process.env.APPROVED_ADMIN_NOTEBOOK_IDS ? process.env.APPROVED_ADMIN_NOTEBOOK_IDS.split(',').map(s => s.trim()).filter(Boolean) : [],
       debugMode: process.env.DEBUG_MODE === 'true',
       logLevel: (process.env.LOG_LEVEL as any) || 'INFO'
     }

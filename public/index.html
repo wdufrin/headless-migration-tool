@@ -522,6 +522,13 @@
                       <span class="block text-[10px] text-gray-400">Logs raw API metadata (list vs get), role/ownership verdicts & writes <code class="font-mono text-cyan-400">diagnostic-troubleshoot-*.json</code></span>
                     </div>
                   </label>
+                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer pt-1.5 border-t border-gray-800/70">
+                    <input type="checkbox" id="optPromptAdminNotebookHitl" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-500">
+                    <div>
+                      <span class="font-medium text-amber-300">🛑 Prompt for HITL on Admin Notebooks</span>
+                      <span class="block text-[10px] text-gray-400">Defers shared Admin notebooks to the end of the run (after removing standard user-owned notebooks) and prompts you to validate which ones to migrate</span>
+                    </div>
+                  </label>
                 </div>
 
                 <!-- Agent Type & Lifecycle Filters -->
@@ -1710,6 +1717,10 @@
                     <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
                       <input type="checkbox" id="singleOptArtifacts" checked class="rounded bg-gray-800 border-gray-700 text-pink-500">
                       <span>🎨 Artifacts & Files</span>
+                    </label>
+                    <label class="flex items-center space-x-2 text-amber-300 cursor-pointer col-span-2 pt-1.5 border-t border-gray-800/70" title="If this user holds project-level Admin permissions, pause at the end of notebook discovery and prompt you to manually validate which shared notebooks should be migrated">
+                      <input type="checkbox" id="singleOptPromptAdminNotebookHitl" class="rounded bg-gray-800 border-gray-700 text-amber-500">
+                      <span>🛑 Prompt for HITL on Admin Shared Notebooks</span>
                     </label>
                   </div>
                 </div>
@@ -4611,7 +4622,9 @@
           authType: (document.getElementById('srcIdp')?.value === 'entra' || document.getElementById('srcIdp')?.value === 'okta' || document.getElementById('tgtIdp')?.value === 'entra' || document.getElementById('tgtIdp')?.value === 'okta')
             ? 'WORKFORCE_IDENTITY_FEDERATION' 
             : 'SERVICE_ACCOUNT_KEY',
-          wifConfigPath: './workforce-identity-config.json',
+          wifConfigPath: (document.getElementById('srcIdp')?.value === 'entra' || document.getElementById('srcIdp')?.value === 'okta' || document.getElementById('tgtIdp')?.value === 'entra' || document.getElementById('tgtIdp')?.value === 'okta')
+            ? './workforce-identity-config.json'
+            : undefined,
           serviceAccountKeyPath: document.getElementById('optSaKey')?.value?.trim() || './sa-dwd-key.json'
         },
         idpMapping: {
@@ -8424,7 +8437,9 @@ ${projectIamBlock}`;
           authType: (document.getElementById('srcIdp')?.value === 'entra' || document.getElementById('srcIdp')?.value === 'okta' || document.getElementById('tgtIdp')?.value === 'entra' || document.getElementById('tgtIdp')?.value === 'okta')
             ? 'WORKFORCE_IDENTITY_FEDERATION' 
             : 'SERVICE_ACCOUNT_KEY',
-          wifConfigPath: './workforce-identity-config.json',
+          wifConfigPath: (document.getElementById('srcIdp')?.value === 'entra' || document.getElementById('srcIdp')?.value === 'okta' || document.getElementById('tgtIdp')?.value === 'entra' || document.getElementById('tgtIdp')?.value === 'okta')
+            ? './workforce-identity-config.json'
+            : undefined,
           serviceAccountKeyPath: document.getElementById('optSaKey')?.value?.trim() || './sa-dwd-key.json'
         },
         idpMapping: {
@@ -8451,6 +8466,7 @@ ${projectIamBlock}`;
           preserveSharing: false,
           publishAgents: false,
           dryRun: isDryRun,
+          promptForAdminNotebookHitl: document.getElementById('optPromptAdminNotebookHitl') ? document.getElementById('optPromptAdminNotebookHitl').checked : false,
           debugMode: document.getElementById('optDebugMode') ? document.getElementById('optDebugMode').checked : false,
           logLevel: (document.getElementById('optDebugMode') && document.getElementById('optDebugMode').checked) ? 'DEBUG' : 'INFO',
           concurrency: 10,
@@ -8544,6 +8560,9 @@ ${projectIamBlock}`;
                   }
                 }
 
+              } else if (eventType === 'admin_notebook_hitl') {
+                addLog(`🛑 Action Required: ${data.candidates?.length || 0} shared Admin notebook(s) require Human-in-the-Loop validation.`, 'WARN');
+                openAdminNotebookHitlModal(data.promptId, data.candidates || []);
               } else if (eventType === 'report') {
                 finalReport = data;
                 activeReportData = data;
@@ -8986,11 +9005,27 @@ ${projectIamBlock}`;
         }
 
         let notebookSourceSubtitle = '';
-        if (item.type === 'NOTEBOOK' && item.details?.sourcesRestored !== undefined) {
-          const restored = item.details.sourcesRestored;
-          const total = item.details.sourcesCount || restored;
-          const failed = item.details.sourcesFailed || 0;
-          notebookSourceSubtitle = `<div class="text-[11px] text-gray-400 mt-0.5">${restored}/${total} sources restored${failed > 0 ? ` <span class="text-rose-400 font-semibold">(${failed} failed)</span>` : ''}</div>`;
+        if (item.type === 'NOTEBOOK') {
+          const parts = [];
+          if (item.details?.sourcesRestored !== undefined) {
+            const restored = item.details.sourcesRestored;
+            const total = item.details.sourcesCount || restored;
+            const failed = item.details.sourcesFailed || 0;
+            parts.push(`<span>${restored}/${total} sources restored${failed > 0 ? ` <span class="text-rose-400 font-semibold">(${failed} failed)</span>` : ''}</span>`);
+          }
+          if (item.details?.adminValidationFlagged) {
+            const decision = item.details.adminHitlDecision;
+            if (decision === 'APPROVED') {
+              parts.push(`<span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold text-[10px]" title="${escapeHtml(item.ownershipNote || '')}">✅ HITL Approved (Admin Shared)</span>`);
+            } else if (decision === 'REJECTED') {
+              parts.push(`<span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold text-[10px]" title="${escapeHtml(item.ownershipNote || '')}">🛑 HITL Skipped (Admin Shared)</span>`);
+            } else {
+              parts.push(`<span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold text-[10px]" title="${escapeHtml(item.ownershipNote || 'User holds project-level Admin permissions on this shared notebook; verify true ownership')}">⚠️ Flagged: Admin Shared Notebook (Validate Ownership)</span>`);
+            }
+          }
+          if (parts.length > 0) {
+            notebookSourceSubtitle = `<div class="text-[11px] text-gray-400 mt-0.5 flex flex-wrap items-center gap-2">${parts.join('')}</div>`;
+          }
         }
 
         tr.innerHTML = `
@@ -11502,6 +11537,7 @@ ${projectIamBlock}`;
           migrateMemories: true,
           exportMemories: true,
           exportArtifacts: document.getElementById('singleOptArtifacts').checked,
+          promptForAdminNotebookHitl: document.getElementById('singleOptPromptAdminNotebookHitl') ? document.getElementById('singleOptPromptAdminNotebookHitl').checked : false,
           userFilter: [srcUser],
           dryRun: isDryRun,
           concurrency: 5,
@@ -11560,6 +11596,13 @@ ${projectIamBlock}`;
                 logLine.textContent = `[${new Date(eventData.timestamp).toLocaleTimeString()}] [${eventData.level}] ${eventData.message}`;
                 streamLogs.appendChild(logLine);
                 streamLogs.scrollTop = streamLogs.scrollHeight;
+              } else if (eventType === 'admin_notebook_hitl') {
+                const hitlLine = document.createElement('div');
+                hitlLine.className = 'text-amber-300 font-semibold';
+                hitlLine.textContent = `🛑 Action Required: ${eventData.candidates?.length || 0} shared Admin notebook(s) awaiting HITL validation...`;
+                streamLogs.appendChild(hitlLine);
+                streamLogs.scrollTop = streamLogs.scrollHeight;
+                openAdminNotebookHitlModal(eventData.promptId, eventData.candidates || []);
               } else if (eventType === 'report') {
                 reconBox.classList.remove('hidden');
                 renderSingleUserReconciliation(eventData, srcUser, tgtUser);
@@ -11631,7 +11674,7 @@ ${projectIamBlock}`;
 
         const sourceLabel = item.displayName || item.sourceName || item.id || 'Untitled';
         const targetLabel = item.targetId || item.targetName || (item.status === 'DRY_RUN' ? `Ready to Restore (${tgtUser})` : `Restored in Target`);
-        const notes = item.error || item.details || (item.originalOwner ? `From ${item.originalOwner} ➔ Assigned to ${tgtUser}` : `Assigned to ${tgtUser}`);
+        const notes = item.error || item.ownershipNote || (typeof item.details === 'string' ? item.details : '') || (item.originalOwner ? `From ${item.originalOwner} ➔ Assigned to ${tgtUser}` : `Assigned to ${tgtUser}`);
 
         return `
           <tr class="hover:bg-gray-900/50 border-b border-gray-800/40">
@@ -11643,6 +11686,80 @@ ${projectIamBlock}`;
           </tr>
         `;
       }).join('');
+    }
+
+    let currentAdminHitlPromptId = null;
+
+    function openAdminNotebookHitlModal(promptId, candidates) {
+      currentAdminHitlPromptId = promptId;
+      const modal = document.getElementById('adminNotebookHitlModal');
+      const tbody = document.getElementById('adminNotebookHitlTableBody');
+      const countBadge = document.getElementById('adminNotebookHitlCountBadge');
+      if (!modal || !tbody) return;
+
+      if (countBadge) {
+        countBadge.textContent = `${candidates.length} Shared Notebook(s)`;
+      }
+
+      tbody.innerHTML = candidates.map((c, idx) => {
+        const created = c.createTime ? new Date(c.createTime).toLocaleDateString() : 'Unknown';
+        const viewed = c.lastViewed ? new Date(c.lastViewed).toLocaleDateString() : 'Unknown';
+        return `
+          <tr class="hover:bg-gray-800/60 border-b border-gray-800/70 transition">
+            <td class="py-3 px-4 text-center">
+              <input type="checkbox" class="admin-hitl-nb-checkbox rounded bg-gray-800 border-gray-600 text-amber-500 focus:ring-amber-500 w-4 h-4 cursor-pointer" data-notebook-id="${escapeHtml(c.id)}">
+            </td>
+            <td class="py-3 px-4">
+              <div class="font-semibold text-white text-sm">${escapeHtml(c.title || 'Untitled Notebook')}</div>
+              <div class="text-[11px] font-mono text-gray-400 mt-0.5">ID: ${escapeHtml(c.id)} • ${c.sourceCount || 0} source(s)</div>
+            </td>
+            <td class="py-3 px-4 font-mono text-xs text-amber-300">
+              <div>${escapeHtml(c.adminEmail)}</div>
+              <div class="text-[10px] text-gray-400">➔ ${escapeHtml(c.targetOwner)}</div>
+            </td>
+            <td class="py-3 px-4 text-xs text-gray-300">
+              <div>Created: <span class="font-mono text-gray-200">${escapeHtml(created)}</span></div>
+              <div class="text-[11px] text-gray-400">Last Viewed: ${escapeHtml(viewed)}</div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      modal.classList.remove('hidden');
+    }
+
+    function toggleAllAdminHitlNotebooks(checked) {
+      document.querySelectorAll('.admin-hitl-nb-checkbox').forEach(cb => {
+        cb.checked = checked;
+      });
+    }
+
+    async function submitAdminNotebookHitlDecision(skipAll) {
+      if (!currentAdminHitlPromptId) return;
+      const promptId = currentAdminHitlPromptId;
+      currentAdminHitlPromptId = null;
+
+      const approvedNotebookIds = [];
+      if (!skipAll) {
+        document.querySelectorAll('.admin-hitl-nb-checkbox:checked').forEach(cb => {
+          const nbId = cb.getAttribute('data-notebook-id');
+          if (nbId) approvedNotebookIds.push(nbId);
+        });
+      }
+
+      const modal = document.getElementById('adminNotebookHitlModal');
+      if (modal) modal.classList.add('hidden');
+
+      try {
+        await fetch('/api/migrate/hitl-response', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ promptId, approvedNotebookIds })
+        });
+        addLog(`Submitted Admin HITL decision: ${approvedNotebookIds.length} notebook(s) approved for migration.`, 'INFO');
+      } catch (err) {
+        addLog(`Failed to submit Admin HITL decision: ${err.message}`, 'ERROR');
+      }
     }
 
     // Auto-fetch available Gemini Enterprise apps on page load
@@ -11684,5 +11801,58 @@ ${projectIamBlock}`;
       setTimeout(() => autoRefreshAppIds(), 800);
     });
   </script>
+
+  <!-- Human-in-the-Loop (HITL) Modal for Shared Admin Notebooks -->
+  <div id="adminNotebookHitlModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div class="bg-gray-900 border border-amber-500/40 rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+      <div class="px-6 py-4 bg-amber-950/40 border-b border-amber-500/30 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <span class="text-2xl">🛑</span>
+          <div>
+            <h3 class="text-lg font-bold text-amber-300">Human-in-the-Loop Validation: Shared Admin Notebooks</h3>
+            <p class="text-xs text-amber-200/80">Standard user-owned notebooks have already been migrated and removed. Review the remaining shared notebooks on Admin account(s).</p>
+          </div>
+        </div>
+        <span id="adminNotebookHitlCountBadge" class="px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-mono font-bold">0 Shared Notebook(s)</span>
+      </div>
+
+      <div class="p-6 overflow-y-auto space-y-4">
+        <div class="p-3.5 rounded-xl bg-gray-950/90 border border-gray-800 text-xs text-gray-300 leading-relaxed">
+          <strong class="text-amber-300">Why are these flagged?</strong> Because this user holds project-level Admin permissions (<code class="text-amber-400 font-mono">discoveryengine.notebooks.delete</code>) on the source project, Google's NotebookLM API classifies them as <code class="text-amber-400 font-mono">PROJECT_ROLE_OWNER</code> on all shared notebooks they have viewed. Any shared notebooks owned by standard users in this run were already deduplicated. Check the box next to any remaining shared notebook below that is genuinely owned by this Admin and should be migrated under their account.
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <button type="button" onclick="toggleAllAdminHitlNotebooks(true)" class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-200 border border-gray-700 transition">Select All</button>
+            <button type="button" onclick="toggleAllAdminHitlNotebooks(false)" class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-200 border border-gray-700 transition">Deselect All</button>
+          </div>
+          <span class="text-xs text-gray-400">Unchecked notebooks will be safely skipped (<code class="text-amber-300 font-mono">SKIPPED</code>).</span>
+        </div>
+
+        <div class="border border-gray-800 rounded-xl overflow-hidden">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-gray-950 border-b border-gray-800 text-[11px] uppercase tracking-wider text-gray-400">
+                <th class="py-2.5 px-4 w-16 text-center">Migrate?</th>
+                <th class="py-2.5 px-4">Notebook Title & ID</th>
+                <th class="py-2.5 px-4">Admin Account ➔ Target</th>
+                <th class="py-2.5 px-4">Timestamps</th>
+              </tr>
+            </thead>
+            <tbody id="adminNotebookHitlTableBody" class="divide-y divide-gray-800/60 bg-gray-900/50"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="px-6 py-4 bg-gray-950 border-t border-gray-800 flex items-center justify-between">
+        <button type="button" onclick="submitAdminNotebookHitlDecision(true)" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 text-xs font-semibold transition">
+          ⏭️ Skip All Shared Admin Notebooks
+        </button>
+        <button type="button" onclick="submitAdminNotebookHitlDecision(false)" class="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-lg shadow-amber-900/30 transition">
+          ✅ Confirm & Migrate Selected Notebooks
+        </button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

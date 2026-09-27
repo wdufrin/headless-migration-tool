@@ -15,7 +15,7 @@
  */
 
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
-import { EnvironmentConfig, MigrationOptions, MigrationItemResult, MigratedSourceItem } from '../types/migration.js';
+import { EnvironmentConfig, MigrationOptions, MigrationItemResult, MigratedSourceItem, AdminHitlNotebookCandidate } from '../types/migration.js';
 import { Notebook, NotebookSource, NotebookNote } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
@@ -92,7 +92,7 @@ export class NotebookMigrator {
     if (rawRole === 'PROJECT_ROLE_READER' || rawRole === 'READER' || rawRole === 'VIEWER' || rawRole.endsWith('_READER') || rawRole.endsWith('_VIEWER')) {
       return `VIEWER (${rawRole})`;
     }
-    if (rawRole) {
+    if (rawRole && rawRole !== 'UNSPECIFIED' && rawRole !== 'PROJECT_ROLE_UNSPECIFIED') {
       return rawRole;
     }
     if (meta?.isShareable === false) {
@@ -135,7 +135,7 @@ export class NotebookMigrator {
       ''
     ).toUpperCase().trim();
 
-    if (role) {
+    if (role && role !== 'UNSPECIFIED' && role !== 'PROJECT_ROLE_UNSPECIFIED') {
       if (role === 'PROJECT_ROLE_OWNER' || role === 'OWNER' || role.endsWith('_OWNER')) {
         // Still verify explicit owner email if a different owner email is explicitly stamped
         if (callerEmail) {
@@ -208,7 +208,8 @@ export class NotebookMigrator {
    * Evaluates if a notebook is owned by a specific user or user filter (excluding shared Editor/Viewer notebooks).
    */
   isNotebookOwnedByUser(notebook: Notebook, userFilter: string[] = []): boolean {
-    const primaryCaller = userFilter.find((u) => u && !u.includes('*'));
+    const nonWildcardUsers = userFilter.filter((u) => u && !u.includes('*'));
+    const primaryCaller = nonWildcardUsers.length === 1 ? nonWildcardUsers[0] : undefined;
     if (!this.isCallerNotebookOwner(notebook, primaryCaller)) {
       return false;
     }
@@ -539,17 +540,94 @@ export class NotebookMigrator {
     }
 
     // 2b. Discover Notebooks per user via Domain-Wide Delegation / WIF
+    // In bulk migrations (multiple candidate users), classify users into standardUsers and adminUsers
+    // so standard users run FIRST and claim their owned notebooks before Admin users are processed.
     const isDebug = Boolean((options as any).debugMode) || logger.isDebugEnabled();
-    for (const userEmail of candidateUsers) {
+    const userHasAdminDelete = new Map<string, boolean>();
+    let orderedCandidateUsers = Array.from(candidateUsers);
+
+    if (orderedCandidateUsers.length > 1 && typeof (this.client as any).testProjectIamPermissions === 'function') {
+      const standardUsers: string[] = [];
+      const adminUsers: string[] = [];
+      for (const uEmail of orderedCandidateUsers) {
+        let hasDelete = false;
+        try {
+          const granted = await (this.client as any).testProjectIamPermissions(
+            sourceEnv.projectId,
+            ['discoveryengine.notebooks.delete'],
+            uEmail
+          );
+          hasDelete = Array.isArray(granted) && granted.includes('discoveryengine.notebooks.delete');
+        } catch (permErr: any) {
+          logger.debug(`Could not pre-probe project-level discoveryengine.notebooks.delete for "${uEmail}": ${permErr.message}`);
+        }
+        userHasAdminDelete.set(uEmail, hasDelete);
+        if (hasDelete) {
+          adminUsers.push(uEmail);
+          logger.warn(
+            `[ADMIN DETECTED] User "${uEmail}" holds project-level "discoveryengine.notebooks.delete" (Admin permissions) on "${sourceEnv.projectId}". Deferring "${uEmail}" to the end of notebook discovery so standard user-owned notebooks are claimed and removed first.`
+          );
+        } else {
+          standardUsers.push(uEmail);
+        }
+      }
+      orderedCandidateUsers = [...standardUsers, ...adminUsers];
+    }
+
+    const verifiedStandardUserOwners = new Map<string, string>();
+
+    for (const userEmail of orderedCandidateUsers) {
       try {
         const userNotebooks = await this.client.listNotebooks(sourceEnv, userEmail);
         logger.info(`Discovered ${userNotebooks.length} notebooks for user "${userEmail}".`);
-        let projectLevelDeleteChecked = false;
-        let callerHasProjectLevelDelete = false;
+        let projectLevelDeleteChecked = userHasAdminDelete.has(userEmail);
+        let callerHasProjectLevelDelete = userHasAdminDelete.get(userEmail) ?? false;
+        let elevationBannerLogged = false;
+
+        const logElevationBannerOnce = () => {
+          if (elevationBannerLogged) return;
+          elevationBannerLogged = true;
+          const elevationBanner =
+            `[DRY RUN AUDIT: ADMIN PERMISSION ELEVATION DETECTED]\n` +
+            `================================================================================\n` +
+            `⚠️  User "${userEmail}" holds project-level "discoveryengine.notebooks.delete" (Admin permissions) on source project "${sourceEnv.projectId}".\n` +
+            `   WHY THIS MATTERS IN NOTEBOOKLM:\n` +
+            `   When an impersonated user has project-level Admin permissions (e.g. "roles/discoveryengine.admin" on the Workforce Pool),\n` +
+            `   Google's Discovery Engine API classifies them as PROJECT_ROLE_OWNER on ALL shared notebooks in the project.\n` +
+            `   This causes the user to see and include MORE notebooks than expected (shared colleague notebooks will appear as owned).\n\n` +
+            `   RECOMMENDED FIX BEFORE LIVE MIGRATION:\n` +
+            `   Ensure the Workforce Pool on "${sourceEnv.projectId}" uses "roles/discoveryengine.user" (User permissions),\n` +
+            `   NOT "roles/discoveryengine.admin" (Admin permissions):\n` +
+            `     gcloud projects add-iam-policy-binding "${sourceEnv.projectId}" \\\n` +
+            `       --member="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL>/*" \\\n` +
+            `       --role="roles/discoveryengine.user"\n` +
+            `     gcloud projects remove-iam-policy-binding "${sourceEnv.projectId}" \\\n` +
+            `       --member="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL>/*" \\\n` +
+            `       --role="roles/discoveryengine.admin"\n` +
+            `================================================================================`;
+          logger.warn(elevationBanner);
+        };
 
         for (const nb of userNotebooks) {
           const nbId = nb.name?.split('/').pop() || nb.notebookId || '';
           const listSnapshot = nb.metadata ? { ...nb.metadata } : {};
+
+          // Cross-user deduplication: if a standard user already claimed ownership of this notebook,
+          // remove it from the Admin's (or subsequent user's) queue immediately.
+          if (nbId && verifiedStandardUserOwners.has(nbId)) {
+            const trueOwner = verifiedStandardUserOwners.get(nbId)!;
+            logger.info(
+              `[ADMIN DEDUPLICATION] Removing notebook "${nb.title || nb.displayName || nbId}" (${nbId}) from "${userEmail}" queue — already claimed as owned by standard user "${trueOwner}".`
+            );
+            continue;
+          }
+          if (nbId && seenNotebookIds.has(nbId)) {
+            logger.info(
+              `[Notebook Deduplication] Skipping notebook "${nb.title || nb.displayName || nbId}" (${nbId}) for "${userEmail}" — already queued earlier in this migration run.`
+            );
+            continue;
+          }
+
           let getProbeNotebook: Notebook | undefined;
           const listRole = String(
             nb.metadata?.userRole ||
@@ -559,6 +637,25 @@ export class NotebookMigrator {
             nb.metadata?.role ||
             ''
           ).toUpperCase().trim();
+
+          if (nb.metadata?.isShared === true && !projectLevelDeleteChecked && typeof (this.client as any).testProjectIamPermissions === 'function') {
+            projectLevelDeleteChecked = true;
+            try {
+              const granted = await (this.client as any).testProjectIamPermissions(
+                sourceEnv.projectId,
+                ['discoveryengine.notebooks.delete'],
+                userEmail
+              );
+              callerHasProjectLevelDelete = Array.isArray(granted) && granted.includes('discoveryengine.notebooks.delete');
+              userHasAdminDelete.set(userEmail, callerHasProjectLevelDelete);
+            } catch (permErr: any) {
+              logger.debug(`Could not probe project-level discoveryengine.notebooks.delete for "${userEmail}": ${permErr.message}`);
+            }
+          }
+
+          if (callerHasProjectLevelDelete && nb.metadata?.isShared === true) {
+            logElevationBannerOnce();
+          }
 
           // When regional v1alpha (`us`/`eu`) omits `userRole` in `listRecentlyViewed`,
           // `list.metadata.isShared = true` applies to BOTH:
@@ -570,40 +667,6 @@ export class NotebookMigrator {
           // project-level `discoveryengine.notebooks.delete` (e.g., `roles/discoveryengine.admin`
           // granted to `workforcePools/<pool>/*`), which forces `PROJECT_ROLE_OWNER` on all notebooks.
           if ((!listRole || listRole === 'UNSPECIFIED') && nb.metadata?.isShared === true && nbId) {
-            if (!projectLevelDeleteChecked && typeof (this.client as any).testProjectIamPermissions === 'function') {
-              projectLevelDeleteChecked = true;
-              try {
-                const granted = await (this.client as any).testProjectIamPermissions(
-                  sourceEnv.projectId,
-                  ['discoveryengine.notebooks.delete'],
-                  userEmail
-                );
-                callerHasProjectLevelDelete = granted.includes('discoveryengine.notebooks.delete');
-                if (callerHasProjectLevelDelete) {
-                  const elevationBanner =
-                    `[DRY RUN AUDIT: ADMIN PERMISSION ELEVATION DETECTED]\n` +
-                    `================================================================================\n` +
-                    `⚠️  User "${userEmail}" holds project-level "discoveryengine.notebooks.delete" (Admin permissions) on source project "${sourceEnv.projectId}".\n` +
-                    `   WHY THIS MATTERS IN NOTEBOOKLM:\n` +
-                    `   When an impersonated user has project-level Admin permissions (e.g. "roles/discoveryengine.admin" on the Workforce Pool),\n` +
-                    `   Google's Discovery Engine API classifies them as PROJECT_ROLE_OWNER on ALL shared notebooks in the project.\n` +
-                    `   This causes the user to see and include MORE notebooks than expected (shared colleague notebooks will appear as owned).\n\n` +
-                    `   RECOMMENDED FIX BEFORE LIVE MIGRATION:\n` +
-                    `   Ensure the Workforce Pool on "${sourceEnv.projectId}" uses "roles/discoveryengine.user" (User permissions),\n` +
-                    `   NOT "roles/discoveryengine.admin" (Admin permissions):\n` +
-                    `     gcloud projects add-iam-policy-binding "${sourceEnv.projectId}" \\\n` +
-                    `       --member="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL>/*" \\\n` +
-                    `       --role="roles/discoveryengine.user"\n` +
-                    `     gcloud projects remove-iam-policy-binding "${sourceEnv.projectId}" \\\n` +
-                    `       --member="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL>/*" \\\n` +
-                    `       --role="roles/discoveryengine.admin"\n` +
-                    `================================================================================`;
-                  logger.warn(elevationBanner);
-                }
-              } catch (permErr: any) {
-                logger.debug(`Could not probe project-level discoveryengine.notebooks.delete for "${userEmail}": ${permErr.message}`);
-              }
-            }
             try {
               getProbeNotebook = await this.client.getNotebook(nbId, sourceEnv, userEmail);
               const getRole = String(
@@ -637,13 +700,24 @@ export class NotebookMigrator {
             }
           }
 
-          const roleLabel = this.describeNotebookAccessRole(nb);
           const isSharedFlag = Boolean(listSnapshot.isShared ?? nb.metadata?.isShared);
           const isOwner = this.isCallerNotebookOwner(nb, userEmail);
 
-          if (callerHasProjectLevelDelete && nb.metadata?.isShared === true && isOwner) {
+          if (callerHasProjectLevelDelete && isSharedFlag && isOwner) {
+            if (!nb.metadata) nb.metadata = {};
+            nb.metadata.hasProjectLevelAdminElevation = true;
+            nb.metadata.wasSharedInList = true;
+            nb.metadata.requiresAdminHitlValidation = true;
+          }
+
+          const roleLabel = this.describeNotebookAccessRole(nb);
+
+          if (callerHasProjectLevelDelete && isSharedFlag && isOwner) {
             logger.warn(
               `[DRY RUN AUDIT: PERMISSION ELEVATION] Notebook "${nb.title || nb.displayName || nbId}" (${nbId}) was marked INCLUDED_OWNER because "${userEmail}" has project-level Admin permissions. If this notebook was actually created by a colleague, it will be migrated under this user's account unless Workforce Pool permissions are changed to "roles/discoveryengine.user".`
+            );
+            logger.warn(
+              `[ADMIN NOTEBOOK FLAGGED] Shared notebook "${nb.title || nb.displayName || nbId}" (${nbId}) under Admin "${userEmail}" has been flagged for validation and deferred to the end of the migration run.`
             );
           }
 
@@ -673,6 +747,9 @@ export class NotebookMigrator {
           logger.info(`[Notebook Access] "${nb.title || nb.displayName || nbId}" (${nbId}) -> User "${userEmail}" role is ${roleLabel} [isShared=${isSharedFlag}] -> INCLUDED (user is Owner).`);
           if (nbId && !seenNotebookIds.has(nbId)) {
             seenNotebookIds.add(nbId);
+            if (!callerHasProjectLevelDelete) {
+              verifiedStandardUserOwners.set(nbId, userEmail);
+            }
             nb.owner = userEmail;
             if (!nb.metadata) nb.metadata = {};
             nb.metadata.ownerEmail = userEmail;
@@ -733,7 +810,128 @@ export class NotebookMigrator {
     const concurrency = options.concurrency || 10;
     const isDryRun = options.dryRun === true;
 
-    return mapConcurrent(filteredNotebooks, concurrency, async (nb: Notebook) => {
+    // Partition into immediate (standard users + private Admin notebooks) vs deferred (shared Admin notebooks)
+    const immediateNotebooks = filteredNotebooks.filter(nb => !nb.metadata?.requiresAdminHitlValidation);
+    const deferredAdminSharedNotebooks = filteredNotebooks.filter(nb => Boolean(nb.metadata?.requiresAdminHitlValidation));
+
+    if (deferredAdminSharedNotebooks.length > 0) {
+      logger.info(
+        `[ADMIN DEFERRAL] Migrating ${immediateNotebooks.length} standard/private notebook(s) first; deferring ${deferredAdminSharedNotebooks.length} flagged shared Admin notebook(s) to the end of the run.`
+      );
+    }
+
+    const immediateResults = await mapConcurrent(immediateNotebooks, concurrency, (nb: Notebook) =>
+      this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun)
+    );
+
+    if (deferredAdminSharedNotebooks.length === 0) {
+      return immediateResults;
+    }
+
+    // End-of-run processing for deferred shared Admin notebooks
+    if (options.promptForAdminNotebookHitl) {
+      logger.warn(
+        `[ADMIN HITL VALIDATION] ${deferredAdminSharedNotebooks.length} shared notebook(s) remain under Admin account(s) at the end of the migration. Prompting operator for Human-in-the-Loop (HITL) validation...`
+      );
+
+      const candidates: AdminHitlNotebookCandidate[] = deferredAdminSharedNotebooks.map(nb => {
+        const nbId = nb.name.split('/').pop() || nb.notebookId || '';
+        const adminEmail = String(nb.metadata?.ownerEmail || nb.owner || 'admin');
+        const targetOwner = IdentityMappingService.lookupTargetIdentity(adminEmail, identityMapping, adminEmail);
+        return {
+          id: nbId,
+          title: nb.title || nb.displayName || 'Untitled Notebook',
+          adminEmail,
+          targetOwner,
+          isShared: true,
+          createTime: nb.metadata?.createTime,
+          lastViewed: nb.metadata?.lastViewed,
+          sourceCount: (nb.sources || []).length,
+          roleDescription: this.describeNotebookAccessRole(nb)
+        };
+      });
+
+      let approvedIds = new Set<string>();
+      if (typeof options.onAdminNotebookHitlPrompt === 'function') {
+        const operatorApproved = await options.onAdminNotebookHitlPrompt(candidates);
+        approvedIds = new Set((operatorApproved || []).map(id => String(id).trim()).filter(Boolean));
+      } else if (Array.isArray(options.approvedAdminNotebookIds) && options.approvedAdminNotebookIds.length > 0) {
+        approvedIds = new Set(options.approvedAdminNotebookIds.map(id => String(id).trim()).filter(Boolean));
+      } else {
+        logger.warn(
+          `[ADMIN HITL VALIDATION] promptForAdminNotebookHitl is enabled, but no interactive HITL handler or approvedAdminNotebookIds was supplied. Skipping ${deferredAdminSharedNotebooks.length} unverified shared Admin notebook(s) by default.`
+        );
+      }
+
+      const approvedNotebooks: Notebook[] = [];
+      const rejectedResults: MigrationItemResult[] = [];
+
+      for (const nb of deferredAdminSharedNotebooks) {
+        const nbId = nb.name.split('/').pop() || nb.notebookId || '';
+        if (approvedIds.has(nbId)) {
+          if (!nb.metadata) nb.metadata = {};
+          nb.metadata.adminHitlDecision = 'APPROVED';
+          approvedNotebooks.push(nb);
+        } else {
+          const originalOwner = String(nb.metadata?.ownerEmail || nb.owner || 'admin');
+          const targetOwner = IdentityMappingService.lookupTargetIdentity(originalOwner, identityMapping, originalOwner);
+          const skippedResult: MigrationItemResult = {
+            id: nbId,
+            displayName: nb.title || nb.displayName || 'Untitled Notebook',
+            type: 'NOTEBOOK',
+            status: 'SKIPPED',
+            originalOwner,
+            targetOwner,
+            ownershipNote: 'Skipped by operator during Admin Shared Notebook HITL validation',
+            details: {
+              adminValidationFlagged: true,
+              hasProjectLevelAdminElevation: true,
+              isSharedInSourceList: true,
+              adminHitlDecision: 'REJECTED',
+              sourcesCount: (nb.sources || []).length,
+              sourcesRestored: 0,
+              sourcesFailed: 0,
+              notesCount: 0,
+              artifactsCount: 0
+            },
+            durationMs: 0
+          };
+          logger.info(
+            `[ADMIN HITL VALIDATION] Operator skipped shared Admin notebook "${skippedResult.displayName}" (${nbId}) for "${originalOwner}".`
+          );
+          options.onItemCompleted?.(skippedResult);
+          rejectedResults.push(skippedResult);
+        }
+      }
+
+      const approvedResults = await mapConcurrent(approvedNotebooks, concurrency, (nb: Notebook) =>
+        this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun)
+      );
+
+      return [...immediateResults, ...approvedResults, ...rejectedResults];
+    }
+
+    logger.info(
+      `[ADMIN DEFERRAL] Processing ${deferredAdminSharedNotebooks.length} deferred shared Admin notebook(s) at the end of the run (Tip: enable "Prompt for HITL on Admin Notebooks" to manually approve/reject these).`
+    );
+    const deferredResults = await mapConcurrent(deferredAdminSharedNotebooks, concurrency, (nb: Notebook) =>
+      this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun)
+    );
+    return [...immediateResults, ...deferredResults];
+  }
+
+  /**
+   * Migrates a single notebook (used by both immediate pass and end-of-run deferred Admin pass).
+   */
+  private async migrateSingleNotebook(
+    nb: Notebook,
+    sourceEnv: EnvironmentConfig,
+    targetEnv: EnvironmentConfig,
+    options: MigrationOptions,
+    identityMapping: Record<string, string>,
+    candidateUsers: Set<string>,
+    isDryRun: boolean
+  ): Promise<MigrationItemResult> {
       const startTime = Date.now();
       const notebookId = nb.name.split('/').pop() || '';
       const selectedUser = (options.userFilter && options.userFilter.length === 1 && !options.userFilter[0].includes('*')) 
@@ -742,7 +940,12 @@ export class NotebookMigrator {
       const fallbackUser = selectedUser || Array.from(candidateUsers)[0] || process.env.ADMIN_EMAIL || 'admin';
       let rawOwner = nb.metadata?.ownerEmail || nb.owner || fallbackUser;
       rawOwner = rawOwner.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim();
-      try { rawOwner = decodeURIComponent(rawOwner); } catch {}
+      try {
+        rawOwner = decodeURIComponent(rawOwner);
+      } catch (decodeErr: any) {
+        // URIError on malformed percent-encoding is safe to ignore; retain un-decoded rawOwner
+        logger.debug(`Could not URI-decode rawOwner "${rawOwner}": ${decodeErr.message}`);
+      }
       const originalOwner = (rawOwner === 'unknown' || !rawOwner.includes('@')) ? fallbackUser : rawOwner;
       const targetOwner = IdentityMappingService.lookupTargetIdentity(originalOwner, identityMapping, selectedUser || originalOwner);
 
@@ -760,9 +963,14 @@ export class NotebookMigrator {
       let fullNotebook: Notebook = nb;
       let notes: NotebookNote[] = [];
       let artifacts: any[] = [];
+      const shouldExportArtifacts = options.exportArtifacts !== false;
 
       try {
-        logger.info(`Fetching detailed sources & Studio artifacts for Notebook "${result.displayName}" (${notebookId})...`);
+        logger.info(
+          shouldExportArtifacts
+            ? `Fetching detailed sources & Studio artifacts for Notebook "${result.displayName}" (${notebookId})...`
+            : `Fetching detailed sources & notes for Notebook "${result.displayName}" (${notebookId}) (Studio artifacts export disabled)...`
+        );
         fullNotebook = await this.client.getNotebook(notebookId, sourceEnv, userImpersonation);
 
         // Preserve `userRole`, `isShared`, and `isShareable` from `listRecentlyViewed` (`nb.metadata`)
@@ -831,14 +1039,16 @@ export class NotebookMigrator {
           logger.debug(`No notes or failed to list notes for notebook ${notebookId}: ${noteErr.message}`);
         }
 
-        // Fetch artifacts (Studio outputs: Slide Decks, Infographics, Audio Overview, Reports)
-        try {
-          artifacts = await this.client.listArtifacts(notebookId, sourceEnv, userImpersonation);
-          if (artifacts.length > 0) {
-            logger.info(`Found ${artifacts.length} Studio artifacts for Notebook "${result.displayName}"`);
+        // Fetch artifacts (Studio outputs: Slide Decks, Infographics, Audio Overview, Reports) only when exportArtifacts is enabled
+        if (shouldExportArtifacts) {
+          try {
+            artifacts = await this.client.listArtifacts(notebookId, sourceEnv, userImpersonation);
+            if (artifacts.length > 0) {
+              logger.info(`Found ${artifacts.length} Studio artifacts for Notebook "${result.displayName}"`);
+            }
+          } catch (artErr: any) {
+            logger.debug(`Could not list artifacts for notebook ${notebookId}: ${artErr.message}`);
           }
-        } catch (artErr: any) {
-          logger.debug(`Could not list artifacts for notebook ${notebookId}: ${artErr.message}`);
         }
       } catch (fetchErr: any) {
         logger.debug(`Could not fetch detailed notebook object for ${notebookId}: ${fetchErr.message}`);
@@ -856,7 +1066,21 @@ export class NotebookMigrator {
         };
       });
 
+      const adminMetadataFlags = nb.metadata?.hasProjectLevelAdminElevation ? {
+        hasProjectLevelAdminElevation: true,
+        adminValidationFlagged: Boolean(nb.metadata?.requiresAdminHitlValidation),
+        isSharedInSourceList: Boolean(nb.metadata?.wasSharedInList),
+        adminHitlDecision: nb.metadata?.adminHitlDecision || (options.promptForAdminNotebookHitl ? 'APPROVED' : 'NOT_PROMPTED')
+      } : {};
+
+      if (nb.metadata?.requiresAdminHitlValidation && !result.ownershipNote) {
+        result.ownershipNote = nb.metadata?.adminHitlDecision === 'APPROVED'
+          ? 'Approved by operator via Admin HITL validation (shared notebook under Admin permissions)'
+          : 'FLAGGED FOR VALIDATION: User holds project-level Admin permissions on this shared notebook; verify true ownership';
+      }
+
       result.details = {
+        ...adminMetadataFlags,
         sourcesCount: rawSources.length,
         sourcesRestored: rawSources.length,
         sourcesFailed: 0,
@@ -939,10 +1163,12 @@ export class NotebookMigrator {
             logger.debug(`Could not list existing target notes: ${notesErr.message}`);
           }
 
-          try {
-            existingArtifacts = await this.client.listArtifacts(newNotebookId, targetEnv, userOwner);
-          } catch (artErr: any) {
-            logger.debug(`Could not list existing target artifacts: ${artErr.message}`);
+          if (shouldExportArtifacts) {
+            try {
+              existingArtifacts = await this.client.listArtifacts(newNotebookId, targetEnv, userOwner);
+            } catch (artErr: any) {
+              logger.debug(`Could not list existing target artifacts: ${artErr.message}`);
+            }
           }
         }
 
@@ -1147,6 +1373,7 @@ export class NotebookMigrator {
         }
 
         result.details = {
+          ...adminMetadataFlags,
           sourcesCount: rawSources.length,
           sourcesRestored,
           sourcesFailed,
@@ -1193,6 +1420,5 @@ export class NotebookMigrator {
       result.durationMs = Date.now() - startTime;
       options.onItemCompleted?.(result);
       return result;
-    });
   }
 }

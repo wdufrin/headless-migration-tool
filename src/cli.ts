@@ -50,6 +50,7 @@ program
   .option('--service-account-key <path>', 'Path to Google Cloud Service Account JSON key for Domain-Wide Delegation (DWD)')
   .option('--output-dir <dir>', 'Directory to output migration reports', './reports')
   .option('--resume <reportPath>', 'Resume migration by skipping already-successful assets from a previous migration report JSON')
+  .option('--prompt-admin-hitl', 'Prompt for Human-in-the-Loop (HITL) validation for shared notebooks remaining under Admin accounts at the end of the migration')
   .option('--generate-user-reports', 'Generate post-migration handover bundles and checklists per user')
   .option('--notify-users [overrideEmail]', 'Dispatch bulk handover emails to migrated users (or provide override email for safe staging validation)')
   .option('--no-zip-attachments', 'Disable packaging user NotebookLM artifacts into .zip archive before emailing')
@@ -113,6 +114,9 @@ program
       if (options.concurrency) {
         baseConfig.options = { ...baseConfig.options, concurrency: parseInt(options.concurrency, 10) };
       }
+      if (options.promptAdminHitl !== undefined) {
+        baseConfig.options = { ...baseConfig.options, promptForAdminNotebookHitl: true };
+      }
 
       const validatedConfig = MigrationConfigSchema.parse(baseConfig);
 
@@ -123,7 +127,36 @@ program
 
       const runner = new MigrationRunner({
         authService,
-        outputDir: options.outputDir
+        outputDir: options.outputDir,
+        onAdminNotebookHitlPrompt: process.stdin.isTTY
+          ? async (candidates) => {
+              const readline = await import('readline');
+              const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+              const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+              const approvedIds: string[] = [];
+              console.log('\n================================================================================');
+              console.log('🛑 HUMAN-IN-THE-LOOP (HITL) VALIDATION: SHARED ADMIN NOTEBOOKS');
+              console.log('================================================================================');
+              console.log(`Found ${candidates.length} shared notebook(s) remaining on Admin account(s) after deduplicating standard users.`);
+              console.log('Because the Admin holds project-level delete permissions, colleague-shared notebooks');
+              console.log('cannot be automatically distinguished from Admin-owned shared notebooks.\n');
+              try {
+                for (let idx = 0; idx < candidates.length; idx++) {
+                  const c = candidates[idx];
+                  console.log(`[${idx + 1}/${candidates.length}] "${c.title}" (ID: ${c.id})`);
+                  console.log(`    Admin Account: ${c.adminEmail} -> Target: ${c.targetOwner}`);
+                  console.log(`    Sources: ${c.sourceCount} | Created: ${c.createTime || 'unknown'} | Last Viewed: ${c.lastViewed || 'unknown'}`);
+                  const answer = (await ask('    Migrate this notebook under the Admin account? [y/N]: ')).trim().toLowerCase();
+                  if (answer === 'y' || answer === 'yes') {
+                    approvedIds.push(c.id);
+                  }
+                }
+              } finally {
+                rl.close();
+              }
+              return approvedIds;
+            }
+          : undefined
       });
 
       const report = await runner.run(validatedConfig);

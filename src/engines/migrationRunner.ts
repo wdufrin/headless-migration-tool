@@ -17,7 +17,7 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import path from 'path';
-import { MigrationReport, MigrationItemResult, MigrationOptions } from '../types/migration.js';
+import { MigrationReport, MigrationItemResult, MigrationOptions, AdminHitlNotebookCandidate } from '../types/migration.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
@@ -55,7 +55,11 @@ export interface MigrationRunnerOptions {
    * authoritative success/failure counts are in the MigrationReport summary.
    */
   onStage?: (stage: MigrationStage, status: 'active' | 'done') => void;
-
+  /**
+   * Optional Human-in-the-Loop callback invoked at the end of notebook migration
+   * when `promptForAdminNotebookHitl` is true and shared Admin notebooks remain.
+   */
+  onAdminNotebookHitlPrompt?: (candidates: AdminHitlNotebookCandidate[]) => Promise<string[]>;
 }
 
 export class MigrationRunner {
@@ -68,6 +72,7 @@ export class MigrationRunner {
   private simulator: DryRunSimulator;
   private outputDir: string;
   private onStage: (stage: MigrationStage, status: 'active' | 'done') => void;
+  private onAdminNotebookHitlPrompt?: (candidates: AdminHitlNotebookCandidate[]) => Promise<string[]>;
 
   constructor(options: MigrationRunnerOptions = {}) {
     this.auth = options.authService || new GcpAuthService();
@@ -78,6 +83,7 @@ export class MigrationRunner {
     this.skillMigrator = new SkillMigrator(this.registryClient, this.client);
     this.simulator = new DryRunSimulator(this.client);
     this.outputDir = options.outputDir || './reports';
+    this.onAdminNotebookHitlPrompt = options.onAdminNotebookHitlPrompt;
     // A progress listener must never be able to abort a migration.
     const listener = options.onStage;
     this.onStage = (stage, status) => {
@@ -125,6 +131,7 @@ export class MigrationRunner {
           migrateMemories: config.options.migrateMemories,
           exportArtifacts: config.options.exportArtifacts,
           dryRun: config.options.dryRun,
+          promptForAdminNotebookHitl: config.options.promptForAdminNotebookHitl,
           debugMode: config.options.debugMode,
           userFilter: config.options.userFilter,
           notebookIds: config.options.notebookIds,
@@ -267,6 +274,7 @@ export class MigrationRunner {
     const effectiveOptions: MigrationOptions = {
       ...config.options,
       skipIds: Array.from(activeSkipIds),
+      onAdminNotebookHitlPrompt: this.onAdminNotebookHitlPrompt || (config.options as any)?.onAdminNotebookHitlPrompt,
       onItemCompleted: (item: MigrationItemResult) => {
         checkpointManager.recordSuccess(item);
       }
