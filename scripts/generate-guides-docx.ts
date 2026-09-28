@@ -551,7 +551,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'The **Gemini Enterprise Admin Migration Platform** (`gemini-migrate`) is a purpose-built, high-throughput enterprise migration solution designed to transfer Gemini Enterprise and Google Cloud Discovery Engine assets across Google Cloud projects, geographic regions, and Identity Providers on behalf of enterprise end users.'
   );
   b.addParagraph(
-    'The platform migrates **Research Notebooks**, **Granular Grounding Sources** (PDFs, Web URLs, YouTube videos, Google Drive docs), **Custom Agents** (Low-Code and Workflow agents with dynamic `_#####` Connector Auto-Mapping & HITL validation), **User-Created Skills in Agent Registry**, **Multi-Turn Chat History**, **User Personalized Memories & Facts**, and **Studio Artifacts** (Presentations, Infographics, Videos, Interactive Quizzes, and Flashcards).'
+    'The platform migrates **Research Notebooks**, **Granular Grounding Sources** (PDFs, Web URLs, YouTube videos, Google Drive docs), **Custom Agents** (Low-Code and Workflow agents with dynamic `_#####` Connector Auto-Mapping & HITL validation), **User-Created Skills in Agent Registry** (`Experimental` — may not work for everyone), **Multi-Turn Chat History**, **User Personalized Memories & Facts** (`Experimental` — may not work for everyone), **Studio Artifacts** (Presentations, Infographics, Videos, Interactive Quizzes, and Flashcards), and **Gemini Enterprise Projects** (`WIP`).'
   );
 
   b.addCallout({
@@ -853,9 +853,9 @@ npx tsx src/cli.ts --config migration-config.json`);
       ['--no-notebooks', '—', 'Skip notebook and source migration', 'Enabled'],
       ['--no-agents', '—', 'Skip custom agent migration', 'Enabled'],
       ['--no-sessions', '—', 'Skip chat conversation history migration', 'Enabled'],
-      ['--no-memories', '—', 'Skip personalized memories and facts migration', 'Enabled'],
-      ['--no-skills', '—', 'Skip Agent Registry custom skills migration', 'Enabled'],
-      ['--export-memories', '—', 'Export JSON snapshot of user memories to local disk', 'false'],
+      ['--no-memories', '—', 'Skip personalized memories and facts migration (Experimental — may not work for everyone)', 'Enabled (Exp)'],
+      ['--no-skills', '—', 'Skip Agent Registry custom skills migration (Experimental — may not work for everyone)', 'Enabled (Exp)'],
+      ['--export-memories', '—', 'Export JSON snapshot of user memories to local disk (Experimental)', 'false'],
       ['--export-artifacts', '—', 'Export studio presentations, quizzes, and flashcards', 'false'],
       ['--agent-types', '<types...>', 'Filter agent migration by type (LOW_CODE, WORKFLOW, ALL)', 'ALL'],
       ['--publish-agents', '—', 'Auto-publish migrated agents to organizational gallery', 'false'],
@@ -957,7 +957,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
       'Document Version': 'v1.6.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Audience': 'Cloud Architects, Migration Operators & IT Administrators',
-      'Supported Assets': 'Notebooks, Sources, Custom Agents, Chat Sessions, Memories & Artifacts',
+      'Supported Assets': 'Notebooks, Sources, Custom Agents, Skills (Experimental), Chat Sessions, Memories (Experimental), Artifacts & Projects (WIP)',
       'Handover Formats': 'Interactive Checklists, Single-ZIP Archives, Office PPTX/DOCX, Offline HTML5'
     }
   );
@@ -971,10 +971,11 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addBullet('**Research Notebooks & Granular Grounding Sources**: Deep-clones notebooks and re-indexes all grounding sources (PDFs, URLs, YouTube videos, Google Drive docs, and text files) with individual integrity auditing.');
   b.addBullet('**Custom Agents & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.');
   b.addBullet('**Human-in-the-Loop (HITL) Connector & Notebook Validation**: Interactive Step 2 mapping dropdowns and Step 3 runtime HITL modals so operators can verify, remap, or strip (`__STRIP__`) unmapped agent connectors and selectively filter colleague-shared Admin notebooks.');
-  b.addBullet('**User-Created Skills in Agent Registry**: Migrates custom skills from `agentregistry.googleapis.com` while intelligently ignoring built-in 1P Google templates.');
+  b.addBullet('**User-Created Skills in Agent Registry (`Experimental`)**: Migrates custom skills from `agentregistry.googleapis.com` while intelligently ignoring built-in 1P Google templates (*Experimental — may not work for everyone*).');
   b.addBullet('**Multi-Turn Chat History**: Rehydrates conversational histories turn-by-turn into each user\'s left-hand Gemini Enterprise History sidebar.');
-  b.addBullet('**Personalized AI Memories & Facts**: Discovers and exports user preferences, role profiles, and learned memory facts.');
+  b.addBullet('**Personalized AI Memories & Facts (`Experimental`)**: Discovers and exports user preferences, role profiles, and learned memory facts (*Experimental — may not work for everyone*).');
   b.addBullet('**Studio Artifacts Export (PPTX, DOCX, Video, Interactive Apps)**: Converts generated presentations into native widescreen PowerPoint (`.pptx`) decks, briefing docs into formatted Microsoft Word (`.docx`) files, explainer videos with automated `ffmpeg` compression, and quizzes/flashcards into 100% offline interactive HTML5 applications.');
+  b.addBullet('**Project Migrations (`WIP`)**: Gemini Enterprise Project workspace migrations (*Work in Progress*).');
   b.addBullet('**Automated User Handover Delivery Engine**: Dispatches personalized email notifications with interactive onboarding checklists (`/checklist`) and a consolidated `NotebookLM_Artifacts.zip` archive.');
 
   // Section 2
@@ -1054,10 +1055,11 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     [
       ['Migrate Notebooks & Sources', 'Research Notebooks & Grounding Docs', 'Enabled (Checked)', 'Restores notebooks and re-indexes all attached PDFs, URLs, and YouTube videos'],
       ['Migrate Custom Agents', 'Low-Code & Workflow Agents', 'Enabled (Checked)', 'Deep-copies agent instructions, tools, and datastores as native editable drafts'],
-      ['Migrate User Skills', 'User-Created Skills in Agent Registry', 'Enabled (Checked)', 'Migrates custom skills in agentregistry.googleapis.com while ignoring built-in 1P Google templates'],
+      ['Migrate User Skills (Experimental)', 'User-Created Skills in Agent Registry', 'Enabled (Checked)', 'Migrates custom skills in agentregistry.googleapis.com while ignoring built-in 1P Google templates (Experimental — may not work for everyone)'],
       ['Migrate Multi-User Chat History', 'Chat Conversation History', 'Enabled (Checked)', 'Rehydrates chronological chat sessions into the target Gemini sidebar'],
-      ['Migrate User Memories & Facts', 'Personalized Facts & Profiles', 'Enabled (Checked)', 'Discovers and exports memory facts to local JSON backup and target library'],
+      ['Migrate User Memories & Facts (Experimental)', 'Personalized Facts & Profiles', 'Enabled (Checked)', 'Discovers and exports memory facts to local JSON backup and target library (Experimental — may not work for everyone)'],
       ['Export & Archive User Artifacts', 'Studio Outputs & Presentations', 'Enabled (Checked)', 'Generates `.pptx` decks, `.docx` study guides, `.html` apps, and `.mp4` videos'],
+      ['Migrate Projects (WIP)', 'Gemini Enterprise Workspace Projects', 'Disabled (WIP)', 'Gemini Enterprise Project workspace migrations (Work in Progress)'],
       ['Dry Run (Simulate Only)', 'Safety Simulation Mode', 'Disabled (Unchecked)', 'When checked, performs full discovery and logging without writing to target']
     ],
     [25, 25, 20, 30]
@@ -1094,10 +1096,10 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
 
   b.addNumbered('Stage 1: Pre-Flight Infrastructure Checks — Verifies target engine existence, accessibility, and service usage quotas.', 1);
   b.addNumbered('Stage 2: Notebooks & Granular Sources Restoration — Syncs research notebooks and restores individual grounding documents.', 2);
-  b.addNumbered('Stage 3: User Skills Discovery & Restoration — Migrates custom skills in `agentregistry.googleapis.com`.', 3);
+  b.addNumbered('Stage 3: User Skills Discovery & Restoration (Experimental) — Migrates custom skills in `agentregistry.googleapis.com` (Experimental — may not work for everyone).', 3);
   b.addNumbered('Stage 4: Custom Agents Restoration & Dynamic Connector Rewriting — Automatically runs `_#####` connector/datastore discovery, rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, expands parent `collectionMapping` rules to child entity DataStores, strips `__STRIP__` connectors, and deduplicates `dataStoreSpecs`.', 4);
   b.addNumbered('Stage 5: Multi-Turn Chat Conversation Rehydration — Recreates conversational turns chronologically for each user.', 5);
-  b.addNumbered('Stage 6: Personalized AI Memories & Facts Export — Backs up and migrates discovered user facts.', 6);
+  b.addNumbered('Stage 6: Personalized AI Memories & Facts Export (Experimental) — Backs up and migrates discovered user facts (Experimental — may not work for everyone).', 6);
   b.addNumbered('Stage 7: Studio Artifacts Discovery, Office Generation & Compression — Synthesizes PPTX presentations, Word study guides, interactive HTML5 quiz/flashcard apps, and compresses Explainer Videos.', 7);
 
   b.addHeading2('Runtime Human-in-the-Loop (HITL) Validation Modals');

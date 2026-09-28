@@ -7,7 +7,7 @@
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
-An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, user-created skills, research notebooks, studio artifacts, grounding sources, chat conversation history, user personalized memories, and associated IAM permissions across Google Cloud environments and Identity Providers.
+An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, user-created skills *(Experimental — may not work for everyone)*, research notebooks, studio artifacts, grounding sources, chat conversation history, user personalized memories *(Experimental — may not work for everyone)*, Gemini Enterprise projects *(WIP)*, and associated IAM permissions across Google Cloud environments and Identity Providers.
 
 > [!TIP]
 > **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
@@ -170,7 +170,9 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 ## 🌟 Key Features
 
 * **🤖 Custom Agent Migration & Auto-Publishing**: Deep-copies Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags. Automatically assigns `scope: ALL_USERS` and publishes them so they immediately appear in the user's left sidebar and Agent Gallery.
-* **🛠️ User-Created Skills Migration**: Discovers, exports, and restores custom user skills in Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents, while intelligently excluding public Google 1P catalog templates (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`).
+* **🛠️ User-Created Skills Migration (`Experimental`)**: Discovers, exports, and restores custom user skills in Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents, while intelligently excluding public Google 1P catalog templates (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`). *(Experimental — may not work for everyone)*.
+* **🧠 User Personalized Memories & Facts (`Experimental`)**: Discovers, backs up, and restores personalized user memory facts and profile preferences across engines. *(Experimental — may not work for everyone)*.
+* **📁 Gemini Enterprise Project Migrations (`WIP`)**: Project workspace migrations are currently a **Work in Progress (`WIP`)**.
 * **🔍 Configuration Pre-Check & Gap Audit**: Computes an end-to-end Parity Readiness Score (0–100%) and deep feature comparison (Memory, Agent Gallery, Low-Code Builder, Skills, Sharing, Audio, Canvas, Observability, TTL). Scopes DataStore audits strictly to attached DataStores, provides 1-click target settings synchronization, and renders copy-ready CLI remediation commands with zero UI flicker.
 * **📔 Research Notebooks & Granular Source Auditing**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), and studio outputs directly into the target environment. Tracks every source individually with fault-isolated batching and dedicated integrity reporting. Notes are strictly preserved as distinct artifacts, eliminating artificial source pollution.
 * **🧠 Standalone Interactive Quizzes & 3D Flashcards Apps**: Converts raw compiled Angular applications into 100% offline, zero-dependency HTML5 interactive apps that run in any browser without blank screens or host dependencies. Generates interactive quiz players (with instant feedback, hints, rationales, and retake scoring), 3D flashcard flippers (with flip animations, shuffle, keyboard shortcuts, and table views), and matching printable Microsoft Word (`.docx`) study guides and Markdown banks (`.md`).
@@ -414,9 +416,9 @@ npx tsx src/cli.ts --dry-run --users "*@company.com"
 | `--no-notebooks` | Skip Gemini / NotebookLM notebooks migration | Migrates notebooks |
 | `--no-agents` | Skip Custom Agents migration | Migrates agents |
 | `--no-sessions` | Skip Chat conversation histories and turns migration | Migrates chat history |
-| `--no-memories` | Skip user personalized memories and facts migration | Migrates memories |
-| `--no-skills` | Skip Agent Registry custom skills migration | Migrates skills |
-| `--export-memories` | Export backup snapshot of user memories to disk (`./exports/memories`) | `true` |
+| `--no-memories` | Skip user personalized memories and facts migration *(Experimental — may not work for everyone)* | Migrates memories *(Experimental)* |
+| `--no-skills` | Skip Agent Registry custom skills migration *(Experimental — may not work for everyone)* | Migrates skills *(Experimental)* |
+| `--export-memories` | Export backup snapshot of user memories to disk (`./exports/memories`) *(Experimental)* | `true` |
 | `--agent-types <types...>` | Filter agent types (`LOW_CODE`, `WORKFLOW`, `ADK`, `A2A`, `ALL`) | `ALL` |
 | `--publish-agents` | Automatically publish migrated agents for immediate organization visibility | `true` |
 | `--export-artifacts` | Extract presentations, Canva-style docs, and HTML artifacts to `./exports` | `true` |
@@ -464,7 +466,7 @@ The local Web Console is structured as a sequential 6-step administrative wizard
    - Attached DataStore Parity audit with automated remediation and copy-ready CLI snippets.
    - Prominent `Next: Proceed to Step 3: Migration Studio ➔` wizard transition that automatically syncs confirmed connector and datastore mappings into Step 3.
 3. **Step 3: 🚀 Migration Studio (`#studio`)**:
-   - Synchronized Source and Target GCP environment pickers and asset scope selectors (Notebooks, Custom Agents, User Skills, Chat Sessions, Memories, Studio Artifacts).
+   - Synchronized Source and Target GCP environment pickers and asset scope selectors (Notebooks, Custom Agents, User Skills `[Experimental]`, Chat Sessions, Memories `[Experimental]`, Studio Artifacts, and Projects `[WIP]`).
    - Dynamic asset discovery with user selection table and CSV identity mapping (`first.last@XXXX.com ➔ #####@YYYY.com`).
    - Context-aware Cross-IdP transformation matrix with preset domain rules and synchronized `collectionMapping` / `datastoreMapping` controls.
    - Interactive **Runtime HITL Modals**:

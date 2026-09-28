@@ -75,7 +75,7 @@ export interface EngineFeatureMeta {
 export const KNOWN_ENGINE_FEATURES: Record<string, EngineFeatureMeta> = {
   'personalization-memory': {
     displayName: 'User Memory & Personalization',
-    description: 'Enables Gemini Enterprise to remember user preferences, facts, and conversation context across sessions.',
+    description: 'Enables Gemini Enterprise to remember user preferences, facts, and conversation context across sessions. (Experimental — memory migration may not work for everyone).',
     critical: true
   },
   'agent-gallery': {
@@ -95,7 +95,7 @@ export const KNOWN_ENGINE_FEATURES: Record<string, EngineFeatureMeta> = {
   },
   'skills': {
     displayName: 'Create & Execute Skills',
-    description: 'Core capability for Gemini Enterprise to discover, execute, and ground on enterprise custom skills.',
+    description: 'Core capability for Gemini Enterprise to discover, execute, and ground on enterprise custom skills. (Experimental — skill migration may not work for everyone).',
     critical: true
   },
   'disable-skills': {
@@ -105,7 +105,7 @@ export const KNOWN_ENGINE_FEATURES: Record<string, EngineFeatureMeta> = {
   },
   'skill-sharing': {
     displayName: 'Skill Sharing',
-    description: 'Permits creators to share custom skills with other organization users and groups.',
+    description: 'Permits creators to share custom skills with other organization users and groups. (Experimental — skill migration may not work for everyone).',
     critical: true
   },
   'skill-sharing-without-admin-approval': {
@@ -227,7 +227,7 @@ export const KNOWN_ENGINE_FEATURES: Record<string, EngineFeatureMeta> = {
   },
   'disable-projects': {
     displayName: 'Disable Projects Workspace Setting',
-    description: 'Controls project-level grouping in Gemini Enterprise.'
+    description: 'Controls project-level grouping in Gemini Enterprise. (Project migrations: WIP).'
   }
 };
 

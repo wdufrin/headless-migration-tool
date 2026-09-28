@@ -16,10 +16,11 @@ The **Gemini Enterprise Admin Migration Platform** (`gemini-migrate`) is a purpo
 The platform migrates:
 * **Research Notebooks & Granular Grounding Sources** (PDFs, Web URLs, YouTube videos, Google Drive docs)
 * **Custom Agents** (Low-Code and Workflow agents with tool bindings and author tags)
-* **User-Created Skills in Google Agent Registry** (`agentregistry.googleapis.com`)
+* **User-Created Skills in Google Agent Registry** (`agentregistry.googleapis.com`) *(Experimental — may not work for everyone)*
 * **Multi-Turn Chat Conversation History** (Turn-by-turn rehydration)
-* **User Personalized Memories & Facts**
+* **User Personalized Memories & Facts** *(Experimental — may not work for everyone)*
 * **Studio Artifacts** (PowerPoint `.pptx` decks, Word `.docx` study guides, `.mp4` videos, offline HTML5 Quizzes and 3D Flashcards)
+* **Gemini Enterprise Projects** *(WIP — Work in Progress)*
 
 > [!IMPORTANT]
 > **Workstation-Local Security Isolation Model**: To satisfy strict enterprise security and InfoSec audit requirements, the migration tool operates entirely within the administrator workstation boundary. No user data, prompt history, or private keys are transmitted to any third-party SaaS servers. All network calls are strictly restricted to official Google Cloud APIs.
