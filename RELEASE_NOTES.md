@@ -1,4 +1,36 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.6.0
+
+**Release Date:** September 28, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.6.0** introduces **Dynamic Connector & DataStore Auto-Mapping (`_#####` Instance Matching)** with **Human-in-the-Loop (HITL) Validation** in Step 2 (`Config & Parity Audit`) and at migration runtime. This resolves the Discovery Engine `v1alpha` issue where a No-Code Agent (`lowCodeAgentDefinition`) with 1 Connector source in the source project could split into 3 (or $N$) ungrouped DataStore sources in the restored target project when the parent `collections/{id}/dataConnector` and child `{id}_{entity}` DataStores had different `_#####` numeric instance suffixes. v1.6.0 also includes **Shared Admin Notebook HITL Validation** (`--prompt-admin-hitl`) and **323 passing automated tests across 26 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. 🔌 Dynamic Connector & Child Entity DataStore Auto-Mapping (`_#####` Matching)
+* **Synchronized Connector & Entity Rewriting (`connectorMatcher.ts` & `agentMigrator.ts`)**: In Discovery Engine `v1alpha`, attaching 1 Connector (e.g., GitHub, Jira, ServiceNow) to a No-Code Agent writes both a relative parent connector reference (`"collections/github_1773757636775/dataConnector"`) and $N$ child entity DataStores (`github_1773757636775_issue`, `_pull_request`, `_repository`). `buildConnectorAndDataStoreMappings()` and `buildAgentPayload()` now use Regex Pattern Matching (`parseTimestampedResourceId`) to automatically map both the parent Connector Collection and all child entity DataStores together when Source and Destination share the same base name / `displayName` with different `_#####` identifiers, preserving a single unified Connector source in the target UI.
+* **Clean Connector Stripping (`__STRIP__`)**: Operators can select `Strip / Remove Connector (__STRIP__)` for deprecated or unprovisioned source connectors, cleanly removing both `dataConnectors` and their child `dataStoreSpecs.specs` from `llmAgentNode` and `llmAgentNode.selectedTools`.
+
+#### 2. 🛑 Step 2 Interactive Connector Mapping Table & Runtime HITL Fallback
+* **Step 2 Dynamic Mapping Panel (`#audit`)**: Running **Run Pre-Check** in Step 2 inspects `listCollections` and `listDataStores` across Source and Target environments, automatically pairs `_#####` matches (`AUTO_MATCHED` / `EXACT_MATCH`), and highlights ambiguous (multiple target candidates with the same base name) or missing connectors as `NEEDS_HITL`. Operators can resolve any mapping via live target dropdowns, custom target IDs, or `__STRIP__`.
+* **Runtime Migration HITL Modal (`connector_mapping_hitl`)**: If a migration is started while selected agents still reference unmapped connectors, `AgentMigrator` emits a `connector_mapping_hitl` SSE event and pauses for operator confirmation via `#connectorHitlModal` before building agent payloads (configurable via `promptForConnectorHitl` / `--no-connector-hitl`).
+
+#### 3. 📓 Shared Admin Notebook HITL Validation (`promptForAdminNotebookHitl`)
+* **End-of-Run Admin Notebook Verification**: When `promptForAdminNotebookHitl` (`--prompt-admin-hitl`) is enabled, shared notebooks discovered under project-level Admin accounts are queued for explicit operator review (`admin_notebook_hitl` SSE event & modal) before migration so colleague-created shared notebooks are only migrated when explicitly approved.
+
+#### 4. 🧪 Automated Test Suite Stability (323/323 Tests Passing)
+* Full 323 automated unit, integration, and adversarial input validation tests passing across 26 test suites with zero failures or skipped assertions.
+
+---
+
 ## Release Notes — Version 1.5.8
 
 **Release Date:** September 25, 2026  
@@ -66,7 +98,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.5.5 &rarr; v1.5.7)
+### 📦 Upgrade Guide (v1.5.8 &rarr; v1.6.0)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -91,7 +123,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.5.8** *(Current)*: Dry Run Permission Elevation Detection for NotebookLM, Workforce Identity Federation (WiF) role hardening (`roles/discoveryengine.user`), admin group filtering in group scraper, and 313 passing tests.
+* **v1.6.0** *(Current)*: Dynamic Connector & DataStore Auto-Mapping (`_#####` instance suffix matching), synchronized parent Connector + child entity DataStore rewriting (`collections/{id}/dataConnector` + `{id}_{entity}`), Step 2 interactive HITL mapping table, runtime Connector & Admin Notebook HITL modals, and 323 passing tests.
+* **v1.5.8**: Dry Run Permission Elevation Detection for NotebookLM, Workforce Identity Federation (WiF) role hardening (`roles/discoveryengine.user`), admin group filtering in group scraper, and 313 passing tests.
 * **v1.5.7**: Resilient Chat History Migration with full session hydration (`includeAnswerDetails=true`), companion-turn deduplication, target duplicate collision prevention, strict user session filtering, notebook source deduplication, and 307 passing tests.
 * **v1.5.5**: CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`), interactive Mapping Report panel & CSV/JSON export, Okta 2FA compatibility, case-insensitive identity resolution across all engines, and 285 passing tests.
 * **v1.5.3**: Least-privilege DWD impersonation scopes with multi-tier fallback, token cache partitioning by auth mode, documentation and console version parity.

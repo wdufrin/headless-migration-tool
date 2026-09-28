@@ -36,6 +36,42 @@ export interface AdminHitlNotebookCandidate {
   roleDescription: string;
 }
 
+export interface ConnectorEntityMapping {
+  entityName: string;
+  sourceDataStoreId: string;
+  targetDataStoreId?: string;
+}
+
+export interface ConnectorTargetCandidate {
+  id: string;
+  displayName: string;
+  kind: 'CONNECTOR_COLLECTION' | 'DATASTORE';
+  dataSource?: string;
+  baseName: string;
+  instanceNumericId?: string;
+  entitySuffix?: string;
+  entityDataStores?: Record<string, string>;
+}
+
+export interface ConnectorMappingEntry {
+  sourceId: string;
+  sourceDisplayName: string;
+  kind: 'CONNECTOR_COLLECTION' | 'DATASTORE';
+  dataSource?: string;
+  baseName: string;
+  sourceNumericId?: string;
+  entitySuffix?: string;
+  targetId?: string;
+  targetDisplayName?: string;
+  targetNumericId?: string;
+  matchStatus: 'EXACT_MATCH' | 'AUTO_MATCHED' | 'NEEDS_HITL' | 'HITL_CONFIRMED' | 'STRIPPED';
+  matchReason: string;
+  referencedByAgents: string[];
+  attachedToEngine?: boolean;
+  entityMappings?: ConnectorEntityMapping[];
+  candidateTargets: ConnectorTargetCandidate[];
+}
+
 export interface MigrationOptions {
   migrateNotebooks?: boolean;
   migrateAgents?: boolean;
@@ -61,6 +97,13 @@ export interface MigrationOptions {
   promptForAdminNotebookHitl?: boolean;
   approvedAdminNotebookIds?: string[];
   onAdminNotebookHitlPrompt?: (candidates: AdminHitlNotebookCandidate[]) => Promise<string[]>;
+  promptForConnectorHitl?: boolean;
+  onConnectorHitlPrompt?: (
+    unmappedEntries: ConnectorMappingEntry[]
+  ) => Promise<{
+    collectionMapping?: Record<string, string>;
+    datastoreMapping?: Record<string, string>;
+  }>;
   logLevel?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
   onItemCompleted?: (item: MigrationItemResult) => void;
 }

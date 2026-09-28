@@ -158,7 +158,13 @@ The configuration loader ([loader.ts](../src/config/loader.ts)) reads:
     "migrateMemories": true,
     "dryRun": false,
     "concurrency": 10,
-    "userFilter": ["*@wdufrin.altostrat.com"]
+    "userFilter": ["*@wdufrin.altostrat.com"],
+    "promptForAdminNotebookHitl": false,
+    "promptForConnectorHitl": true
+  },
+  "collectionMapping": {
+    "github_1773757636775": "github_1780931139999",
+    "deprecated_jira_1770000000000": "__STRIP__"
   },
   "datastoreMapping": {
     "old-datastore-id": "new-datastore-id"
@@ -169,12 +175,19 @@ The configuration loader ([loader.ts](../src/config/loader.ts)) reads:
 }
 ```
 
+### Critical Connector & DataStore Mapping Fields (`v1.6.0`):
+- **`collectionMapping`**: Maps source Connector Collection IDs (e.g., `github_1773757636775`) to target Connector Collection IDs (`github_1780931139999`). The migration engine automatically rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, and automatically expands parent collection mappings to all child entity DataStores (`_issue`, `_pull_request`, `_repository`, etc.) using Regex Pattern Matching (`parseTimestampedResourceId`) so No-Code Agents retain 1 unified connector source instead of splitting into 3 separate DataStore sources.
+- **`datastoreMapping`**: Maps individual source DataStore IDs to target DataStore IDs.
+- **`"__STRIP__"` Sentinel Value**: Setting any `collectionMapping` or `datastoreMapping` target value to `"__STRIP__"` cleanly removes that connector tool or `dataStoreSpec` from migrated Custom Agents.
+- **`options.promptForConnectorHitl`** (default `true`): Pauses migration and triggers the interactive Human-in-the-Loop (HITL) Connector Review modal (`#connectorHitlModal`) if an agent references an unmapped connector or DataStore.
+- **`options.promptForAdminNotebookHitl`** (default `false`): Pauses migration and triggers the Shared Admin Notebook Review modal (`#adminHitlModal`) when project-level `discoveryengine.notebooks.delete` permissions cause colleague-shared notebooks to appear as owned.
+
 ### How to Change:
 You can duplicate `config.example.json` to create `migration-config.json`:
 ```bash
 cp config.example.json migration-config.json
 ```
-And adjust `projectId`, `appId`, and `identityMapping` to match your target landscape.
+And adjust `projectId`, `appId`, `collectionMapping`, `datastoreMapping`, and `identityMapping` to match your target landscape.
 
 ---
 

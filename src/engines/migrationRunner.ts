@@ -17,7 +17,13 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import path from 'path';
-import { MigrationReport, MigrationItemResult, MigrationOptions, AdminHitlNotebookCandidate } from '../types/migration.js';
+import {
+  MigrationReport,
+  MigrationItemResult,
+  MigrationOptions,
+  AdminHitlNotebookCandidate,
+  ConnectorMappingEntry
+} from '../types/migration.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
@@ -60,6 +66,16 @@ export interface MigrationRunnerOptions {
    * when `promptForAdminNotebookHitl` is true and shared Admin notebooks remain.
    */
   onAdminNotebookHitlPrompt?: (candidates: AdminHitlNotebookCandidate[]) => Promise<string[]>;
+  /**
+   * Optional Human-in-the-Loop callback invoked before agent migration when
+   * agents reference Connectors or DataStores that could not be auto-mapped.
+   */
+  onConnectorHitlPrompt?: (
+    unmappedEntries: ConnectorMappingEntry[]
+  ) => Promise<{
+    collectionMapping?: Record<string, string>;
+    datastoreMapping?: Record<string, string>;
+  }>;
 }
 
 export class MigrationRunner {
@@ -73,6 +89,12 @@ export class MigrationRunner {
   private outputDir: string;
   private onStage: (stage: MigrationStage, status: 'active' | 'done') => void;
   private onAdminNotebookHitlPrompt?: (candidates: AdminHitlNotebookCandidate[]) => Promise<string[]>;
+  private onConnectorHitlPrompt?: (
+    unmappedEntries: ConnectorMappingEntry[]
+  ) => Promise<{
+    collectionMapping?: Record<string, string>;
+    datastoreMapping?: Record<string, string>;
+  }>;
 
   constructor(options: MigrationRunnerOptions = {}) {
     this.auth = options.authService || new GcpAuthService();
@@ -84,6 +106,7 @@ export class MigrationRunner {
     this.simulator = new DryRunSimulator(this.client);
     this.outputDir = options.outputDir || './reports';
     this.onAdminNotebookHitlPrompt = options.onAdminNotebookHitlPrompt;
+    this.onConnectorHitlPrompt = options.onConnectorHitlPrompt;
     // A progress listener must never be able to abort a migration.
     const listener = options.onStage;
     this.onStage = (stage, status) => {
@@ -275,6 +298,7 @@ export class MigrationRunner {
       ...config.options,
       skipIds: Array.from(activeSkipIds),
       onAdminNotebookHitlPrompt: this.onAdminNotebookHitlPrompt || (config.options as any)?.onAdminNotebookHitlPrompt,
+      onConnectorHitlPrompt: this.onConnectorHitlPrompt || (config.options as any)?.onConnectorHitlPrompt,
       onItemCompleted: (item: MigrationItemResult) => {
         checkpointManager.recordSuccess(item);
       }

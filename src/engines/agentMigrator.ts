@@ -16,10 +16,15 @@
 
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { EnvironmentConfig, MigrationOptions, MigrationItemResult } from '../types/migration.js';
-import { Agent, IamPolicy } from '../types/index.js';
+import { Agent, ConnectorCollection, DataStore, IamPolicy } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
+import {
+  buildConnectorAndDataStoreMappings,
+  extractAgentConnectorAndDataStoreRefs,
+  parseTimestampedResourceId
+} from '../services/connectorMatcher.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -199,6 +204,46 @@ export class AgentMigrator {
       };
     }
 
+    // Synchronize parent Connector Collection mappings <-> child entity DataStore mappings (`{connectorId}_{entity}`)
+    // so that a single No-Code Agent connector never splits into 3 separate DataStore sources in the target UI.
+    const effectiveCollectionMapping: Record<string, string> = { ...collectionMapping };
+    const effectiveDatastoreMapping: Record<string, string> = { ...datastoreMapping };
+
+    for (const [oldDs, newDs] of Object.entries(effectiveDatastoreMapping)) {
+      if (!newDs || newDs === '__STRIP__') continue;
+      try {
+        const srcParsed = parseTimestampedResourceId(oldDs);
+        const tgtParsed = parseTimestampedResourceId(newDs);
+        if (
+          srcParsed.parentCollectionId &&
+          tgtParsed.parentCollectionId &&
+          srcParsed.entitySuffix &&
+          srcParsed.entitySuffix === tgtParsed.entitySuffix &&
+          effectiveCollectionMapping[srcParsed.parentCollectionId] === undefined
+        ) {
+          effectiveCollectionMapping[srcParsed.parentCollectionId] = tgtParsed.parentCollectionId;
+        }
+      } catch (err: any) {
+        logger.debug(`Skipping timestamp parent inference for datastore mapping "${oldDs}" -> "${newDs}": ${err.message}`);
+      }
+    }
+
+    const resolveTargetDataStoreId = (oldDsId: string): string | undefined => {
+      if (effectiveDatastoreMapping[oldDsId] !== undefined) {
+        return effectiveDatastoreMapping[oldDsId];
+      }
+      for (const [oldCol, newCol] of Object.entries(effectiveCollectionMapping)) {
+        if (oldCol !== 'default_collection' && oldDsId.startsWith(`${oldCol}_`)) {
+          if (newCol === '' || newCol === '__STRIP__') {
+            return '__STRIP__';
+          }
+          const entitySuffix = oldDsId.slice(oldCol.length + 1);
+          return `${newCol}_${entitySuffix}`;
+        }
+      }
+      return undefined;
+    };
+
     // 1. Remap DataStore connections
     if (payload.dataStoreConnections && Array.isArray(payload.dataStoreConnections)) {
       const rewrittenConnections = [];
@@ -214,18 +259,22 @@ export class AgentMigrator {
             continue;
           }
 
-          let mappedTargetId = datastoreMapping[oldDsId];
+          let mappedTargetId = resolveTargetDataStoreId(oldDsId);
           if (mappedTargetId === undefined) {
             // Default to same DataStore ID in target environment if not explicitly overridden
             mappedTargetId = oldDsId;
           }
-          if (mappedTargetId === '' || mappedTargetId === null) {
+          if (mappedTargetId === '' || mappedTargetId === null || mappedTargetId === '__STRIP__') {
             logger.warn(`Datastore "${oldDsId}" is explicitly skipped in target environment.`);
             continue;
           }
 
           const targetLocation = targetEnv.appLocation || 'global';
-          const targetCollection = collectionMapping[oldColId] || targetEnv.collectionId || 'default_collection';
+          const mappedCol = effectiveCollectionMapping[oldColId];
+          const targetCollection =
+            mappedCol && mappedCol !== '__STRIP__'
+              ? mappedCol
+              : targetEnv.collectionId || 'default_collection';
 
           rewrittenConnections.push({
             ...conn,
@@ -290,6 +339,26 @@ export class AgentMigrator {
     }
 
     // 3. Deep string replacements in definition payloads (ADK, LowCode, A2A, Workflow)
+    const strippedConnectors = new Set(
+      Object.entries(effectiveCollectionMapping)
+        .filter(([, val]) => val === '' || val === '__STRIP__')
+        .map(([k]) => k)
+    );
+    const strippedDataStores = new Set(
+      Object.entries(effectiveDatastoreMapping)
+        .filter(([, val]) => val === '' || val === '__STRIP__')
+        .map(([k]) => k)
+    );
+
+    const isDataStoreStripped = (dsUriOrId: string): boolean => {
+      const dsId = dsUriOrId.split('/').pop() || dsUriOrId;
+      if (strippedDataStores.has(dsId)) return true;
+      for (const strippedCol of strippedConnectors) {
+        if (dsId.startsWith(`${strippedCol}_`)) return true;
+      }
+      return false;
+    };
+
     const definitionKeys = Object.keys(payload).filter(key => key.toLowerCase().includes('definition'));
     for (const key of definitionKeys) {
       let definition = payload[key];
@@ -300,6 +369,45 @@ export class AgentMigrator {
         delete definition.deployedAgentFiles;
         delete definition.owner;
         delete definition.activeRevision;
+
+        // Strip any explicitly removed Connectors or DataStores from LowCode / Workflow nodes prior to URI rewriting
+        const nodeArrays = [definition.nodes, definition.deployedNodes].filter(Array.isArray);
+        for (const nodes of nodeArrays) {
+          for (const node of nodes) {
+            const llmNode = node?.llmAgentNode;
+            if (!llmNode) continue;
+
+            const toolContainers = [llmNode, llmNode.selectedTools].filter(Boolean);
+            for (const container of toolContainers) {
+              if (Array.isArray(container.dataConnectors) && strippedConnectors.size > 0) {
+                container.dataConnectors = container.dataConnectors.filter((dc: any) => {
+                  const rawName = typeof dc?.name === 'string' ? dc.name : '';
+                  const match = rawName.match(/(?:^|\/)collections\/([a-zA-Z0-9._-]+)\/dataConnector$/);
+                  const colId = match?.[1];
+                  return !(colId && strippedConnectors.has(colId));
+                });
+                if (container.dataConnectors.length === 0) {
+                  delete container.dataConnectors;
+                }
+              }
+
+              if (Array.isArray(container.dataStoreSpecs?.specs) && (strippedDataStores.size > 0 || strippedConnectors.size > 0)) {
+                container.dataStoreSpecs.specs = container.dataStoreSpecs.specs.filter((spec: any) => {
+                  return !(spec?.dataStore && isDataStoreStripped(spec.dataStore));
+                });
+                if (container.dataStoreSpecs.specs.length === 0) {
+                  delete container.dataStoreSpecs;
+                }
+              }
+
+              if (Array.isArray(container.dataStoreConnections) && (strippedDataStores.size > 0 || strippedConnectors.size > 0)) {
+                container.dataStoreConnections = container.dataStoreConnections.filter((conn: any) => {
+                  return !(conn?.dataStore && isDataStoreStripped(conn.dataStore));
+                });
+              }
+            }
+          }
+        }
 
         let defStr = JSON.stringify(definition);
 
@@ -317,21 +425,29 @@ export class AgentMigrator {
           defStr = defStr.split(`/locations/${sourceEnv.appLocation}/`).join(`/locations/${targetEnv.appLocation}/`);
         }
 
-        // Collection remapping
-        Object.entries(collectionMapping)
-          .sort((a, b) => b[0].length - a[0].length)
-          .forEach(([oldCol, newCol]) => {
-            defStr = defStr.split(`/collections/${oldCol}/`).join(`/collections/${newCol}/`);
-          });
-
         // DataStore remapping inside definitions: target URI paths and structured datastore properties
-        Object.entries(datastoreMapping)
+        Object.entries(effectiveDatastoreMapping)
           .sort((a, b) => b[0].length - a[0].length)
           .forEach(([oldDs, newDs]) => {
-            if (newDs) {
-              defStr = defStr.split(`/dataStores/${oldDs}`).join(`/dataStores/${newDs}`);
+            if (newDs && newDs !== '__STRIP__') {
+              defStr = defStr.split(`/dataStores/${oldDs}"`).join(`/dataStores/${newDs}"`);
+              defStr = defStr.split(`/dataStores/${oldDs}/`).join(`/dataStores/${newDs}/`);
               defStr = defStr.replace(new RegExp(`"dataStore":\\s*"${oldDs}"`, 'g'), `"dataStore": "${newDs}"`);
               defStr = defStr.replace(new RegExp(`"dataStoreId":\\s*"${oldDs}"`, 'g'), `"dataStoreId": "${newDs}"`);
+            }
+          });
+
+        // Collection & Connector remapping (handles both `/collections/{id}/` and relative `"collections/{id}/dataConnector"`,
+        // plus any child entity DataStore `/dataStores/{oldCol}_{entity}` not already mapped in effectiveDatastoreMapping)
+        Object.entries(effectiveCollectionMapping)
+          .sort((a, b) => b[0].length - a[0].length)
+          .forEach(([oldCol, newCol]) => {
+            if (newCol && newCol !== '__STRIP__') {
+              defStr = defStr.split(`/collections/${oldCol}/`).join(`/collections/${newCol}/`);
+              defStr = defStr.split(`"collections/${oldCol}/`).join(`"collections/${newCol}/`);
+              if (oldCol !== 'default_collection') {
+                defStr = defStr.split(`/dataStores/${oldCol}_`).join(`/dataStores/${newCol}_`);
+              }
             }
           });
 
@@ -344,7 +460,41 @@ export class AgentMigrator {
           }
         });
 
-        payload[key] = JSON.parse(defStr);
+        const parsedDef = JSON.parse(defStr);
+
+        // Deduplicate dataConnectors and dataStoreSpecs.specs within LowCode / Workflow nodes
+        const parsedNodeArrays = [parsedDef.nodes, parsedDef.deployedNodes].filter(Array.isArray);
+        for (const nodes of parsedNodeArrays) {
+          for (const node of nodes) {
+            const llmNode = node?.llmAgentNode;
+            if (!llmNode) continue;
+
+            const toolContainers = [llmNode, llmNode.selectedTools].filter(Boolean);
+            for (const container of toolContainers) {
+              if (Array.isArray(container.dataConnectors)) {
+                const seenConnectors = new Set<string>();
+                container.dataConnectors = container.dataConnectors.filter((dc: any) => {
+                  const keyName = dc?.name || JSON.stringify(dc);
+                  if (seenConnectors.has(keyName)) return false;
+                  seenConnectors.add(keyName);
+                  return true;
+                });
+              }
+
+              if (Array.isArray(container.dataStoreSpecs?.specs)) {
+                const seenSpecs = new Set<string>();
+                container.dataStoreSpecs.specs = container.dataStoreSpecs.specs.filter((spec: any) => {
+                  const keyDs = spec?.dataStore || JSON.stringify(spec);
+                  if (seenSpecs.has(keyDs)) return false;
+                  seenSpecs.add(keyDs);
+                  return true;
+                });
+              }
+            }
+          }
+        }
+
+        payload[key] = parsedDef;
       }
     }
 
@@ -524,6 +674,107 @@ export class AgentMigrator {
     const concurrency = options.concurrency || 10;
     const isDryRun = options.dryRun === true;
 
+    let effectiveDatastoreMapping: Record<string, string> = { ...datastoreMapping };
+    let effectiveCollectionMapping: Record<string, string> = { ...collectionMapping };
+
+    if (filteredAgents.length > 0) {
+      const { connectorRefs, dataStoreRefs } = extractAgentConnectorAndDataStoreRefs(filteredAgents);
+      if (connectorRefs.size > 0 || dataStoreRefs.size > 0) {
+        let srcCollections: ConnectorCollection[] = [];
+        let tgtCollections: ConnectorCollection[] = [];
+        let srcDataStores: DataStore[] = [];
+        let tgtDataStores: DataStore[] = [];
+
+        if (typeof this.client.listCollections === 'function') {
+          try {
+            srcCollections = await this.client.listCollections(sourceEnv);
+          } catch (err: any) {
+            logger.debug(`Could not list source collections for connector auto-mapping: ${err.message}`);
+          }
+          try {
+            tgtCollections = await this.client.listCollections(targetEnv);
+          } catch (err: any) {
+            logger.debug(`Could not list target collections for connector auto-mapping: ${err.message}`);
+          }
+        }
+
+        if (typeof this.client.listDataStores === 'function') {
+          try {
+            srcDataStores = await this.client.listDataStores(sourceEnv);
+          } catch (err: any) {
+            logger.debug(`Could not list source DataStores for connector auto-mapping: ${err.message}`);
+          }
+          try {
+            tgtDataStores = await this.client.listDataStores(targetEnv);
+          } catch (err: any) {
+            logger.debug(`Could not list target DataStores for connector auto-mapping: ${err.message}`);
+          }
+        }
+
+        let mappingResult = buildConnectorAndDataStoreMappings({
+          sourceCollections: srcCollections,
+          targetCollections: tgtCollections,
+          sourceDataStores: srcDataStores,
+          targetDataStores: tgtDataStores,
+          sourceAgents: filteredAgents,
+          existingCollectionMapping: effectiveCollectionMapping,
+          existingDatastoreMapping: effectiveDatastoreMapping
+        });
+
+        for (const entry of mappingResult.entries) {
+          if (entry.referencedByAgents.length === 0) continue;
+          if (entry.matchStatus === 'AUTO_MATCHED') {
+            logger.info(
+              `[Connector Auto-Map] Automatically mapped ${entry.kind === 'CONNECTOR_COLLECTION' ? 'Connector' : 'DataStore'} "${entry.sourceId}" ➔ "${entry.targetId}" (${entry.matchReason})`
+            );
+          }
+        }
+
+        effectiveCollectionMapping = {
+          ...mappingResult.collectionMapping,
+          ...effectiveCollectionMapping
+        };
+        effectiveDatastoreMapping = {
+          ...mappingResult.datastoreMapping,
+          ...effectiveDatastoreMapping
+        };
+
+        if (
+          mappingResult.unmappedAgentEntries.length > 0 &&
+          options.onConnectorHitlPrompt &&
+          options.promptForConnectorHitl !== false
+        ) {
+          logger.warn(
+            `[Connector HITL] ${mappingResult.unmappedAgentEntries.length} Connector/DataStore source(s) referenced by agents could not be auto-mapped. Requesting Human-in-the-Loop validation...`
+          );
+          const hitlDecision = await options.onConnectorHitlPrompt(mappingResult.unmappedAgentEntries);
+          if (hitlDecision?.collectionMapping) {
+            Object.assign(effectiveCollectionMapping, hitlDecision.collectionMapping);
+          }
+          if (hitlDecision?.datastoreMapping) {
+            Object.assign(effectiveDatastoreMapping, hitlDecision.datastoreMapping);
+          }
+          mappingResult = buildConnectorAndDataStoreMappings({
+            sourceCollections: srcCollections,
+            targetCollections: tgtCollections,
+            sourceDataStores: srcDataStores,
+            targetDataStores: tgtDataStores,
+            sourceAgents: filteredAgents,
+            existingCollectionMapping: effectiveCollectionMapping,
+            existingDatastoreMapping: effectiveDatastoreMapping
+          });
+          effectiveCollectionMapping = {
+            ...mappingResult.collectionMapping,
+            ...effectiveCollectionMapping
+          };
+          effectiveDatastoreMapping = {
+            ...mappingResult.datastoreMapping,
+            ...effectiveDatastoreMapping
+          };
+        }
+      }
+    }
+
     return mapConcurrent(filteredAgents, concurrency, async (agent: Agent) => {
       const startTime = Date.now();
       const originalAgentId = agent.name.split('/').pop() || '';
@@ -561,7 +812,14 @@ export class AgentMigrator {
         }
 
         const userOwner = (targetOwner && targetOwner !== 'unknown') ? targetOwner : undefined;
-        const createPayload = this.buildAgentPayload(agent, sourceEnv, targetEnv, datastoreMapping, collectionMapping, toolMapping);
+        const createPayload = this.buildAgentPayload(
+          agent,
+          sourceEnv,
+          targetEnv,
+          effectiveDatastoreMapping,
+          effectiveCollectionMapping,
+          toolMapping
+        );
         
         let createdAgent;
         try {

@@ -22,7 +22,8 @@ import { MigrationRunner } from '../engines/migrationRunner.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { DryRunSimulator } from '../engines/dryRunSimulator.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
-import { AdminHitlNotebookCandidate } from '../types/migration.js';
+import { AdminHitlNotebookCandidate, ConnectorMappingEntry } from '../types/migration.js';
+import { validateConnectorOrDataStoreId } from '../services/connectorMatcher.js';
 import { logger } from '../utils/logger.js';
 
 export const migrationRouter = express.Router();
@@ -30,6 +31,14 @@ export const migrationRouter = express.Router();
 const pendingAdminHitlPrompts = new Map<
   string,
   { resolve: (approvedIds: string[]) => void; candidates: AdminHitlNotebookCandidate[] }
+>();
+
+const pendingConnectorHitlPrompts = new Map<
+  string,
+  {
+    resolve: (mappings: { collectionMapping?: Record<string, string>; datastoreMapping?: Record<string, string> }) => void;
+    entries: ConnectorMappingEntry[];
+  }
 >();
 
 function resolveAuthServiceOptions(validatedConfig: any, callerToken?: string) {
@@ -95,11 +104,17 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
   });
 
   let activePromptId: string | null = null;
+  let activeConnectorPromptId: string | null = null;
   res.on('close', () => {
     if (activePromptId && pendingAdminHitlPrompts.has(activePromptId)) {
       const pending = pendingAdminHitlPrompts.get(activePromptId);
       pendingAdminHitlPrompts.delete(activePromptId);
       pending?.resolve([]);
+    }
+    if (activeConnectorPromptId && pendingConnectorHitlPrompts.has(activeConnectorPromptId)) {
+      const pending = pendingConnectorHitlPrompts.get(activeConnectorPromptId);
+      pendingConnectorHitlPrompts.delete(activeConnectorPromptId);
+      pending?.resolve({});
     }
   });
 
@@ -117,6 +132,14 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
           activePromptId = promptId;
           pendingAdminHitlPrompts.set(promptId, { resolve, candidates });
           sendEvent('admin_notebook_hitl', { promptId, candidates });
+        });
+      },
+      onConnectorHitlPrompt: (entries: ConnectorMappingEntry[]) => {
+        return new Promise<{ collectionMapping?: Record<string, string>; datastoreMapping?: Record<string, string> }>((resolve) => {
+          const promptId = randomUUID();
+          activeConnectorPromptId = promptId;
+          pendingConnectorHitlPrompts.set(promptId, { resolve, entries });
+          sendEvent('connector_mapping_hitl', { promptId, entries });
         });
       }
     });
@@ -143,6 +166,9 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
     if (activePromptId && pendingAdminHitlPrompts.has(activePromptId)) {
       pendingAdminHitlPrompts.delete(activePromptId);
     }
+    if (activeConnectorPromptId && pendingConnectorHitlPrompts.has(activeConnectorPromptId)) {
+      pendingConnectorHitlPrompts.delete(activeConnectorPromptId);
+    }
     unsubscribe();
   }
 });
@@ -168,6 +194,56 @@ migrationRouter.post('/migrate/hitl-response', (req, res) => {
     approvedCount: normalizedIds.length,
     totalCandidates: pending.candidates.length
   });
+});
+
+// Human-in-the-Loop (HITL) Response Endpoint for Unmapped Connector / DataStore Mappings
+migrationRouter.post('/migrate/connector-hitl-response', (req, res) => {
+  const { promptId, collectionMapping, datastoreMapping } = req.body || {};
+  if (!promptId || typeof promptId !== 'string') {
+    return res.status(400).json({ error: 'InvalidPromptId', message: 'A valid promptId string is required.' });
+  }
+  const pending = pendingConnectorHitlPrompts.get(promptId);
+  if (!pending) {
+    return res.status(404).json({ error: 'PromptNotFound', message: `No active Connector HITL prompt found for ID "${promptId}".` });
+  }
+
+  try {
+    const cleanCollectionMapping: Record<string, string> = {};
+    const cleanDatastoreMapping: Record<string, string> = {};
+
+    if (collectionMapping && typeof collectionMapping === 'object') {
+      for (const [srcId, tgtId] of Object.entries(collectionMapping)) {
+        if (typeof tgtId === 'string' && tgtId.trim()) {
+          cleanCollectionMapping[validateConnectorOrDataStoreId(srcId, 'sourceCollectionId')] =
+            validateConnectorOrDataStoreId(tgtId, 'targetCollectionId');
+        }
+      }
+    }
+    if (datastoreMapping && typeof datastoreMapping === 'object') {
+      for (const [srcId, tgtId] of Object.entries(datastoreMapping)) {
+        if (typeof tgtId === 'string' && tgtId.trim()) {
+          cleanDatastoreMapping[validateConnectorOrDataStoreId(srcId, 'sourceDataStoreId')] =
+            validateConnectorOrDataStoreId(tgtId, 'targetDataStoreId');
+        }
+      }
+    }
+
+    pendingConnectorHitlPrompts.delete(promptId);
+    pending.resolve({
+      collectionMapping: cleanCollectionMapping,
+      datastoreMapping: cleanDatastoreMapping
+    });
+    logger.info(
+      `[CONNECTOR HITL VALIDATION] Operator submitted Connector HITL mappings for prompt ${promptId}: ${Object.keys(cleanCollectionMapping).length} connector(s), ${Object.keys(cleanDatastoreMapping).length} datastore(s).`
+    );
+    return res.status(200).json({
+      ok: true,
+      mappedConnectors: Object.keys(cleanCollectionMapping).length,
+      mappedDataStores: Object.keys(cleanDatastoreMapping).length
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: 'InvalidMappingInput', message: err.message });
+  }
 });
 
 // Pre-Flight Validation Endpoint

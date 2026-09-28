@@ -94,6 +94,7 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       skipIds: [],
       promptForAdminNotebookHitl: process.env.PROMPT_ADMIN_NOTEBOOK_HITL === 'true',
       approvedAdminNotebookIds: process.env.APPROVED_ADMIN_NOTEBOOK_IDS ? process.env.APPROVED_ADMIN_NOTEBOOK_IDS.split(',').map(s => s.trim()).filter(Boolean) : [],
+      promptForConnectorHitl: process.env.PROMPT_CONNECTOR_HITL !== 'false',
       debugMode: process.env.DEBUG_MODE === 'true',
       logLevel: (process.env.LOG_LEVEL as any) || 'INFO'
     }

@@ -15,7 +15,7 @@
  */
 
 import { EnvironmentConfig } from '../types/migration.js';
-import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, AppEngine, IamPolicy, Memory } from '../types/index.js';
+import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, ConnectorCollection, AppEngine, IamPolicy, Memory } from '../types/index.js';
 import { getSafeDiscoveryEngineUrl, validateResourceId } from '../security/validator.js';
 import { GcpAuthService } from './gcpAuth.js';
 import { retryWithBackoff, mapConcurrent } from '../utils/concurrency.js';
@@ -473,6 +473,19 @@ export class DiscoveryEngineClient {
         return `${baseUrl}/v1beta/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/dataStores?${query.toString()}`;
       },
       (res) => res.dataStores,
+      env.projectId
+    );
+  }
+
+  async listCollections(env: EnvironmentConfig): Promise<ConnectorCollection[]> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    return this.listAllPages<ConnectorCollection>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections?${query.toString()}`;
+      },
+      (res) => res.collections,
       env.projectId
     );
   }

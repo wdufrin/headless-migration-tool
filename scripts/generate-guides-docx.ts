@@ -537,7 +537,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'Gemini Enterprise Admin Migration Platform',
     'Installation, Environment Setup & Pre-Requisites Technical Guide',
     {
-      'Document Version': 'v1.5.8 (Enterprise Release)',
+      'Document Version': 'v1.6.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Platform': 'Google Cloud Discovery Engine & Gemini Enterprise',
       'Execution Profile': 'Headless CLI & Local Workstation Web Console (127.0.0.1:8080)',
@@ -551,7 +551,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'The **Gemini Enterprise Admin Migration Platform** (`gemini-migrate`) is a purpose-built, high-throughput enterprise migration solution designed to transfer Gemini Enterprise and Google Cloud Discovery Engine assets across Google Cloud projects, geographic regions, and Identity Providers on behalf of enterprise end users.'
   );
   b.addParagraph(
-    'The platform migrates **Research Notebooks**, **Granular Grounding Sources** (PDFs, Web URLs, YouTube videos, Google Drive docs), **Custom Agents** (Low-Code and Workflow agents), **User-Created Skills in Agent Registry**, **Multi-Turn Chat History**, **User Personalized Memories & Facts**, and **Studio Artifacts** (Presentations, Infographics, Videos, Interactive Quizzes, and Flashcards).'
+    'The platform migrates **Research Notebooks**, **Granular Grounding Sources** (PDFs, Web URLs, YouTube videos, Google Drive docs), **Custom Agents** (Low-Code and Workflow agents with dynamic `_#####` Connector Auto-Mapping & HITL validation), **User-Created Skills in Agent Registry**, **Multi-Turn Chat History**, **User Personalized Memories & Facts**, and **Studio Artifacts** (Presentations, Infographics, Videos, Interactive Quizzes, and Flashcards).'
   );
 
   b.addCallout({
@@ -809,7 +809,12 @@ cd gemini-enterprise-admin-migration-tool`);
     "migrateSessions": true,
     "migrateMemories": true,
     "exportArtifacts": true,
-    "userFilter": ["*@company.com"]
+    "userFilter": ["*@company.com"],
+    "promptForAdminNotebookHitl": false,
+    "promptForConnectorHitl": true
+  },
+  "collectionMapping": {
+    "github_1773757636775": "github_1780931139999"
   },
   "auth": {
     "authType": "SERVICE_ACCOUNT_KEY",
@@ -837,7 +842,7 @@ npx tsx src/cli.ts --config migration-config.json`);
 
   b.addHeading2('Option 3: Run Automated Test Suite');
   b.addCodeBlock(`npm test
-# Executes 106 automated tests across 14 test suites covering auth, cross-project parity pre-checks, export, decommissioning, and rollback validation`);
+# Executes 323 automated tests across 26 test suites covering auth, cross-project parity pre-checks, dynamic _##### connector Regex Pattern Matching, HITL validation, export, decommissioning, and rollback validation`);
 
   b.addHeading2('Command-Line CLI Flag Reference');
   b.addTable(
@@ -855,6 +860,8 @@ npx tsx src/cli.ts --config migration-config.json`);
       ['--agent-types', '<types...>', 'Filter agent migration by type (LOW_CODE, WORKFLOW, ALL)', 'ALL'],
       ['--publish-agents', '—', 'Auto-publish migrated agents to organizational gallery', 'false'],
       ['--no-preserve-sharing', '—', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED)', 'Replicate'],
+      ['--prompt-admin-hitl', '—', 'Pause migration for HITL confirmation when shared Admin notebooks are detected', 'false'],
+      ['--no-connector-hitl', '—', 'Disable HITL validation prompts when unmapped agent connectors/datastores are detected', 'Prompts enabled'],
       ['--users', '<users...>', 'Filter migration to specific user email(s) or patterns', 'All users'],
       ['--concurrency', '<number>', 'Maximum parallel worker concurrency', '10'],
       ['--token', '<token>', 'Explicit Google OAuth Access Token (overrides ADC)', '—'],
@@ -947,7 +954,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     'Gemini Enterprise Admin Migration Platform',
     'Administrator Operations, Asset Restoration, Parity Audit & User Handover Guide',
     {
-      'Document Version': 'v1.5.8 (Enterprise Release)',
+      'Document Version': 'v1.6.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Audience': 'Cloud Architects, Migration Operators & IT Administrators',
       'Supported Assets': 'Notebooks, Sources, Custom Agents, Chat Sessions, Memories & Artifacts',
@@ -962,7 +969,8 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   );
 
   b.addBullet('**Research Notebooks & Granular Grounding Sources**: Deep-clones notebooks and re-indexes all grounding sources (PDFs, URLs, YouTube videos, Google Drive docs, and text files) with individual integrity auditing.');
-  b.addBullet('**Custom Agents & Tool Attachments**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts.');
+  b.addBullet('**Custom Agents & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.');
+  b.addBullet('**Human-in-the-Loop (HITL) Connector & Notebook Validation**: Interactive Step 2 mapping dropdowns and Step 3 runtime HITL modals so operators can verify, remap, or strip (`__STRIP__`) unmapped agent connectors and selectively filter colleague-shared Admin notebooks.');
   b.addBullet('**User-Created Skills in Agent Registry**: Migrates custom skills from `agentregistry.googleapis.com` while intelligently ignoring built-in 1P Google templates.');
   b.addBullet('**Multi-Turn Chat History**: Rehydrates conversational histories turn-by-turn into each user\'s left-hand Gemini Enterprise History sidebar.');
   b.addBullet('**Personalized AI Memories & Facts**: Discovers and exports user preferences, role profiles, and learned memory facts.');
@@ -986,7 +994,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addBullet('**Real-Time Bi-Directional Synchronization**: Any configuration changed in Step 2 automatically synchronizes to Step 3 (Migration Studio), and vice-versa.');
   b.addBullet('**Guided Empty-State Guardrail**: Prevents premature API calls when project IDs are unconfigured, guiding the operator with actionable instructions.');
   b.addBullet('**Parity Readiness Score (0–100%)**: Analyzes more than 100 configuration points across engine feature flags and attached DataStores.');
-  b.addBullet('**Wizard Progression**: Click **Next: Proceed to Step 3: Migration Studio** at the bottom of the audit report to carry configured environments forward.');
+  b.addBullet('**Wizard Progression**: Click **Next: Proceed to Step 3: Migration Studio** at the bottom of the audit report to carry configured environments and confirmed connector mappings forward.');
 
   b.addImage(
     'docs/images/03_config_precheck_gaps.png',
@@ -994,6 +1002,14 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     560,
     350
   );
+
+  b.addHeading2('Dynamic Connector & DataStore Auto-Mapping (_##### Instance Matching) & HITL Validation');
+  b.addParagraph(
+    'In Google Cloud Discovery Engine, third-party workplace connectors (such as GitHub, Jira, Confluence, ServiceNow, and Slack) are provisioned as timestamp-suffixed Connector Collections (e.g. `github_1773757636775`) that manage multiple child entity DataStores (`github_1773757636775_issue`, `github_1773757636775_pull_request`, `github_1773757636775_repository`).'
+  );
+  b.addBullet('**Preventing 1-to-3 Connector Source Multiplication**: A No-Code Agent connected to a GitHub Connector displays as 1 unified source ONLY when its parent `collections/{id}/dataConnector` and all 3 child entity `dataStoreSpecs` share the target project\'s exact `<connector>_<timestamp>` prefix. If those timestamps are not remapped together, Gemini Enterprise fails to group the child DataStores under the parent connector and displays 3 separate broken DataStore sources in the restored agent.');
+  b.addBullet('**Automated `_#####` Regex Pattern Matching**: During Step 2 (`Run Pre-Check`), the audit engine uses Regex Pattern Matching (`parseTimestampedResourceId`) to inspect all source and target Connector Collections and DataStores, automatically pairing matching connector base names and entity suffixes across different `_#####` timestamps.');
+  b.addBullet('**Interactive Step 2 HITL Mapping Table**: Displays every discovered source Connector Collection and DataStore with status badges (`AUTO-MATCH (_#####)`, `EXACT MATCH`, `HITL REQUIRED`), dropdown selectors for live target connectors, custom ID inputs, and `Strip / Remove Connector from Migrated Agents` (`__STRIP__`).');
 
   b.addHeading2('Actionable Gap Remediation Plan');
   b.addParagraph(
@@ -1079,10 +1095,14 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addNumbered('Stage 1: Pre-Flight Infrastructure Checks — Verifies target engine existence, accessibility, and service usage quotas.', 1);
   b.addNumbered('Stage 2: Notebooks & Granular Sources Restoration — Syncs research notebooks and restores individual grounding documents.', 2);
   b.addNumbered('Stage 3: User Skills Discovery & Restoration — Migrates custom skills in `agentregistry.googleapis.com`.', 3);
-  b.addNumbered('Stage 4: Custom Agents Restoration — Creates target agents as editable drafts with preserved system instructions.', 4);
+  b.addNumbered('Stage 4: Custom Agents Restoration & Dynamic Connector Rewriting — Automatically runs `_#####` connector/datastore discovery, rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, expands parent `collectionMapping` rules to child entity DataStores, strips `__STRIP__` connectors, and deduplicates `dataStoreSpecs`.', 4);
   b.addNumbered('Stage 5: Multi-Turn Chat Conversation Rehydration — Recreates conversational turns chronologically for each user.', 5);
   b.addNumbered('Stage 6: Personalized AI Memories & Facts Export — Backs up and migrates discovered user facts.', 6);
   b.addNumbered('Stage 7: Studio Artifacts Discovery, Office Generation & Compression — Synthesizes PPTX presentations, Word study guides, interactive HTML5 quiz/flashcard apps, and compresses Explainer Videos.', 7);
+
+  b.addHeading2('Runtime Human-in-the-Loop (HITL) Validation Modals');
+  b.addBullet('**Connector & DataStore Mapping Review Modal (`#connectorHitlModal`)**: Pauses before Stage 4 if any discovered Custom Agent references an unmapped Connector Collection or DataStore, allowing the operator to map it to a target connector from the dropdown, enter a custom ID, or select `Strip / Remove Connector` (`__STRIP__`).');
+  b.addBullet('**Shared Admin Notebook HITL Modal (`#adminHitlModal`)**: When `promptForAdminNotebookHitl` (`--prompt-admin-hitl`) is enabled and the impersonated user holds project-level `discoveryengine.notebooks.delete` permissions, pauses during Stage 2 so the operator can uncheck colleague-authored shared notebooks.');
 
   // Section 7
   b.addHeading1('7. Migration Reports & Reconciliation Auditing (Step 4)');
@@ -1164,6 +1184,16 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   b.addTable(
     ['Error / Symptom', 'Root Cause', 'Actionable Resolution'],
     [
+      [
+        'No-Code Agent with 1 Connector source in source project displays 3 separate sources in target project',
+        'Third-party connectors (GitHub, Jira, Confluence, ServiceNow) create a parent Connector Collection (github_1773757636775) and 3+ child entity DataStores (_issue, _pull_request, _repository). If not mapped together to the target project <connector>_<timestamp>, Gemini Enterprise displays each child DataStore separately.',
+        'Run Step 2: Config & Parity Audit (Run Pre-Check) to trigger automatic _##### Regex Pattern Matching across collections and child DataStores, or configure collectionMapping in migration-config.json.'
+      ],
+      [
+        'More notebooks discovered than expected (shared colleague notebooks marked as owned)',
+        'Impersonated user holds project-level discoveryengine.notebooks.delete (Admin permissions), causing NotebookLM to treat the user as PROJECT_ROLE_OWNER on all shared notebooks.',
+        'Replace roles/discoveryengine.admin with roles/discoveryengine.user on the Workforce Pool in Source project, or pass --prompt-admin-hitl to review and uncheck shared colleague notebooks interactively.'
+      ],
       [
         'Permission discoveryengine.notebooks.list denied (HTTP 403)',
         'Mismatched google.subject (missing .lowerAscii()), missing google.groups claim, or user lacks roles/discoveryengine.user',

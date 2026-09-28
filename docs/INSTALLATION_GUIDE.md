@@ -1,7 +1,7 @@
 # 🚀 Gemini Enterprise Admin Migration Platform
 ## Installation, Environment Setup & Pre-Requisites Technical Guide
 
-**Document Version:** `v1.5.8 (Enterprise Release)`  
+**Document Version:** `v1.6.0 (Enterprise Release)`  
 **Target Platform:** Google Cloud Discovery Engine & Gemini Enterprise  
 **Execution Profile:** Headless CLI & Local Workstation Web Console (`http://127.0.0.1:8080`)  
 **Authentication Protocols:** Google Workspace Domain-Wide Delegation (OAuth2) & Microsoft Entra ID Workforce Identity Federation (STS)  
@@ -276,7 +276,12 @@ Follow these steps to clone, build, and configure the platform on your administr
        "migrateSessions": true,
        "migrateMemories": true,
        "exportArtifacts": true,
-       "userFilter": ["*@company.com"]
+       "userFilter": ["*@company.com"],
+       "promptForAdminNotebookHitl": false,
+       "promptForConnectorHitl": true
+     },
+     "collectionMapping": {
+       "github_1773757636775": "github_1780931139999"
      },
      "auth": {
        "authType": "SERVICE_ACCOUNT_KEY",
@@ -310,7 +315,7 @@ npx tsx src/cli.ts --config migration-config.json
 ### Option 3: Run Automated Test Suite
 ```bash
 npm test
-# Executes 106 automated tests across 14 test suites covering auth, cross-project parity pre-checks, export, decommissioning, and rollback validation
+# Executes 323 automated tests across 26 test suites covering auth, cross-project parity pre-checks, dynamic _##### connector Regex Pattern Matching, HITL validation, export, decommissioning, and rollback validation
 ```
 
 ### CLI Command-Line Flag Reference (`src/cli.ts`)
@@ -329,6 +334,8 @@ npm test
 | `--agent-types` | `<types...>` | Filter agent migration by type (`LOW_CODE`, `WORKFLOW`, `ALL`) | `ALL` |
 | `--publish-agents` | — | Auto-publish migrated agents to organizational gallery | `false` |
 | `--no-preserve-sharing` | — | Do not replicate sharing configurations (`ALL_USERS`/`RESTRICTED`) | Replicate |
+| `--prompt-admin-hitl` | — | Pause migration for Human-in-the-Loop confirmation when shared Admin notebooks are detected | `false` |
+| `--no-connector-hitl` | — | Disable Human-in-the-Loop validation prompts when unmapped agent connectors/datastores are detected | Prompts enabled |
 | `--users` | `<users...>` | Filter migration to specific user email(s) or patterns (e.g. `*@company.com`) | All |
 | `--concurrency` | `<number>` | Maximum parallel worker concurrency | `10` |
 | `--token` | `<token>` | Explicit Google OAuth Access Token (overrides ADC) | — |

@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.5.8</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.6.0</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -1235,6 +1235,48 @@
             </div>
             <div id="auditRemediationList" class="space-y-3 text-xs">
               <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Dynamic Connector & DataStore Mapping (Auto-Map _##### + HITL Validation) -->
+          <div id="auditConnectorMappingContainer" class="bg-gray-950/80 border border-indigo-500/40 rounded-xl p-5 space-y-4">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+              <div class="flex items-start gap-2.5">
+                <span class="text-lg mt-0.5">🔌</span>
+                <div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="text-sm font-bold text-white">Dynamic Connector &amp; DataStore Mapping (Auto-Map + HITL Validation)</h3>
+                    <span id="auditConnectorAutoBadge" class="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700/60">0 Auto-Mapped (_#####)</span>
+                    <span id="auditConnectorHitlBadge" class="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold bg-amber-950 text-amber-300 border border-amber-700/60 hidden">0 HITL Required</span>
+                  </div>
+                  <p class="text-xs text-gray-400 mt-1">
+                    Automatically links Source ➔ Destination Connectors &amp; DataStores that share the same name with different <code class="text-indigo-300 font-mono">_#####</code> identifiers, synchronizing parent Connector Collections (<code class="text-indigo-300 font-mono">collections/{id}/dataConnector</code>) and child entity DataStores (<code class="text-indigo-300 font-mono">_issue</code>, <code class="text-indigo-300 font-mono">_pull_request</code>, <code class="text-indigo-300 font-mono">_repository</code>) so a 1-source No-Code Agent never splits into 3 separate sources. If auto-mapping cannot find a unique match, select the destination via <strong>HITL</strong> below.
+                  </p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button type="button" onclick="resetConnectorMappingsToAuto()" class="px-2.5 py-1.5 bg-gray-900 hover:bg-gray-800 text-[11px] font-medium text-gray-300 border border-gray-700 rounded-lg transition" title="Reset manual overrides back to automatic _##### matching">
+                  ↺ Reset to Auto-Map
+                </button>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/60 max-h-96 overflow-y-auto">
+              <table class="w-full text-left text-xs text-gray-300">
+                <thead class="bg-gray-950 text-gray-400 uppercase text-[10px] font-mono border-b border-gray-800 sticky top-0">
+                  <tr>
+                    <th class="py-2.5 px-3">Source Connector / DataStore</th>
+                    <th class="py-2.5 px-3 w-36 text-center">Mapping Status</th>
+                    <th class="py-2.5 px-3">Destination Mapping (Auto-Map / HITL Selector)</th>
+                    <th class="py-2.5 px-3">Synchronized Entity Sources &amp; Agent Usage</th>
+                  </tr>
+                </thead>
+                <tbody id="auditConnectorMappingTableBody" class="divide-y divide-gray-800/60">
+                  <tr>
+                    <td colspan="4" class="py-6 text-center text-gray-500">Run Pre-Check above to dynamically discover and auto-map Source ➔ Destination Connectors &amp; DataStores.</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -4534,7 +4576,285 @@
         }
       }
 
+      renderConnectorMappingPanel(audit);
       filterAuditTable();
+    }
+
+    let userCollectionMappingOverrides = {};
+    let userDatastoreMappingOverrides = {};
+
+    function getConnectorMappingStorageKey() {
+      const srcProj = getFieldValue('auditSrcProjectId') || getFieldValue('srcProjectId') || localStorage.getItem('gemini_src_project') || 'src';
+      const tgtProj = getFieldValue('auditTgtProjectId') || getFieldValue('tgtProjectId') || localStorage.getItem('gemini_tgt_project') || 'tgt';
+      return `ge_connector_mappings_${srcProj}__${tgtProj}`;
+    }
+
+    function loadSavedConnectorMappingOverrides() {
+      try {
+        const raw = localStorage.getItem(getConnectorMappingStorageKey());
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          userCollectionMappingOverrides = parsed.collectionMapping || {};
+          userDatastoreMappingOverrides = parsed.datastoreMapping || {};
+        }
+      } catch (err) {
+        console.warn('Could not load saved connector mapping overrides:', err);
+      }
+    }
+
+    function saveConnectorMappingOverrides() {
+      try {
+        localStorage.setItem(
+          getConnectorMappingStorageKey(),
+          JSON.stringify({
+            collectionMapping: userCollectionMappingOverrides,
+            datastoreMapping: userDatastoreMappingOverrides
+          })
+        );
+      } catch (err) {
+        console.warn('Could not persist connector mapping overrides:', err);
+      }
+    }
+
+    function getEffectiveConnectorMappings() {
+      loadSavedConnectorMappingOverrides();
+      const autoCol = activeAuditResult?.connectorMappings?.collectionMapping || {};
+      const autoDs = activeAuditResult?.connectorMappings?.datastoreMapping || {};
+      return {
+        collectionMapping: { ...autoCol, ...userCollectionMappingOverrides },
+        datastoreMapping: { ...autoDs, ...userDatastoreMappingOverrides }
+      };
+    }
+
+    function resetConnectorMappingsToAuto() {
+      userCollectionMappingOverrides = {};
+      userDatastoreMappingOverrides = {};
+      try {
+        localStorage.removeItem(getConnectorMappingStorageKey());
+      } catch (err) {
+        console.warn('Could not clear saved connector mappings:', err);
+      }
+      if (activeAuditResult) {
+        runConfigPreCheck();
+      }
+    }
+
+    function onConnectorMappingDropdownChange(kind, sourceId, selectEl) {
+      const val = selectEl.value;
+      const customWrap = document.getElementById(`customConnectorTargetWrap_${sourceId}`);
+      if (val === '__CUSTOM__') {
+        if (customWrap) customWrap.classList.remove('hidden');
+        return;
+      }
+      if (customWrap) customWrap.classList.add('hidden');
+
+      if (kind === 'CONNECTOR_COLLECTION') {
+        if (!val) {
+          delete userCollectionMappingOverrides[sourceId];
+        } else {
+          userCollectionMappingOverrides[sourceId] = val;
+        }
+        // Synchronize child entity DataStores if this connector has entityMappings
+        const entry = (activeAuditResult?.connectorMappings?.entries || []).find(
+          e => e.kind === 'CONNECTOR_COLLECTION' && e.sourceId === sourceId
+        );
+        const tgtCandidate = (activeAuditResult?.connectorMappings?.targetConnectorCandidates || []).find(
+          c => c.id === val
+        );
+        if (entry && Array.isArray(entry.entityMappings)) {
+          for (const em of entry.entityMappings) {
+            if (!val) {
+              delete userDatastoreMappingOverrides[em.sourceDataStoreId];
+            } else if (val === '__STRIP__') {
+              userDatastoreMappingOverrides[em.sourceDataStoreId] = '__STRIP__';
+            } else if (tgtCandidate && tgtCandidate.entityDataStores && tgtCandidate.entityDataStores[em.entityName]) {
+              userDatastoreMappingOverrides[em.sourceDataStoreId] = tgtCandidate.entityDataStores[em.entityName];
+            } else {
+              userDatastoreMappingOverrides[em.sourceDataStoreId] = `${val}_${em.entityName}`;
+            }
+          }
+        }
+      } else {
+        if (!val) {
+          delete userDatastoreMappingOverrides[sourceId];
+        } else {
+          userDatastoreMappingOverrides[sourceId] = val;
+        }
+      }
+
+      saveConnectorMappingOverrides();
+      if (activeAuditResult) {
+        renderConnectorMappingPanel(activeAuditResult);
+      }
+    }
+
+    function onCustomConnectorTargetChange(kind, sourceId, inputEl) {
+      const val = (inputEl.value || '').trim();
+      if (!val) return;
+      if (kind === 'CONNECTOR_COLLECTION') {
+        userCollectionMappingOverrides[sourceId] = val;
+        const entry = (activeAuditResult?.connectorMappings?.entries || []).find(
+          e => e.kind === 'CONNECTOR_COLLECTION' && e.sourceId === sourceId
+        );
+        if (entry && Array.isArray(entry.entityMappings)) {
+          for (const em of entry.entityMappings) {
+            userDatastoreMappingOverrides[em.sourceDataStoreId] = `${val}_${em.entityName}`;
+          }
+        }
+      } else {
+        userDatastoreMappingOverrides[sourceId] = val;
+      }
+      saveConnectorMappingOverrides();
+    }
+
+    function renderConnectorMappingPanel(audit) {
+      const tbody = document.getElementById('auditConnectorMappingTableBody');
+      const autoBadge = document.getElementById('auditConnectorAutoBadge');
+      const hitlBadge = document.getElementById('auditConnectorHitlBadge');
+      if (!tbody) return;
+
+      loadSavedConnectorMappingOverrides();
+      const cm = audit?.connectorMappings;
+      const entries = cm?.entries || [];
+
+      if (entries.length === 0) {
+        if (autoBadge) autoBadge.textContent = '0 Connectors / DataStores';
+        if (hitlBadge) hitlBadge.classList.add('hidden');
+        tbody.innerHTML = '<tr><td colspan="4" class="py-6 text-center text-gray-500">No Connectors or DataStores discovered in the source environment.</td></tr>';
+        return;
+      }
+
+      let autoOrExactCount = 0;
+      let needsHitlCount = 0;
+
+      const rowsHtml = entries.map(entry => {
+        const isConnector = entry.kind === 'CONNECTOR_COLLECTION';
+        const userOverride = isConnector
+          ? userCollectionMappingOverrides[entry.sourceId]
+          : userDatastoreMappingOverrides[entry.sourceId];
+        const effectiveTargetId = userOverride !== undefined ? userOverride : (entry.targetId || '');
+        const effectiveStatus = userOverride !== undefined
+          ? (userOverride === '__STRIP__' ? 'STRIPPED' : 'HITL_CONFIRMED')
+          : entry.matchStatus;
+
+        if (effectiveStatus === 'NEEDS_HITL') {
+          needsHitlCount++;
+        } else {
+          autoOrExactCount++;
+        }
+
+        let statusBadge = '';
+        if (effectiveStatus === 'AUTO_MATCHED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-semibold text-[10px]">✅ Auto-Mapped (_#####)</span>';
+        } else if (effectiveStatus === 'EXACT_MATCH') {
+          statusBadge = '<span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30 font-semibold text-[10px]">✅ Exact ID Match</span>';
+        } else if (effectiveStatus === 'HITL_CONFIRMED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-semibold text-[10px]">✋ HITL Confirmed</span>';
+        } else if (effectiveStatus === 'STRIPPED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 font-semibold text-[10px]">🚫 Stripped</span>';
+        } else {
+          statusBadge = '<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10px] animate-pulse">⚠️ HITL Required</span>';
+        }
+
+        const candidates = entry.candidateTargets || [];
+        const candidateIds = new Set(candidates.map(c => c.id));
+        const isCustomTarget = Boolean(
+          effectiveTargetId &&
+          effectiveTargetId !== '__STRIP__' &&
+          !candidateIds.has(effectiveTargetId)
+        );
+
+        const optionsHtml = [
+          `<option value="" ${!effectiveTargetId ? 'selected' : ''}>-- Unmapped (Select Target ${isConnector ? 'Connector' : 'DataStore'}) --</option>`,
+          ...candidates.map(cand => {
+            const selected = effectiveTargetId === cand.id ? 'selected' : '';
+            const entityCountLabel = cand.entityDataStores
+              ? ` [${Object.keys(cand.entityDataStores).length} entities]`
+              : '';
+            return `<option value="${escapeHtml(cand.id)}" ${selected}>${escapeHtml(cand.displayName)} (${escapeHtml(cand.id)})${escapeHtml(entityCountLabel)}</option>`;
+          }),
+          `<option value="__CUSTOM__" ${isCustomTarget ? 'selected' : ''}>✏️ Enter Custom Target ID...</option>`,
+          `<option value="__STRIP__" ${effectiveTargetId === '__STRIP__' ? 'selected' : ''}>🚫 Strip / Remove Source from Migrated Agents</option>`
+        ].join('');
+
+        const typeBadge = isConnector
+          ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-950 text-purple-300 border border-purple-700/60">CONNECTOR (${(entry.entityMappings || []).length || 1} entities)</span>`
+          : `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-700/60">DATASTORE</span>`;
+
+        const entityDetailsHtml = isConnector && Array.isArray(entry.entityMappings) && entry.entityMappings.length > 0
+          ? `<div class="mt-1.5 space-y-1 bg-gray-950/80 border border-gray-800 rounded p-2 font-mono text-[10px]">
+              <div class="text-gray-400 font-sans font-semibold text-[10px]">Synchronized Child Entity DataStores (1 Connector = ${entry.entityMappings.length} Entity Specs):</div>
+              ${entry.entityMappings.map(em => {
+                const mappedChild = userDatastoreMappingOverrides[em.sourceDataStoreId] ||
+                  (effectiveTargetId && effectiveTargetId !== '__STRIP__' ? `${effectiveTargetId}_${em.entityName}` : em.targetDataStoreId);
+                return `<div class="flex items-center gap-1.5 text-gray-300">
+                  <span class="text-indigo-300">${escapeHtml(em.entityName)}:</span>
+                  <span>${escapeHtml(em.sourceDataStoreId)}</span>
+                  <span class="text-gray-500">➔</span>
+                  <span class="${mappedChild ? 'text-emerald-300' : 'text-amber-400'}">${escapeHtml(mappedChild || 'unmapped')}</span>
+                </div>`;
+              }).join('')}
+            </div>`
+          : '';
+
+        const agentUsageHtml = Array.isArray(entry.referencedByAgents) && entry.referencedByAgents.length > 0
+          ? `<div class="text-[11px] text-indigo-300 font-medium">🤖 Referenced by ${entry.referencedByAgents.length} Agent(s): <span class="font-mono text-white">${escapeHtml(entry.referencedByAgents.join(', '))}</span></div>`
+          : (entry.attachedToEngine
+            ? `<div class="text-[11px] text-emerald-300/90">🔗 Attached to Source Engine</div>`
+            : `<div class="text-[11px] text-gray-500">Available in Source Project</div>`);
+
+        return `
+          <tr class="hover:bg-gray-900/60 transition ${effectiveStatus === 'NEEDS_HITL' ? 'bg-amber-950/10' : ''}">
+            <td class="py-3 px-3 align-top">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-white">${escapeHtml(entry.sourceDisplayName)}</span>
+                ${typeBadge}
+              </div>
+              <div class="font-mono text-[11px] text-gray-300 mt-1">${escapeHtml(entry.sourceId)}</div>
+              ${entry.sourceNumericId ? `<div class="text-[10px] text-gray-500 font-mono mt-0.5">Base: <span class="text-gray-300">${escapeHtml(entry.baseName)}</span> • ID Suffix: <span class="text-amber-300">_${escapeHtml(entry.sourceNumericId)}</span></div>` : ''}
+            </td>
+            <td class="py-3 px-3 text-center align-top">
+              ${statusBadge}
+            </td>
+            <td class="py-3 px-3 align-top">
+              <select
+                onchange="onConnectorMappingDropdownChange('${escapeHtml(entry.kind)}', '${escapeHtml(entry.sourceId)}', this)"
+                class="w-full bg-gray-950 border ${effectiveStatus === 'NEEDS_HITL' ? 'border-amber-500/80 text-amber-200' : 'border-gray-700 text-emerald-300'} rounded-lg px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:border-indigo-500"
+              >
+                ${optionsHtml}
+              </select>
+              <div id="customConnectorTargetWrap_${escapeHtml(entry.sourceId)}" class="${isCustomTarget ? '' : 'hidden'} mt-1.5">
+                <input
+                  type="text"
+                  value="${isCustomTarget ? escapeHtml(effectiveTargetId) : ''}"
+                  placeholder="Enter target ${isConnector ? 'Connector Collection' : 'DataStore'} ID..."
+                  oninput="onCustomConnectorTargetChange('${escapeHtml(entry.kind)}', '${escapeHtml(entry.sourceId)}', this)"
+                  class="w-full bg-gray-900 border border-indigo-500/70 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                />
+              </div>
+              <div class="text-[10px] text-gray-400 mt-1">${escapeHtml(entry.matchReason || '')}</div>
+            </td>
+            <td class="py-3 px-3 align-top space-y-1">
+              ${agentUsageHtml}
+              ${entityDetailsHtml}
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      if (autoBadge) {
+        autoBadge.textContent = `${autoOrExactCount} Mapped`;
+      }
+      if (hitlBadge) {
+        if (needsHitlCount > 0) {
+          hitlBadge.textContent = `⚠️ ${needsHitlCount} HITL Required`;
+          hitlBadge.classList.remove('hidden');
+        } else {
+          hitlBadge.classList.add('hidden');
+        }
+      }
+
+      tbody.innerHTML = rowsHtml;
     }
 
     function copyTextValue(text, btn) {
@@ -4603,6 +4923,8 @@
       let tgtApp = getFieldValue('auditTgtAppId') || getFieldValue('tgtAppId') || localStorage.getItem('gemini_tgt_app_id') || '';
       if (!tgtApp || tgtApp === 'custom') tgtApp = 'default_engine';
 
+      loadSavedConnectorMappingOverrides();
+
       return {
         source: {
           projectId: srcProj,
@@ -4632,6 +4954,8 @@
           targetIdp: document.getElementById('tgtIdp')?.value === 'entra' ? 'MICROSOFT_ENTRA_ID' : (document.getElementById('tgtIdp')?.value === 'okta' ? 'OKTA' : 'GOOGLE_CLOUD_IDENTITY'),
           domainRules: (document.getElementById('srcIdp')?.value !== document.getElementById('tgtIdp')?.value) ? getActiveDomainRules() : []
         },
+        collectionMapping: { ...userCollectionMappingOverrides },
+        datastoreMapping: { ...userDatastoreMappingOverrides },
         options: {
           dryRun: true
         }
@@ -8448,6 +8772,7 @@ ${projectIamBlock}`;
           domainRules: domainRules
         },
         identityMapping: effectiveIdentityMapping,
+        ...(typeof getEffectiveConnectorMappings === 'function' ? getEffectiveConnectorMappings() : {}),
         options: {
           migrateNotebooks: document.getElementById('optNotebooks') ? document.getElementById('optNotebooks').checked : true,
           migrateSkills: document.getElementById('optSkills') ? document.getElementById('optSkills').checked : true,
@@ -8467,6 +8792,7 @@ ${projectIamBlock}`;
           publishAgents: false,
           dryRun: isDryRun,
           promptForAdminNotebookHitl: document.getElementById('optPromptAdminNotebookHitl') ? document.getElementById('optPromptAdminNotebookHitl').checked : false,
+          promptForConnectorHitl: true,
           debugMode: document.getElementById('optDebugMode') ? document.getElementById('optDebugMode').checked : false,
           logLevel: (document.getElementById('optDebugMode') && document.getElementById('optDebugMode').checked) ? 'DEBUG' : 'INFO',
           concurrency: 10,
@@ -8563,6 +8889,11 @@ ${projectIamBlock}`;
               } else if (eventType === 'admin_notebook_hitl') {
                 addLog(`🛑 Action Required: ${data.candidates?.length || 0} shared Admin notebook(s) require Human-in-the-Loop validation.`, 'WARN');
                 openAdminNotebookHitlModal(data.promptId, data.candidates || []);
+              } else if (eventType === 'connector_mapping_hitl') {
+                addLog(`🔌 Action Required: ${data.entries?.length || 0} Connector/DataStore source(s) could not be auto-mapped and require HITL validation.`, 'WARN');
+                if (typeof openConnectorHitlModal === 'function') {
+                  openConnectorHitlModal(data.promptId, data.entries || []);
+                }
               } else if (eventType === 'report') {
                 finalReport = data;
                 activeReportData = data;
@@ -11530,6 +11861,7 @@ ${projectIamBlock}`;
         identityMapping: {
           [srcUser]: tgtUser
         },
+        ...getEffectiveConnectorMappings(),
         options: {
           migrateNotebooks: document.getElementById('singleOptNotebooks').checked,
           migrateAgents: document.getElementById('singleOptAgents').checked,
@@ -11538,6 +11870,7 @@ ${projectIamBlock}`;
           exportMemories: true,
           exportArtifacts: document.getElementById('singleOptArtifacts').checked,
           promptForAdminNotebookHitl: document.getElementById('singleOptPromptAdminNotebookHitl') ? document.getElementById('singleOptPromptAdminNotebookHitl').checked : false,
+          promptForConnectorHitl: true,
           userFilter: [srcUser],
           dryRun: isDryRun,
           concurrency: 5,
@@ -11603,6 +11936,13 @@ ${projectIamBlock}`;
                 streamLogs.appendChild(hitlLine);
                 streamLogs.scrollTop = streamLogs.scrollHeight;
                 openAdminNotebookHitlModal(eventData.promptId, eventData.candidates || []);
+              } else if (eventType === 'connector_mapping_hitl') {
+                const hitlLine = document.createElement('div');
+                hitlLine.className = 'text-amber-300 font-semibold';
+                hitlLine.textContent = `🔌 Action Required: ${eventData.entries?.length || 0} Connector/DataStore source(s) awaiting HITL mapping...`;
+                streamLogs.appendChild(hitlLine);
+                streamLogs.scrollTop = streamLogs.scrollHeight;
+                openConnectorHitlModal(eventData.promptId, eventData.entries || []);
               } else if (eventType === 'report') {
                 reconBox.classList.remove('hidden');
                 renderSingleUserReconciliation(eventData, srcUser, tgtUser);
@@ -11689,6 +12029,108 @@ ${projectIamBlock}`;
     }
 
     let currentAdminHitlPromptId = null;
+    let currentConnectorHitlPromptId = null;
+    let currentConnectorHitlEntries = [];
+
+    function openConnectorHitlModal(promptId, entries) {
+      currentConnectorHitlPromptId = promptId;
+      currentConnectorHitlEntries = entries || [];
+      const modal = document.getElementById('connectorHitlModal');
+      const tbody = document.getElementById('connectorHitlTableBody');
+      const countBadge = document.getElementById('connectorHitlCountBadge');
+      if (!modal || !tbody) return;
+
+      if (countBadge) {
+        countBadge.textContent = `${currentConnectorHitlEntries.length} Unmapped Source(s)`;
+      }
+
+      tbody.innerHTML = currentConnectorHitlEntries.map(entry => {
+        const isConnector = entry.kind === 'CONNECTOR_COLLECTION';
+        const candidates = entry.candidateTargets || [];
+        const optionsHtml = [
+          `<option value="">-- Select Target ${isConnector ? 'Connector' : 'DataStore'} --</option>`,
+          ...candidates.map(cand => {
+            const entityCountLabel = cand.entityDataStores
+              ? ` [${Object.keys(cand.entityDataStores).length} entities]`
+              : '';
+            return `<option value="${escapeHtml(cand.id)}">${escapeHtml(cand.displayName)} (${escapeHtml(cand.id)})${escapeHtml(entityCountLabel)}</option>`;
+          }),
+          `<option value="__STRIP__">🚫 Strip / Remove Source from Migrated Agents</option>`
+        ].join('');
+
+        const entitiesInfo = isConnector && Array.isArray(entry.entityMappings) && entry.entityMappings.length > 0
+          ? `<div class="text-[10px] font-mono text-indigo-300 mt-1">Child Entity DataStores (${entry.entityMappings.length}): ${escapeHtml(entry.entityMappings.map(e => e.entityName).join(', '))}</div>`
+          : '';
+
+        return `
+          <tr class="hover:bg-gray-800/60 border-b border-gray-800/70 transition">
+            <td class="py-3 px-4 align-top">
+              <div class="font-semibold text-white text-sm">${escapeHtml(entry.sourceDisplayName)}</div>
+              <div class="text-[11px] font-mono text-gray-400 mt-0.5">${escapeHtml(entry.sourceId)}</div>
+              ${entitiesInfo}
+            </td>
+            <td class="py-3 px-4 align-top text-xs text-gray-300">
+              <div>${escapeHtml((entry.referencedByAgents || []).join(', ') || 'Source Agent')}</div>
+              <div class="text-[10px] text-amber-300 mt-0.5">${escapeHtml(entry.matchReason || '')}</div>
+            </td>
+            <td class="py-3 px-4 align-top">
+              <select
+                class="connector-hitl-select w-full bg-gray-950 border border-amber-500/70 text-white rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                data-source-id="${escapeHtml(entry.sourceId)}"
+                data-kind="${escapeHtml(entry.kind)}"
+              >
+                ${optionsHtml}
+              </select>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      modal.classList.remove('hidden');
+    }
+
+    async function submitConnectorHitlDecision(stripAllUnselected) {
+      if (!currentConnectorHitlPromptId) return;
+      const promptId = currentConnectorHitlPromptId;
+      currentConnectorHitlPromptId = null;
+
+      const collectionMapping = {};
+      const datastoreMapping = {};
+
+      document.querySelectorAll('.connector-hitl-select').forEach(sel => {
+        const srcId = sel.getAttribute('data-source-id');
+        const kind = sel.getAttribute('data-kind');
+        let val = sel.value;
+        if (!val && stripAllUnselected) {
+          val = '__STRIP__';
+        }
+        if (srcId && val) {
+          if (kind === 'CONNECTOR_COLLECTION') {
+            collectionMapping[srcId] = val;
+            userCollectionMappingOverrides[srcId] = val;
+          } else {
+            datastoreMapping[srcId] = val;
+            userDatastoreMappingOverrides[srcId] = val;
+          }
+        }
+      });
+
+      saveConnectorMappingOverrides();
+
+      const modal = document.getElementById('connectorHitlModal');
+      if (modal) modal.classList.add('hidden');
+
+      try {
+        await fetch('/api/migrate/connector-hitl-response', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ promptId, collectionMapping, datastoreMapping })
+        });
+        addLog(`Submitted Connector HITL mapping decision (${Object.keys(collectionMapping).length} connector(s), ${Object.keys(datastoreMapping).length} datastore(s)).`, 'INFO');
+      } catch (err) {
+        addLog(`Failed to submit Connector HITL decision: ${err.message}`, 'ERROR');
+      }
+    }
 
     function openAdminNotebookHitlModal(promptId, candidates) {
       currentAdminHitlPromptId = promptId;
@@ -11801,6 +12243,50 @@ ${projectIamBlock}`;
       setTimeout(() => autoRefreshAppIds(), 800);
     });
   </script>
+
+  <!-- Human-in-the-Loop (HITL) Modal for Unmapped Connector / DataStore Sources -->
+  <div id="connectorHitlModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div class="bg-gray-900 border border-indigo-500/40 rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+      <div class="px-6 py-4 bg-indigo-950/40 border-b border-indigo-500/30 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <span class="text-2xl">🔌</span>
+          <div>
+            <h3 class="text-lg font-bold text-indigo-300">Human-in-the-Loop Validation: Connector &amp; DataStore Mapping</h3>
+            <p class="text-xs text-indigo-200/80">One or more Connectors or DataStores referenced by your agents could not be automatically mapped by <code class="font-mono">_#####</code> base name.</p>
+          </div>
+        </div>
+        <span id="connectorHitlCountBadge" class="px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-mono font-bold">0 Unmapped Source(s)</span>
+      </div>
+
+      <div class="p-6 overflow-y-auto space-y-4">
+        <div class="p-3.5 rounded-xl bg-gray-950/90 border border-gray-800 text-xs text-gray-300 leading-relaxed">
+          <strong class="text-amber-300">Why is this important?</strong> In Gemini Enterprise, a single No-Code Agent Connector (e.g. GitHub, Jira, Confluence) links a parent Connector Collection (<code class="text-indigo-300 font-mono">collections/{id}/dataConnector</code>) with multiple child entity DataStores (<code class="text-indigo-300 font-mono">_issue</code>, <code class="text-indigo-300 font-mono">_pull_request</code>, <code class="text-indigo-300 font-mono">_repository</code>). Mapping the parent Connector below ensures all child entity DataStores are rewritten together so your restored agent keeps <strong>1 unified Connector source</strong> instead of splitting into 3 separate sources.
+        </div>
+
+        <div class="border border-gray-800 rounded-xl overflow-hidden">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-gray-950 border-b border-gray-800 text-[11px] uppercase tracking-wider text-gray-400">
+                <th class="py-2.5 px-4">Source Connector / DataStore</th>
+                <th class="py-2.5 px-4">Referenced By Agent(s)</th>
+                <th class="py-2.5 px-4">Select Target Destination</th>
+              </tr>
+            </thead>
+            <tbody id="connectorHitlTableBody" class="divide-y divide-gray-800/60 bg-gray-900/50"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="px-6 py-4 bg-gray-950 border-t border-gray-800 flex items-center justify-between">
+        <button type="button" onclick="submitConnectorHitlDecision(true)" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 text-xs font-semibold transition">
+          🚫 Strip Unselected Sources &amp; Continue
+        </button>
+        <button type="button" onclick="submitConnectorHitlDecision(false)" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-900/30 transition">
+          ✅ Confirm Mappings &amp; Resume Migration
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Human-in-the-Loop (HITL) Modal for Shared Admin Notebooks -->
   <div id="adminNotebookHitlModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">

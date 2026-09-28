@@ -31,7 +31,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.5.8')
+  .version('1.6.0')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
@@ -51,6 +51,7 @@ program
   .option('--output-dir <dir>', 'Directory to output migration reports', './reports')
   .option('--resume <reportPath>', 'Resume migration by skipping already-successful assets from a previous migration report JSON')
   .option('--prompt-admin-hitl', 'Prompt for Human-in-the-Loop (HITL) validation for shared notebooks remaining under Admin accounts at the end of the migration')
+  .option('--no-connector-hitl', 'Disable interactive Human-in-the-Loop (HITL) prompt for unmapped Connector / DataStore sources')
   .option('--generate-user-reports', 'Generate post-migration handover bundles and checklists per user')
   .option('--notify-users [overrideEmail]', 'Dispatch bulk handover emails to migrated users (or provide override email for safe staging validation)')
   .option('--no-zip-attachments', 'Disable packaging user NotebookLM artifacts into .zip archive before emailing')
@@ -116,6 +117,9 @@ program
       }
       if (options.promptAdminHitl !== undefined) {
         baseConfig.options = { ...baseConfig.options, promptForAdminNotebookHitl: true };
+      }
+      if (options.connectorHitl === false) {
+        baseConfig.options = { ...baseConfig.options, promptForConnectorHitl: false };
       }
 
       const validatedConfig = MigrationConfigSchema.parse(baseConfig);

@@ -18,6 +18,8 @@ import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { AgentRegistryClient } from '../services/agentRegistry.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
+import { ConnectorMappingEntry, ConnectorTargetCandidate } from '../types/migration.js';
+import { buildConnectorAndDataStoreMappings } from '../services/connectorMatcher.js';
 import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
 import { logger } from '../utils/logger.js';
 
@@ -30,6 +32,17 @@ export interface AuditItem {
   targetValue: any;
   details?: string;
   remediationCommand?: string;
+}
+
+export interface ConfigAuditConnectorMappings {
+  entries: ConnectorMappingEntry[];
+  collectionMapping: Record<string, string>;
+  datastoreMapping: Record<string, string>;
+  targetConnectorCandidates: ConnectorTargetCandidate[];
+  targetDataStoreCandidates: ConnectorTargetCandidate[];
+  autoMatchedCount: number;
+  exactMatchedCount: number;
+  needsHitlCount: number;
 }
 
 export interface ConfigAuditResult {
@@ -49,6 +62,7 @@ export interface ConfigAuditResult {
     description: string;
     command?: string;
   }[];
+  connectorMappings?: ConfigAuditConnectorMappings;
   timestamp: string;
 }
 
@@ -492,6 +506,9 @@ export class ConfigAuditEngine {
 
     let allSourceDataStores: any[] = [];
     let allTargetDataStores: any[] = [];
+    let allSourceCollections: any[] = [];
+    let allTargetCollections: any[] = [];
+    let allSourceAgents: any[] = [];
 
     try {
       allSourceDataStores = await this.client.listDataStores(src);
@@ -504,6 +521,39 @@ export class ConfigAuditEngine {
     } catch (err: any) {
       logger.warn(`Could not list target DataStores: ${err.message}`);
     }
+
+    if (typeof this.client.listCollections === 'function') {
+      try {
+        allSourceCollections = await this.client.listCollections(src);
+      } catch (err: any) {
+        logger.debug(`Could not list source Collections during config audit: ${err.message}`);
+      }
+      try {
+        allTargetCollections = await this.client.listCollections(tgt);
+      } catch (err: any) {
+        logger.debug(`Could not list target Collections during config audit: ${err.message}`);
+      }
+    }
+
+    if (typeof this.client.listAgents === 'function') {
+      try {
+        allSourceAgents = await this.client.listAgents(src);
+      } catch (err: any) {
+        logger.debug(`Could not list source Agents during config audit: ${err.message}`);
+      }
+    }
+
+    const connectorMappingResult = buildConnectorAndDataStoreMappings({
+      sourceCollections: allSourceCollections,
+      targetCollections: allTargetCollections,
+      sourceDataStores: allSourceDataStores,
+      targetDataStores: allTargetDataStores,
+      sourceEngineDataStoreIds: sourceAttachedIds,
+      targetEngineDataStoreIds: targetAttachedIds,
+      sourceAgents: allSourceAgents,
+      existingCollectionMapping: config.collectionMapping || {},
+      existingDatastoreMapping: config.datastoreMapping || {}
+    });
 
     const sourceDsMap = new Map<string, any>();
     for (const ds of allSourceDataStores) {
@@ -549,18 +599,23 @@ export class ConfigAuditEngine {
       }
     }
 
-    const explicitMapping = config.datastoreMapping || {};
+    const effectiveMapping: Record<string, string> = {
+      ...connectorMappingResult.datastoreMapping,
+      ...(config.datastoreMapping || {})
+    };
     const missingTargetIdsToAttach: string[] = [];
 
     for (const item of sourceAttachedDataStores) {
       const srcId = item.id;
       const srcDisplayName = item.displayName;
-      const mappedTgtId = explicitMapping[srcId];
-      const matchedTgtDs = mappedTgtId
-        ? targetDsMap.get(mappedTgtId)
-        : (targetDsMap.get(srcId) || targetDsByDisplay.get(srcDisplayName.toLowerCase()));
+      const mappedTgtId = effectiveMapping[srcId];
+      const matchedTgtDs =
+        mappedTgtId && mappedTgtId !== '__STRIP__'
+          ? targetDsMap.get(mappedTgtId)
+          : (targetDsMap.get(srcId) || targetDsByDisplay.get(srcDisplayName.toLowerCase()));
       const targetId = matchedTgtDs ? (matchedTgtDs.name.split('/').pop() || '') : (mappedTgtId || srcId);
       const isAttachedToTarget = targetAttachedIdSet.has(targetId);
+      const isAutoMappedDiffId = Boolean(matchedTgtDs && targetId !== srcId);
 
       if (matchedTgtDs && (isAttachedToTarget || targetAttachedIds.length === 0 && !targetEngineDetails?.dataStoreIds)) {
         // MATCH: Provisioned in target project and attached to target engine
@@ -571,8 +626,10 @@ export class ConfigAuditEngine {
           name: `Attached DataStore: ${srcDisplayName}`,
           status: 'MATCH',
           sourceValue: `${srcDisplayName} (${srcId}) [Attached]`,
-          targetValue: `${matchedTgtDs.displayName || targetId} (${targetId}) [Attached]`,
-          details: `DataStore is provisioned in target project and verified attached to target engine "${tgt.appId}".`
+          targetValue: `${matchedTgtDs.displayName || targetId} (${targetId}) [Attached${isAutoMappedDiffId ? ' • Auto-Mapped _#####' : ''}]`,
+          details: isAutoMappedDiffId
+            ? `Auto-mapped source DataStore "${srcId}" ➔ target "${targetId}" (matching base name with different _##### identifier) and verified attached to target engine "${tgt.appId}".`
+            : `DataStore is provisioned in target project and verified attached to target engine "${tgt.appId}".`
         });
       } else if (matchedTgtDs && !isAttachedToTarget) {
         // WARNING: Provisioned in target project, but NOT attached to target engine
@@ -583,8 +640,8 @@ export class ConfigAuditEngine {
           name: `Attached DataStore: ${srcDisplayName}`,
           status: 'WARNING',
           sourceValue: `${srcDisplayName} (${srcId}) [Attached]`,
-          targetValue: `${matchedTgtDs.displayName || targetId} (${targetId}) [Unattached]`,
-          details: `DataStore exists in target project "${tgt.projectId}" but is NOT attached to target engine "${tgt.appId}". Grounded queries will not access it until attached.`
+          targetValue: `${matchedTgtDs.displayName || targetId} (${targetId}) [Unattached${isAutoMappedDiffId ? ' • Auto-Mapped _#####' : ''}]`,
+          details: `DataStore exists in target project "${tgt.projectId}"${isAutoMappedDiffId ? ` (auto-mapped from "${srcId}" ➔ "${targetId}")` : ''} but is NOT attached to target engine "${tgt.appId}". Grounded queries will not access it until attached.`
         });
       } else {
         // MISSING_IN_TARGET: Not provisioned in target project and not attached
@@ -594,25 +651,60 @@ export class ConfigAuditEngine {
           name: `Attached DataStore: ${srcDisplayName}`,
           status: 'MISSING_IN_TARGET',
           sourceValue: `${srcDisplayName} (${srcId}) [Attached]`,
-          targetValue: 'MISSING (Not in Target Engine or Project)',
-          details: `Source attached DataStore "${srcDisplayName}" is not provisioned in target project "${tgt.projectId}". Grounded agents and search will fail to access this knowledge base until configured in Google Cloud Console and attached.`
+          targetValue: 'MISSING (Needs Target Connector / HITL Mapping)',
+          details: `Source attached DataStore "${srcDisplayName}" (${srcId}) could not be auto-mapped to a target DataStore in "${tgt.projectId}". Map it via the Connector & DataStore Mapping panel above or provision it in Google Cloud Console.`
+        });
+      }
+    }
+
+    // Surface Agent-Referenced Connector Collections in the audit checklist
+    for (const entry of connectorMappingResult.entries) {
+      if (entry.kind !== 'CONNECTOR_COLLECTION') continue;
+      if (entry.referencedByAgents.length === 0 && !entry.attachedToEngine) continue;
+
+      const entityCount = entry.entityMappings?.length || 0;
+      const agentSummary =
+        entry.referencedByAgents.length > 0
+          ? `Used by ${entry.referencedByAgents.length} agent(s): ${entry.referencedByAgents.join(', ')}`
+          : 'Attached to Source Engine';
+
+      if (entry.matchStatus === 'AUTO_MATCHED' || entry.matchStatus === 'EXACT_MATCH' || entry.matchStatus === 'HITL_CONFIRMED') {
+        items.push({
+          id: `connector-${entry.sourceId}`,
+          category: 'DATASTORE',
+          name: `Connector Mapping: ${entry.sourceDisplayName}`,
+          status: 'MATCH',
+          sourceValue: `${entry.sourceId} (${entityCount} entity DataStores)`,
+          targetValue: `${entry.targetId} (${entry.matchStatus === 'AUTO_MATCHED' ? 'Auto-Mapped _#####' : entry.matchStatus === 'HITL_CONFIRMED' ? 'HITL Mapped' : 'Exact ID'})`,
+          details: `${entry.matchReason} (${agentSummary}). Prevents 1 connector from splitting into ${entityCount || 'multiple'} separate sources during agent restore.`
+        });
+      } else if (entry.matchStatus === 'NEEDS_HITL') {
+        items.push({
+          id: `connector-${entry.sourceId}`,
+          category: 'DATASTORE',
+          name: `Connector Mapping (HITL Required): ${entry.sourceDisplayName}`,
+          status: 'WARNING',
+          sourceValue: `${entry.sourceId} (${entityCount} entity DataStores)`,
+          targetValue: '⚠️ Needs HITL Mapping Selection',
+          details: `${entry.matchReason} (${agentSummary}). Select a target connector in the Connector Mapping table above so migrated No-Code agents do not split into ${entityCount || 3} separate unlinked sources.`
         });
       }
     }
 
     // Consolidated informational guidance for missing DataStores (no CLI command)
     const missingAttachedCount = sourceAttachedDataStores.filter(item => {
-      const mappedTgtId = explicitMapping[item.id];
-      const matchedTgtDs = mappedTgtId
-        ? targetDsMap.get(mappedTgtId)
-        : (targetDsMap.get(item.id) || targetDsByDisplay.get(item.displayName.toLowerCase()));
+      const mappedTgtId = effectiveMapping[item.id];
+      const matchedTgtDs =
+        mappedTgtId && mappedTgtId !== '__STRIP__'
+          ? targetDsMap.get(mappedTgtId)
+          : (targetDsMap.get(item.id) || targetDsByDisplay.get(item.displayName.toLowerCase()));
       return !matchedTgtDs;
     }).length;
 
     if (missingAttachedCount > 0) {
       remediationPlan.push({
-        title: `Configure Missing Attached DataStore(s) (${missingAttachedCount} missing)`,
-        description: `${missingAttachedCount} DataStore(s) attached to source engine "${src.appId}" do not exist in target project "${tgt.projectId}". Provision or configure connectors via the Google Cloud Console (https://console.cloud.google.com/gen-app-builder/data-stores?project=${tgt.projectId}) and attach them to target engine "${tgt.appId}".`
+        title: `Configure or Map Missing Attached DataStore(s) (${missingAttachedCount} unmapped)`,
+        description: `${missingAttachedCount} DataStore(s) attached to source engine "${src.appId}" could not be auto-mapped in target project "${tgt.projectId}". Map them to an existing target DataStore in the Connector & DataStore Mapping table, or provision them via the Google Cloud Console (https://console.cloud.google.com/gen-app-builder/data-stores?project=${tgt.projectId}) and attach them to target engine "${tgt.appId}".`
       });
     }
 
@@ -630,10 +722,11 @@ export class ConfigAuditEngine {
     if (targetAttachedIds.length > 0 && hasAttachedDataStoreInfo) {
       const mappedOrMatchedTargetIds = new Set<string>();
       for (const item of sourceAttachedDataStores) {
-        const mappedTgtId = explicitMapping[item.id];
-        const matchedTgtDs = mappedTgtId
-          ? targetDsMap.get(mappedTgtId)
-          : (targetDsMap.get(item.id) || targetDsByDisplay.get(item.displayName.toLowerCase()));
+        const mappedTgtId = effectiveMapping[item.id];
+        const matchedTgtDs =
+          mappedTgtId && mappedTgtId !== '__STRIP__'
+            ? targetDsMap.get(mappedTgtId)
+            : (targetDsMap.get(item.id) || targetDsByDisplay.get(item.displayName.toLowerCase()));
         if (matchedTgtDs) {
           mappedOrMatchedTargetIds.add(matchedTgtDs.name.split('/').pop() || '');
         } else if (mappedTgtId) {
@@ -820,6 +913,12 @@ export class ConfigAuditEngine {
       ? Math.min(rawScore, 45)
       : rawScore;
 
+    const autoMatchedCount = connectorMappingResult.entries.filter(
+      e => e.matchStatus === 'AUTO_MATCHED' || e.matchStatus === 'HITL_CONFIRMED'
+    ).length;
+    const exactMatchedCount = connectorMappingResult.entries.filter(e => e.matchStatus === 'EXACT_MATCH').length;
+    const needsHitlCount = connectorMappingResult.entries.filter(e => e.matchStatus === 'NEEDS_HITL').length;
+
     return {
       sourceProject: src.projectId,
       targetProject: tgt.projectId,
@@ -833,6 +932,16 @@ export class ConfigAuditEngine {
       warningsCount,
       items,
       remediationPlan,
+      connectorMappings: {
+        entries: connectorMappingResult.entries,
+        collectionMapping: connectorMappingResult.collectionMapping,
+        datastoreMapping: connectorMappingResult.datastoreMapping,
+        targetConnectorCandidates: connectorMappingResult.targetConnectorCandidates,
+        targetDataStoreCandidates: connectorMappingResult.targetDataStoreCandidates,
+        autoMatchedCount,
+        exactMatchedCount,
+        needsHitlCount
+      },
       timestamp: new Date().toISOString()
     };
   }
@@ -898,6 +1007,33 @@ export class ConfigAuditEngine {
     lines.push(`| **Safe Variations / Differences** | ${audit.diffsCount} | ℹ️ DIFF |`);
     lines.push(`| **Identified Gaps (Missing in Target)** | ${audit.missingInTargetCount} | ❌ MISSING |`);
     lines.push(`| **Configuration Warnings** | ${audit.warningsCount} | ⚠️ WARNING |\n`);
+
+    if (audit.connectorMappings && audit.connectorMappings.entries.length > 0) {
+      lines.push(`---`);
+      lines.push(`## Dynamic Connector & DataStore Mappings`);
+      lines.push(`| Source Connector / DataStore | Type | Status | Target Mapping | Child Entity DataStores |`);
+      lines.push(`| :--- | :---: | :---: | :--- | :--- |`);
+      for (const entry of audit.connectorMappings.entries) {
+        const statusBadge =
+          entry.matchStatus === 'AUTO_MATCHED'
+            ? '✅ Auto-Mapped (_#####)'
+            : entry.matchStatus === 'EXACT_MATCH'
+            ? '✅ Exact ID'
+            : entry.matchStatus === 'HITL_CONFIRMED'
+            ? '✋ HITL Mapped'
+            : entry.matchStatus === 'STRIPPED'
+            ? '🚫 Stripped'
+            : '⚠️ Needs HITL';
+        const entitiesStr =
+          entry.entityMappings && entry.entityMappings.length > 0
+            ? entry.entityMappings.map(em => `${em.entityName}: \`${em.sourceDataStoreId}\` ➔ \`${em.targetDataStoreId || 'unmapped'}\``).join('<br>')
+            : '-';
+        lines.push(
+          `| **${entry.sourceDisplayName}** (\`${entry.sourceId}\`) | ${entry.kind} | ${statusBadge} | \`${entry.targetId || 'UNMAPPED'}\` | ${entitiesStr} |`
+        );
+      }
+      lines.push('');
+    }
 
     lines.push(`---`);
     lines.push(`## Detailed Parity Breakdown`);

@@ -5,6 +5,26 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-28
+
+### Added
+- **Dynamic Connector & Child Entity DataStore Auto-Mapping (`_#####` Instance Matching)**:
+  - Implemented `parseTimestampedResourceId`, `matchTimestampedResources`, `expandCollectionMappingToChildDataStores`, and `extractAgentConnectorReferences` in `src/utils/connectorMatcher.ts` using Regex Pattern Matching (`/^(.+?)_(\d{8,})(?:_([a-z0-9_]+))?$/i`) to automatically pair `<connector>_<timestamp>` collections and `<connector>_<timestamp>_<entity>` child entity DataStores (`_issue`, `_pull_request`, `_repository`, etc.) across source and target projects.
+  - Resolved the No-Code Agent source multiplication bug where 1 Connector source in the source project expanded into 3 (or $N$) separate sources in the target project due to unmapped relative `collections/{id}/dataConnector` paths or mismatched child entity DataStore timestamps.
+  - Updated `AgentMigrator.rewriteGroundingPaths` to rewrite both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, automatically expand `collectionMapping` to child entity DataStores, strip connectors marked with `__STRIP__` (`pruneStrippedConnectors`), and deduplicate identical `dataStoreSpecs` (`deduplicateDataStoreSpecs`).
+  - Integrated automatic `suggestedCollectionMapping` and `suggestedDatastoreMapping` discovery into Step 2 (`ConfigAuditEngine.runParityAudit`) and Step 3 (`MigrationRunner.discoverConnectorsAndAutoMap`).
+- **Human-in-the-Loop (HITL) Connector & DataStore Mapping Validation**:
+  - Added the interactive **Dynamic Connector & DataStore Mapping** table (`#connectorMappingSection`) in Step 2 (`#audit`) of the Web Console, displaying every discovered source connector/datastore alongside auto-matched target resources, confidence badges (`AUTO-MATCH (_#####)`, `EXACT MATCH`, `⚠️ HITL REQUIRED`), live target dropdown selectors, custom target ID inputs, and a `🗑️ Strip / Remove Connector from Migrated Agents` (`__STRIP__`) option.
+  - Added the runtime **Connector & DataStore Mapping Review (`#connectorHitlModal`)** modal (`connector_mapping_hitl` SSE event and `/api/migrate/connector-hitl` endpoint) in Step 3 (`#studio`) to pause migration and prompt the operator when an agent references unmapped connectors (`promptForConnectorHitl`, default `true`; disable via `--no-connector-hitl`).
+- **Human-in-the-Loop (HITL) Shared Admin Notebook Confirmation**:
+  - Added `--prompt-admin-hitl` CLI flag and `promptForAdminNotebookHitl` option (`#adminHitlModal` / `/api/migrate/admin-hitl`) allowing operators to interactively include or skip colleague-owned shared notebooks elevated by project-level Admin permissions.
+
+### Changed
+- Bumped platform version to `1.6.0` across `package.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation.
+- Expanded automated test suite to 323 passing tests across 26 test suites with comprehensive unit and adversarial coverage for connector Regex Pattern Matching, grounding path rewrites, `__STRIP__` pruning, and parity audit auto-mapping.
+
+---
+
 ## [1.5.8] - 2026-09-25
 
 ### Added

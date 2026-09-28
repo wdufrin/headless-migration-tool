@@ -47,6 +47,10 @@ describe('ConfigAuditEngine', () => {
       prefixReplacements: {},
       allowOverwrite: false,
       skipIds: [],
+      promptForAdminNotebookHitl: false,
+      approvedAdminNotebookIds: [],
+      promptForConnectorHitl: true,
+      debugMode: false,
       logLevel: 'INFO'
     },
     datastoreMapping: {
@@ -375,4 +379,99 @@ describe('ConfigAuditEngine', () => {
     expect(extraItem?.status).toBe('DIFF');
     expect(extraItem?.details).toContain('attached to target engine "target-engine", but was not attached to source engine');
   });
+
+  it('should dynamically auto-map _##### Connector Collections and child entity DataStores in Step 2 Audit and flag missing ones for HITL', async () => {
+    (mockClient.getEngine as any).mockImplementation((env: any) => {
+      if (env.projectId === 'source-proj') {
+        return Promise.resolve({
+          name: 'projects/source-proj/engines/source-engine',
+          dataStoreIds: ['github_1773757636775_issue', 'github_1773757636775_pull_request', 'github_1773757636775_repository']
+        });
+      }
+      return Promise.resolve({
+        name: 'projects/target-proj/engines/target-engine',
+        dataStoreIds: ['github_1780931139999_issue', 'github_1780931139999_pull_request', 'github_1780931139999_repository']
+      });
+    });
+
+    (mockClient as any).listCollections = vi.fn().mockImplementation((env: any) => {
+      if (env.projectId === 'source-proj') {
+        return Promise.resolve([
+          {
+            name: 'projects/source-proj/locations/global/collections/github_1773757636775',
+            displayName: 'GitHub Connector',
+            dataConnector: {
+              dataSource: 'github',
+              entities: [
+                { entityName: 'issue', dataStore: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_issue' },
+                { entityName: 'pull_request', dataStore: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_pull_request' },
+                { entityName: 'repository', dataStore: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_repository' }
+              ]
+            }
+          },
+          {
+            name: 'projects/source-proj/locations/global/collections/servicenow_1773757000111',
+            displayName: 'ServiceNow Connector',
+            dataConnector: {
+              dataSource: 'servicenow',
+              entities: [
+                { entityName: 'incident', dataStore: 'projects/source-proj/locations/global/collections/servicenow_1773757000111/dataStores/servicenow_1773757000111_incident' }
+              ]
+            }
+          }
+        ]);
+      }
+      return Promise.resolve([
+        {
+          name: 'projects/target-proj/locations/global/collections/github_1780931139999',
+          displayName: 'GitHub Connector',
+          dataConnector: {
+            dataSource: 'github',
+            entities: [
+              { entityName: 'issue', dataStore: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_issue' },
+              { entityName: 'pull_request', dataStore: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_pull_request' },
+              { entityName: 'repository', dataStore: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_repository' }
+            ]
+          }
+        }
+      ]);
+    });
+
+    (mockClient.listDataStores as any).mockImplementation((env: any) => {
+      if (env.projectId === 'source-proj') {
+        return Promise.resolve([
+          { name: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_issue', displayName: 'GitHub Issues' },
+          { name: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_pull_request', displayName: 'GitHub PRs' },
+          { name: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_repository', displayName: 'GitHub Repos' }
+        ]);
+      }
+      return Promise.resolve([
+        { name: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_issue', displayName: 'GitHub Issues' },
+        { name: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_pull_request', displayName: 'GitHub PRs' },
+        { name: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_repository', displayName: 'GitHub Repos' }
+      ]);
+    });
+
+    (mockClient.detectEngineIdpConfig as any).mockResolvedValue({ idpType: 'GOOGLE_CLOUD_IDENTITY' });
+
+    const result = await auditEngine.runAudit({
+      ...mockConfig,
+      datastoreMapping: {},
+      collectionMapping: {}
+    });
+
+    expect(result.connectorMappings).toBeDefined();
+    const ghMapping = result.connectorMappings?.entries.find(m => m.sourceId === 'github_1773757636775');
+    expect(ghMapping?.matchStatus).toBe('AUTO_MATCHED');
+    expect(ghMapping?.targetId).toBe('github_1780931139999');
+
+    const snowMapping = result.connectorMappings?.entries.find(m => m.sourceId === 'servicenow_1773757000111');
+    expect(snowMapping?.matchStatus).toBe('NEEDS_HITL');
+
+    // Auto-mapped child entity DataStores should be marked as MATCH in parity items
+    const issueItem = result.items.find(i => i.id === 'datastore-github_1773757636775_issue');
+    expect(issueItem?.status).toBe('MATCH');
+    expect(issueItem?.details).toContain('Auto-mapped');
+  });
 });
+

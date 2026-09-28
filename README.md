@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.5.8-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.5.8-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.0-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -12,8 +12,24 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > [!TIP]
 > **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
-> * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
-> * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, cross-project IAM topologies, and token resolution order.
+> * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
+> * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, `collectionMapping`, `datastoreMapping`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.6.0
+
+* **🔗 Dynamic Connector & Child Entity DataStore Auto-Mapping (`_#####` Instance Matching)**:
+  * Resolves the No-Code Agent source multiplication bug where an agent configured with **1 Connector source** (e.g., GitHub or Jira) in the source project displays **3 separate DataStore sources** in the target project.
+  * Uses Regex Pattern Matching (`parseTimestampedResourceId`) to parse timestamp-suffixed Connector Collections (`github_1773757636775`) and their child entity DataStores (`github_1773757636775_issue`, `_pull_request`, `_repository`), automatically pairing them with the corresponding target project connector instance (`github_1780931139999`) regardless of numerical timestamp suffixes.
+  * Automatically rewrites both full `projects/.../collections/{id}` resource paths and relative `collections/{id}/dataConnector` strings in agent configurations, expands parent `collectionMapping` entries to all child entity DataStores, and deduplicates `dataStoreSpecs`.
+* **🧑‍⚖️ Human-in-the-Loop (HITL) Connector & DataStore Validation**:
+  * **Step 2 Interactive Mapping Table (`#audit`)**: Inspect auto-matched connectors and DataStores with confidence badges (`AUTO-MATCH (_#####)`, `EXACT MATCH`, `⚠️ HITL REQUIRED`), select from live target project connectors via dropdown, type custom IDs, or choose **`🗑️ Strip / Remove Connector from Migrated Agents` (`__STRIP__`)** to cleanly prune missing connectors.
+  * **Step 3 Runtime HITL Modal (`#studio`)**: If an agent references an unmapped connector or DataStore during migration, the runner pauses and opens an interactive HITL modal (`#connectorHitlModal`) so the administrator can map or strip it on the fly before the agent is created.
+* **🛡️ Shared Admin Notebook HITL Confirmation**:
+  * Added `--prompt-admin-hitl` / `promptForAdminNotebookHitl` to pause migration and let administrators interactively select which colleague-authored shared notebooks (visible due to project-level Admin permissions) should be migrated or skipped.
+* **🧪 100% Passing Automated Tests (323/323 Tests)**:
+  * Full 323 automated tests passing across 26 test suites with zero failures or skipped assertions.
 
 ---
 
@@ -405,6 +421,8 @@ npx tsx src/cli.ts --dry-run --users "*@company.com"
 | `--publish-agents` | Automatically publish migrated agents for immediate organization visibility | `true` |
 | `--export-artifacts` | Extract presentations, Canva-style docs, and HTML artifacts to `./exports` | `true` |
 | `--no-preserve-sharing` | Do not replicate sharing configurations (`ALL_USERS` / `RESTRICTED`) | Preserves sharing |
+| `--prompt-admin-hitl` | Pause migration for Human-in-the-Loop confirmation when shared Admin notebooks are detected | `false` |
+| `--no-connector-hitl` | Disable Human-in-the-Loop validation prompts when unmapped agent connectors/datastores are detected | Prompts enabled (`true`) |
 | `--resume <reportPath>` | Resume migration by skipping already-successful assets from a previous JSON report | None |
 | `--service-account-key <path>` | Path to Google Cloud Service Account JSON key (for DWD) | Auto-detects `./sa-dwd-key.json` |
 | `--token <token>` | Explicit Google OAuth Access Token (overrides ADC/DWD) | Optional |
@@ -442,12 +460,16 @@ The local Web Console is structured as a sequential 6-step administrative wizard
    - Pre-flight gap audit dashboard with 0–100% Parity Readiness Score gauge and status badges (`Ready`, `Action Recommended`, `Critical Gaps`).
    - Side-by-side engine feature flag comparison matrix (Memory, Agent Gallery, Skills, Audio, Canvas, Observability, TTL).
    - 1-Click "Sync Target Engine Settings" button to automatically align target feature flags via Discovery Engine PATCH API.
+   - **Dynamic Connector & DataStore Auto-Mapping + HITL Validation Table (`#connectorMappingSection`)**: Automatically matches `<connector>_<timestamp>` Collections and `<connector>_<timestamp>_<entity>` child DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 agent source multiplication. Includes live target dropdowns, custom ID inputs, and `🗑️ Strip / Remove Connector` (`__STRIP__`).
    - Attached DataStore Parity audit with automated remediation and copy-ready CLI snippets.
-   - Prominent `Next: Proceed to Step 3: Migration Studio ➔` wizard transition.
+   - Prominent `Next: Proceed to Step 3: Migration Studio ➔` wizard transition that automatically syncs confirmed connector and datastore mappings into Step 3.
 3. **Step 3: 🚀 Migration Studio (`#studio`)**:
    - Synchronized Source and Target GCP environment pickers and asset scope selectors (Notebooks, Custom Agents, User Skills, Chat Sessions, Memories, Studio Artifacts).
-   - Dynamic asset discovery with user selection table.
-   - Context-aware Cross-IdP transformation matrix with preset domain rules.
+   - Dynamic asset discovery with user selection table and CSV identity mapping (`first.last@XXXX.com ➔ #####@YYYY.com`).
+   - Context-aware Cross-IdP transformation matrix with preset domain rules and synchronized `collectionMapping` / `datastoreMapping` controls.
+   - Interactive **Runtime HITL Modals**:
+     - **Connector & DataStore Mapping Review (`#connectorHitlModal`)**: Pauses agent migration if an agent references an unmapped connector or DataStore, allowing the operator to map it to a target resource or strip (`__STRIP__`) it before creation.
+     - **Shared Admin Notebook Review (`#adminHitlModal`)**: Optional HITL prompt (`promptForAdminNotebookHitl`) allowing administrators to review and uncheck colleague-owned shared notebooks detected via project-level Admin permissions.
    - Streamlined execution bar (`⚡ Execute Pre-Flight Dry Run` / `⚡ Execute Live Migration` and `← Step 2: Config & Parity Audit` back-link).
    - Real-time Server-Sent Events (SSE) live migration stream with color-coded logs and progress bars.
 4. **Step 4: 📊 Latest Report & Historical Runs (`#reports`)**:
@@ -512,7 +534,9 @@ Designed to run **strictly on the administrator's local machine**:
     "dryRun": false,
     "concurrency": 10,
     "userFilter": ["*@company.com"],
-    "preserveOwnership": true
+    "preserveOwnership": true,
+    "promptForAdminNotebookHitl": false,
+    "promptForConnectorHitl": true
   },
   "idpMapping": {
     "sourceIdp": "ENTRA_ID",
@@ -529,6 +553,9 @@ Designed to run **strictly on the administrator's local machine**:
   },
   "datastoreMapping": {
     "source-policy-datastore": "target-policy-datastore"
+  },
+  "collectionMapping": {
+    "github_1773757636775": "github_1780931139999"
   }
 }
 ```
@@ -573,10 +600,10 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
-The platform includes an extensive automated test suite with **106 automated tests across 14 test suites** covering authentication, cross-project parity audits, Agent Registry skills discovery/filtering, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
+The platform includes an extensive automated test suite with **323 automated tests across 26 test suites** covering authentication, cross-project parity audits, dynamic `_#####` connector & child entity DataStore Regex Pattern Matching, HITL connector validation, Agent Registry skills discovery/filtering, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
 
 ```bash
-# Run complete unit and integration test suite (106 tests across 14 suites)
+# Run complete unit and integration test suite (323 tests across 26 suites)
 npm test
 
 # Run End-to-End matrix permutations test (DWD/WiF permutations)

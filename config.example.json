@@ -33,6 +33,8 @@
     "preserveOwnership": true,
     "preserveSharing": true,
     "allowOverwrite": false,
+    "promptForAdminNotebookHitl": false,
+    "promptForConnectorHitl": true,
     "logLevel": "INFO"
   },
   "idpMapping": {
@@ -50,7 +52,8 @@
     "test-finance-docs": "prod-finance-docs"
   },
   "collectionMapping": {
-    "default_collection": "default_collection"
+    "default_collection": "default_collection",
+    "github_1773757636775": "github_1780931139999"
   },
   "identityMapping": {
     "user:john.doe@test-tenant.com": "user:john.doe@company.com"

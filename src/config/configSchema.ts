@@ -51,6 +51,7 @@ export const MigrationOptionsSchema = z.object({
   skipIds: z.array(z.string()).default([]),
   promptForAdminNotebookHitl: z.boolean().optional().default(false),
   approvedAdminNotebookIds: z.array(z.string()).optional().default([]),
+  promptForConnectorHitl: z.boolean().optional().default(true),
   debugMode: z.boolean().optional().default(false),
   logLevel: z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR']).default('INFO')
 }).default({});

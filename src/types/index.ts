@@ -161,6 +161,29 @@ export interface DataStore {
   [key: string]: any;
 }
 
+export interface ConnectorEntity {
+  entityName: string;
+  dataStore: string;
+  params?: Record<string, any>;
+  keyPropertyMappings?: Record<string, string>;
+  [key: string]: any;
+}
+
+export interface ConnectorCollection {
+  name: string;
+  displayName?: string;
+  createTime?: string;
+  dataConnector?: {
+    name?: string;
+    dataSource?: string;
+    entities?: ConnectorEntity[];
+    connectorType?: string;
+    state?: string;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
 export interface AppEngine {
   name: string;
   displayName: string;

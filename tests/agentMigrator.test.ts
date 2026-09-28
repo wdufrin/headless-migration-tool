@@ -200,4 +200,201 @@ describe('AgentMigrator Engine', () => {
     // admin is only a user, NOT the owner, so filtering to admin must return false
     expect(migrator.isAgentOwnedByUser(sharedAgent, ['admin@wdufrin.altostrat.com'])).toBe(false);
   });
+
+  it('should rewrite relative collections/{id}/dataConnector AND all 3 child entity dataStoreSpecs together so 1 Connector source does not split into 3 sources', () => {
+    const noCodeGithubAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/nocode-gh-1',
+      displayName: 'GitHub PR Helper',
+      lowCodeAgentDefinition: {
+        nodes: [
+          {
+            id: 'node-1',
+            llmAgentNode: {
+              instruction: 'Answer questions about issues, PRs, and repositories.',
+              selectedTools: {
+                dataConnectors: [
+                  {
+                    // Note: Discovery Engine stores relative path WITHOUT leading slash!
+                    name: 'collections/github_1773757636775/dataConnector',
+                    dataSource: 'github'
+                  }
+                ],
+                dataStoreSpecs: {
+                  specs: [
+                    {
+                      dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/github_1773757636775_issue'
+                    },
+                    {
+                      dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/github_1773757636775_pull_request'
+                    },
+                    {
+                      dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/github_1773757636775_repository'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    };
+
+    // Even if only collectionMapping is provided, buildAgentPayload synchronizes child entity dataStores
+    const payload = migrator.buildAgentPayload(
+      noCodeGithubAgent,
+      sourceEnv,
+      targetEnv,
+      {},
+      { 'github_1773757636775': 'github_1780931139999' },
+      {}
+    );
+
+    const tools = payload.lowCodeAgentDefinition.nodes[0].llmAgentNode.selectedTools;
+    expect(tools.dataConnectors).toHaveLength(1);
+    expect(tools.dataConnectors[0].name).toBe('collections/github_1780931139999/dataConnector');
+
+    expect(tools.dataStoreSpecs.specs).toHaveLength(3);
+    expect(tools.dataStoreSpecs.specs.map((s: any) => s.dataStore)).toEqual([
+      'projects/fedex-prod-project/locations/global/collections/default_collection/dataStores/github_1780931139999_issue',
+      'projects/fedex-prod-project/locations/global/collections/default_collection/dataStores/github_1780931139999_pull_request',
+      'projects/fedex-prod-project/locations/global/collections/default_collection/dataStores/github_1780931139999_repository'
+    ]);
+  });
+
+  it('should strip dataConnectors and child entity dataStoreSpecs when mapped to __STRIP__', () => {
+    const noCodeAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/nocode-strip-1',
+      displayName: 'Multi-Source Agent',
+      lowCodeAgentDefinition: {
+        nodes: [
+          {
+            id: 'node-1',
+            llmAgentNode: {
+              selectedTools: {
+                dataConnectors: [
+                  { name: 'collections/github_1773757636775/dataConnector', dataSource: 'github' },
+                  { name: 'collections/jira_1773757999999/dataConnector', dataSource: 'jira' }
+                ],
+                dataStoreSpecs: {
+                  specs: [
+                    { dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/github_1773757636775_issue' },
+                    { dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/github_1773757636775_pull_request' },
+                    { dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/jira_1773757999999_issue' }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    };
+
+    const payload = migrator.buildAgentPayload(
+      noCodeAgent,
+      sourceEnv,
+      targetEnv,
+      {},
+      {
+        'github_1773757636775': '__STRIP__',
+        'jira_1773757999999': 'jira_1780000111111'
+      },
+      {}
+    );
+
+    const tools = payload.lowCodeAgentDefinition.nodes[0].llmAgentNode.selectedTools;
+    expect(tools.dataConnectors).toHaveLength(1);
+    expect(tools.dataConnectors[0].name).toBe('collections/jira_1780000111111/dataConnector');
+    expect(tools.dataStoreSpecs.specs).toHaveLength(1);
+    expect(tools.dataStoreSpecs.specs[0].dataStore).toBe(
+      'projects/fedex-prod-project/locations/global/collections/default_collection/dataStores/jira_1780000111111_issue'
+    );
+  });
+
+  it('should auto-map _##### connectors and invoke onConnectorHitlPrompt when an agent connector is ambiguous or missing', async () => {
+    const {
+      parseTimestampedResourceId,
+      validateConnectorOrDataStoreId,
+      buildConnectorAndDataStoreMappings
+    } = await import('../src/services/connectorMatcher.js');
+
+    // 1. Verify regex pattern matching on timestamped IDs
+    expect(parseTimestampedResourceId('github_1773757636775')).toEqual({
+      rawId: 'github_1773757636775',
+      baseName: 'github',
+      separator: '_',
+      instanceNumericId: '1773757636775',
+      entitySuffix: undefined,
+      parentCollectionId: undefined,
+      normalizedBase: 'github',
+      normalizedFullKey: 'github'
+    });
+    expect(parseTimestampedResourceId('github_1773757636775_pull_request')).toEqual({
+      rawId: 'github_1773757636775_pull_request',
+      baseName: 'github',
+      separator: '_',
+      instanceNumericId: '1773757636775',
+      entitySuffix: 'pull_request',
+      parentCollectionId: 'github_1773757636775',
+      normalizedBase: 'github',
+      normalizedFullKey: 'github__pull_request'
+    });
+
+    // 2. Negative / adversarial input validation tests
+    expect(() => validateConnectorOrDataStoreId('', 'sourceId')).toThrow(/must be a non-empty string/);
+    expect(() => validateConnectorOrDataStoreId('../etc/passwd', 'sourceId')).toThrow(/path traversal or slash characters are forbidden/);
+    expect(() => validateConnectorOrDataStoreId('collections/github_123', 'sourceId')).toThrow(/path traversal or slash characters are forbidden/);
+    expect(() => validateConnectorOrDataStoreId('github_123; rm -rf', 'sourceId')).toThrow(/must contain only alphanumeric characters/);
+
+    // 3. Verify buildConnectorAndDataStoreMappings auto-maps unique _##### match and flags ambiguous/missing as NEEDS_HITL
+    const mappings = buildConnectorAndDataStoreMappings({
+      sourceCollections: [
+        {
+          name: 'projects/src/locations/global/collections/github_1773757636775',
+          displayName: 'GitHub Enterprise',
+          dataConnector: {
+            dataSource: 'github',
+            entities: [
+              { entityName: 'issue', dataStore: 'projects/src/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_issue' },
+              { entityName: 'pull_request', dataStore: 'projects/src/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_pull_request' },
+              { entityName: 'repository', dataStore: 'projects/src/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_repository' }
+            ]
+          }
+        },
+        {
+          name: 'projects/src/locations/global/collections/slack_1773757111111',
+          displayName: 'Corp Slack',
+          dataConnector: { dataSource: 'slack', entities: [] }
+        }
+      ],
+      targetCollections: [
+        {
+          name: 'projects/tgt/locations/global/collections/github_1780931139999',
+          displayName: 'GitHub Enterprise',
+          dataConnector: {
+            dataSource: 'github',
+            entities: [
+              { entityName: 'issue', dataStore: 'projects/tgt/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_issue' },
+              { entityName: 'pull_request', dataStore: 'projects/tgt/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_pull_request' },
+              { entityName: 'repository', dataStore: 'projects/tgt/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_repository' }
+            ]
+          }
+        }
+      ],
+      sourceDataStores: [],
+      targetDataStores: []
+    });
+
+    const ghEntry = mappings.entries.find(e => e.sourceId === 'github_1773757636775');
+    expect(ghEntry?.matchStatus).toBe('AUTO_MATCHED');
+    expect(ghEntry?.targetId).toBe('github_1780931139999');
+    expect(ghEntry?.entityMappings).toHaveLength(3);
+    expect(mappings.datastoreMapping['github_1773757636775_issue']).toBe('github_1780931139999_issue');
+    expect(mappings.datastoreMapping['github_1773757636775_pull_request']).toBe('github_1780931139999_pull_request');
+    expect(mappings.datastoreMapping['github_1773757636775_repository']).toBe('github_1780931139999_repository');
+
+    const slackEntry = mappings.entries.find(e => e.sourceId === 'slack_1773757111111');
+    expect(slackEntry?.matchStatus).toBe('NEEDS_HITL');
+    expect(slackEntry?.targetId).toBeUndefined();
+  });
 });
+
