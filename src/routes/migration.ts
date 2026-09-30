@@ -91,13 +91,27 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   if (typeof (res as any).flushHeaders === 'function') {
     (res as any).flushHeaders();
   }
 
+  let streamClosed = false;
   const sendEvent = (event: string, data: any) => {
+    if (streamClosed || res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
+
+  // Emit periodic SSE comment frames so reverse proxies, load balancers, and browsers
+  // do not sever the connection during long multi-source notebook fetches or HITL waits.
+  const keepAliveTimer = setInterval(() => {
+    if (!streamClosed && !res.writableEnded) {
+      res.write(`: keepalive ${Date.now()}\n\n`);
+    }
+  }, 15000);
+  if (typeof (keepAliveTimer as any).unref === 'function') {
+    (keepAliveTimer as any).unref();
+  }
 
   const unsubscribe = logger.subscribe((level, line, message) => {
     sendEvent('log', { level, line, message, timestamp: new Date().toISOString() });
@@ -106,6 +120,8 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
   let activePromptId: string | null = null;
   let activeConnectorPromptId: string | null = null;
   res.on('close', () => {
+    streamClosed = true;
+    clearInterval(keepAliveTimer);
     if (activePromptId && pendingAdminHitlPrompts.has(activePromptId)) {
       const pending = pendingAdminHitlPrompts.get(activePromptId);
       pendingAdminHitlPrompts.delete(activePromptId);
@@ -163,6 +179,8 @@ migrationRouter.post('/migrate/stream', async (req, res) => {
     sendEvent('error', { message: err.message, issues: err.issues || undefined });
     res.end();
   } finally {
+    streamClosed = true;
+    clearInterval(keepAliveTimer);
     if (activePromptId && pendingAdminHitlPrompts.has(activePromptId)) {
       pendingAdminHitlPrompts.delete(activePromptId);
     }

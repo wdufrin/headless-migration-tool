@@ -23,11 +23,19 @@ import { logger } from '../utils/logger.js';
 export const AGENT_REGISTRY_BASE_URL = 'https://agentregistry.googleapis.com';
 export const AGENT_REGISTRY_API_VERSION = 'v1alpha';
 
+export interface AgentRegistryClientOptions {
+  requestTimeoutMs?: number;
+}
+
 export class AgentRegistryClient {
   private auth: GcpAuthService;
+  private requestTimeoutMs: number;
 
-  constructor(auth: GcpAuthService) {
+  constructor(auth: GcpAuthService, options: AgentRegistryClientOptions = {}) {
     this.auth = auth;
+    const envTimeout = Number(process.env.AGENT_REGISTRY_TIMEOUT_MS);
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 30000);
   }
 
   private async request<T>(
@@ -49,11 +57,29 @@ export class AgentRegistryClient {
 
     return retryWithBackoff(async () => {
       logger.debug(`HTTP ${method} ${url}`);
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined
-      });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        });
+      } catch (fetchErr: any) {
+        if (
+          fetchErr?.name === 'TimeoutError' ||
+          fetchErr?.name === 'AbortError' ||
+          String(fetchErr?.message || '').toLowerCase().includes('timeout')
+        ) {
+          const timeoutErr: any = new Error(
+            `Agent Registry API Request Timed Out after ${this.requestTimeoutMs}ms: ${method} ${url}`
+          );
+          timeoutErr.name = 'TimeoutError';
+          timeoutErr.code = 'ETIMEDOUT';
+          throw timeoutErr;
+        }
+        throw fetchErr;
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -146,7 +172,8 @@ export class AgentRegistryClient {
       const response = await fetch(url, {
         method: 'GET',
         headers,
-        redirect: 'follow'
+        redirect: 'follow',
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
       });
       if (!response.ok) {
         if (response.status === 404) return null;

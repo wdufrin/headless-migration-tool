@@ -185,6 +185,87 @@ describe('Concurrency Utilities', () => {
     expect(attempts403).toBe(1);
   });
 
+  it('retryWithBackoff should terminate and throw after exhausting maxRetries on persistent 500/503/429 (regression: missing attempt++)', async () => {
+    let attempts = 0;
+    await expect(
+      retryWithBackoff(
+        async () => {
+          attempts++;
+          const err: any = new Error('Discovery Engine API Request Failed [500]: Internal error encountered.');
+          err.status = 500;
+          throw err;
+        },
+        3,
+        5
+      )
+    ).rejects.toThrow('Internal error encountered');
+
+    // 1 initial attempt + 3 retries = 4 total attempts (previously looped infinitely because attempt was never incremented)
+    expect(attempts).toBe(4);
+  });
+
+  it('retryWithBackoff should retry on TimeoutError and fail after maxRetries', async () => {
+    let attempts = 0;
+    await expect(
+      retryWithBackoff(
+        async () => {
+          attempts++;
+          const err: any = new Error('Discovery Engine API Request Timed Out after 50ms: GET https://discoveryengine.googleapis.com/v1alpha/test');
+          err.name = 'TimeoutError';
+          throw err;
+        },
+        2,
+        5
+      )
+    ).rejects.toThrow('Timed Out after 50ms');
+
+    expect(attempts).toBe(3);
+  });
+
+  it('DiscoveryEngineClient should abort stalled fetch calls via AbortSignal.timeout and surface URL in error', async () => {
+    const { DiscoveryEngineClient } = await import('../src/services/discoveryEngine.js');
+    const mockAuth: any = {
+      getServiceAccountProjectId: () => 'test-proj',
+      getAccessToken: async () => 'fake-token'
+    };
+    const client = new DiscoveryEngineClient(mockAuth, {
+      requestTimeoutMs: 25,
+      maxRetries: 2,
+      retryBaseDelayMs: 5
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init: any) => {
+      return new Promise((_resolve, reject) => {
+        const signal: AbortSignal | undefined = init?.signal;
+        if (signal) {
+          if (signal.aborted) {
+            reject(signal.reason || new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+            return;
+          }
+          signal.addEventListener('abort', () => {
+            reject(signal.reason || new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          });
+        }
+      });
+    });
+
+    try {
+      await expect(
+        client.getNotebook('0b36ab82-f6ea-429c-acfd-2acdd2440e83', {
+          projectId: 'agntspce-agntspace-ai-p-1-18cd',
+          appLocation: 'global',
+          appId: 'engine-1'
+        })
+      ).rejects.toThrow(
+        /Discovery Engine API Request Timed Out after 25ms: GET .*0b36ab82-f6ea-429c-acfd-2acdd2440e83/
+      );
+      // 1 initial call + 2 retries = 3 calls
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('RateLimiter should throttle token acquisition', async () => {
     const limiter = new RateLimiter(5, 5); // 5 tokens per second
     const start = Date.now();

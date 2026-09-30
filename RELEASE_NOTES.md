@@ -1,4 +1,18 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.6.1
+
+**Release Date:** September 30, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.6.1** resolves a hang during multi-notebook migrations by fixing an infinite retry loop in `retryWithBackoff` (missing `attempt++` counter increment on HTTP `429`/`5xx` responses), enforcing per-request `AbortSignal.timeout` (default `30s`) across `DiscoveryEngineClient` and `AgentRegistryClient`, emitting 15-second SSE `: keepalive` heartbeats on `/api/migrate/stream` to prevent proxy/browser stream disconnects (`network error`), and surfacing all notebook/source/artifact fetch warnings and large-notebook progress in real time. v1.6.1 includes **327 passing automated tests across 26 test suites at 100%**.
+
+---
+
 ## Release Notes — Version 1.6.0
 
 **Release Date:** September 28, 2026  
@@ -98,7 +112,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.5.8 &rarr; v1.6.0)
+### 📦 Upgrade Guide (v1.6.0 &rarr; v1.6.1)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -123,7 +137,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.6.0** *(Current)*: Dynamic Connector & DataStore Auto-Mapping (`_#####` instance suffix matching), synchronized parent Connector + child entity DataStore rewriting (`collections/{id}/dataConnector` + `{id}_{entity}`), Step 2 interactive HITL mapping table, runtime Connector & Admin Notebook HITL modals, and 323 passing tests.
+* **v1.6.1** *(Current)*: Fixed `retryWithBackoff` infinite retry loop (`attempt++`), added per-request `AbortSignal.timeout` (30s) to `DiscoveryEngineClient` and `AgentRegistryClient`, added 15s SSE keep-alive heartbeats on `/api/migrate/stream`, promoted notebook fetch errors to `WARN`, added large-notebook source progress logging, and expanded to 327 passing tests.
+* **v1.6.0**: Dynamic Connector & DataStore Auto-Mapping (`_#####` instance suffix matching), synchronized parent Connector + child entity DataStore rewriting (`collections/{id}/dataConnector` + `{id}_{entity}`), Step 2 interactive HITL mapping table, runtime Connector & Admin Notebook HITL modals, and 323 passing tests.
 * **v1.5.8**: Dry Run Permission Elevation Detection for NotebookLM, Workforce Identity Federation (WiF) role hardening (`roles/discoveryengine.user`), admin group filtering in group scraper, and 313 passing tests.
 * **v1.5.7**: Resilient Chat History Migration with full session hydration (`includeAnswerDetails=true`), companion-turn deduplication, target duplicate collision prevention, strict user session filtering, notebook source deduplication, and 307 passing tests.
 * **v1.5.5**: CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`), interactive Mapping Report panel & CSV/JSON export, Okta 2FA compatibility, case-insensitive identity resolution across all engines, and 285 passing tests.

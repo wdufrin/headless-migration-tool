@@ -21,11 +21,25 @@ import { GcpAuthService } from './gcpAuth.js';
 import { retryWithBackoff, mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
+export interface DiscoveryEngineClientOptions {
+  requestTimeoutMs?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
+}
+
 export class DiscoveryEngineClient {
   private auth: GcpAuthService;
+  private requestTimeoutMs: number;
+  private maxRetries: number;
+  private retryBaseDelayMs: number;
 
-  constructor(auth: GcpAuthService) {
+  constructor(auth: GcpAuthService, options: DiscoveryEngineClientOptions = {}) {
     this.auth = auth;
+    const envTimeout = Number(process.env.DISCOVERY_ENGINE_TIMEOUT_MS);
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 30000);
+    this.maxRetries = options.maxRetries ?? 5;
+    this.retryBaseDelayMs = options.retryBaseDelayMs ?? 750;
   }
 
   private async request<T>(
@@ -58,13 +72,34 @@ export class DiscoveryEngineClient {
 
     let impersonationFallbackAttempted = false;
 
+    const fetchWithTimeout = async (reqHeaders: Record<string, string>) => {
+      try {
+        return await fetch(url, {
+          method,
+          headers: reqHeaders,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        });
+      } catch (fetchErr: any) {
+        if (
+          fetchErr?.name === 'TimeoutError' ||
+          fetchErr?.name === 'AbortError' ||
+          String(fetchErr?.message || '').toLowerCase().includes('timeout')
+        ) {
+          const timeoutErr: any = new Error(
+            `Discovery Engine API Request Timed Out after ${this.requestTimeoutMs}ms: ${method} ${url}`
+          );
+          timeoutErr.name = 'TimeoutError';
+          timeoutErr.code = 'ETIMEDOUT';
+          throw timeoutErr;
+        }
+        throw fetchErr;
+      }
+    };
+
     return retryWithBackoff(async () => {
       logger.debug(`HTTP ${method} ${url}`);
-      let response = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined
-      });
+      let response = await fetchWithTimeout(headers);
 
       if (!response.ok) {
         let errorText = await response.text();
@@ -86,11 +121,7 @@ export class DiscoveryEngineClient {
           if (homeProject && headers['X-Goog-User-Project'] !== homeProject) {
             logger.debug(`Target quota project denied; retrying request with SA home quota project: ${homeProject}`);
             headers['X-Goog-User-Project'] = homeProject;
-            response = await fetch(url, {
-              method,
-              headers,
-              body: body ? JSON.stringify(body) : undefined
-            });
+            response = await fetchWithTimeout(headers);
             if (response.ok) {
               if (response.status === 204) return {} as T;
               return (await response.json()) as T;
@@ -102,11 +133,7 @@ export class DiscoveryEngineClient {
           if (response.status === 403 && isQuotaDenied(parsedError, errorText) && headers['X-Goog-User-Project']) {
             logger.debug(`Quota project still denied; retrying request without X-Goog-User-Project header`);
             delete headers['X-Goog-User-Project'];
-            response = await fetch(url, {
-              method,
-              headers,
-              body: body ? JSON.stringify(body) : undefined
-            });
+            response = await fetchWithTimeout(headers);
             if (response.ok) {
               if (response.status === 204) return {} as T;
               return (await response.json()) as T;
@@ -159,11 +186,7 @@ export class DiscoveryEngineClient {
                   `Original error: ${firstFailureDetail}`
                 );
                 headers['Authorization'] = `Bearer ${altToken}`;
-                response = await fetch(url, {
-                  method,
-                  headers,
-                  body: body ? JSON.stringify(body) : undefined
-                });
+                response = await fetchWithTimeout(headers);
                 if (response.ok) {
                   if (response.status === 204) return {} as T;
                   return (await response.json()) as T;
@@ -198,7 +221,7 @@ export class DiscoveryEngineClient {
       }
 
       return (await response.json()) as T;
-    });
+    }, this.maxRetries, this.retryBaseDelayMs);
   }
 
   async listAllPages<T>(

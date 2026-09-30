@@ -323,5 +323,19 @@ describe('Migration stream: progress reporting', () => {
     const clientStages = [...clientList.matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
     expect(clientStages.sort()).toEqual([...STAGES].sort());
   });
-});
 
+  it('cleanly ignores SSE keepalive comment frames without logging parse warnings', async () => {
+    const h = buildHarness([
+      ': keepalive 1700000000000\n\n',
+      sse('stage', { stage: 'preflight', status: 'done' }),
+      ': keepalive 1700000015000\n\n',
+      sse('stage', { stage: 'complete', status: 'done' })
+    ]);
+
+    await h.run();
+
+    expect(h.el('progressPercent').textContent).toBe('100%');
+    const warnLogs = h.logs.filter((l) => l.level === 'WARN' || l.level === 'ERROR');
+    expect(warnLogs).toEqual([]);
+  });
+});

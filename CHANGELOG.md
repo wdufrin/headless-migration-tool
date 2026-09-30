@@ -5,6 +5,23 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-09-30
+
+### Fixed
+- **Bounded Retry Termination in `retryWithBackoff` (`src/utils/concurrency.ts`)**:
+  - Fixed a missing `attempt++` increment inside `retryWithBackoff` where transient HTTP `429`/`500`/`502`/`503`/`504` responses caused `attempt` to remain `0` indefinitely, trapping the worker in an infinite retry loop (`while (true)`).
+  - Added visible `[WARN] Transient API failure (attempt X/Y): ...` logs on each retry so transient errors and timeouts are never hidden.
+- **Per-Request HTTP Timeouts (`src/services/discoveryEngine.ts` & `src/services/agentRegistry.ts`)**:
+  - Added `AbortSignal.timeout(this.requestTimeoutMs)` (default `30000`ms, configurable via `DISCOVERY_ENGINE_TIMEOUT_MS` / `AGENT_REGISTRY_TIMEOUT_MS`) to all `DiscoveryEngineClient` and `AgentRegistryClient` requests, surfacing explicit timeout errors with the HTTP method and URL.
+- **SSE Keep-Alive Heartbeats & Notebook Source Fetch Visibility (`src/routes/migration.ts` & `src/engines/notebookMigrator.ts`)**:
+  - Added 15-second `: keepalive` SSE comment frames and `X-Accel-Buffering: no` on `/api/migrate/stream` so reverse proxies and browsers do not sever active streams during multi-minute notebook migrations.
+  - Promoted `getNotebook`, `listNotes`, and `listArtifacts` error logs from `DEBUG` to `WARN` and added progress logging (`Fetched X/Y sources...`) for notebooks with `> 10` sources.
+
+### Changed
+- Bumped platform version to `1.6.1` across `package.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (327 passing tests across 26 test suites).
+
+---
+
 ## [1.6.0] - 2026-09-28
 
 ### Added

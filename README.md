@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.0-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.1-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -17,8 +17,11 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ---
 
-## 🚀 What's New in v1.6.0
+## 🚀 What's New in v1.6.1
 
+* **⏱️ Bounded API Retries, Per-Request Timeouts & SSE Stream Resilience**:
+  * Fixed an infinite retry loop in `retryWithBackoff` where `attempt` was not incremented on transient HTTP `429`/`5xx` errors, added per-request `AbortSignal.timeout` (30s) across `DiscoveryEngineClient` and `AgentRegistryClient`, and added 15-second SSE `: keepalive` heartbeats on `/api/migrate/stream` so reverse proxies and browsers do not drop long-running notebook migrations.
+  * Promoted notebook, note, and Studio artifact fetch errors to visible `WARN` logs and added live source fetch progress (`Fetched X/Y sources...`) for large notebooks (`> 10` sources).
 * **🔗 Dynamic Connector & Child Entity DataStore Auto-Mapping (`_#####` Instance Matching)**:
   * Resolves the No-Code Agent source multiplication bug where an agent configured with **1 Connector source** (e.g., GitHub or Jira) in the source project displays **3 separate DataStore sources** in the target project.
   * Uses Regex Pattern Matching (`parseTimestampedResourceId`) to parse timestamp-suffixed Connector Collections (`github_1773757636775`) and their child entity DataStores (`github_1773757636775_issue`, `_pull_request`, `_repository`), automatically pairing them with the corresponding target project connector instance (`github_1780931139999`) regardless of numerical timestamp suffixes.
@@ -28,8 +31,8 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
   * **Step 3 Runtime HITL Modal (`#studio`)**: If an agent references an unmapped connector or DataStore during migration, the runner pauses and opens an interactive HITL modal (`#connectorHitlModal`) so the administrator can map or strip it on the fly before the agent is created.
 * **🛡️ Shared Admin Notebook HITL Confirmation**:
   * Added `--prompt-admin-hitl` / `promptForAdminNotebookHitl` to pause migration and let administrators interactively select which colleague-authored shared notebooks (visible due to project-level Admin permissions) should be migrated or skipped.
-* **🧪 100% Passing Automated Tests (323/323 Tests)**:
-  * Full 323 automated tests passing across 26 test suites with zero failures or skipped assertions.
+* **🧪 100% Passing Automated Tests (327/327 Tests)**:
+  * Full 327 automated tests passing across 26 test suites with zero failures or skipped assertions.
 
 ---
 

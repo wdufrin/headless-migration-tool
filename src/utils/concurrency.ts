@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { logger } from './logger.js';
+
 /**
  * Raised when one or more tasks passed to {@link mapConcurrent} fail.
  *
@@ -94,7 +96,7 @@ export async function mapConcurrent<T, R>(
 }
 
 /**
- * Executes a function with exponential backoff retries for rate-limited (HTTP 429/503/500/502/504) requests.
+ * Executes a function with exponential backoff retries for rate-limited (HTTP 429/503/500/502/504) and timed-out requests.
  * Transparently respects Retry-After HTTP headers when provided by Google Cloud.
  */
 export async function retryWithBackoff<T>(
@@ -107,7 +109,9 @@ export async function retryWithBackoff<T>(
     try {
       return await operation();
     } catch (err: any) {
+      attempt++;
       const status = err?.status || err?.statusCode || 0;
+      const errName = String(err?.name || '');
       const msg = String(err?.message || '').toLowerCase();
       // Permission and authentication errors (401, 403) are permanent authorization failures
       // and must fail fast instead of retrying across backoff delays.
@@ -124,10 +128,14 @@ export async function retryWithBackoff<T>(
         status === 500 || 
         status === 502 || 
         status === 504 || 
+        errName === 'TimeoutError' ||
+        errName === 'AbortError' ||
         msg.includes('503') || 
         msg.includes('unavailable') || 
         msg.includes('econnreset') || 
-        msg.includes('etimedout');
+        msg.includes('etimedout') ||
+        msg.includes('timed out') ||
+        msg.includes('timeout');
 
       if (attempt > maxRetries || (!isRateLimit && !isTransient)) {
         throw err;
@@ -161,6 +169,9 @@ export async function retryWithBackoff<T>(
         totalDelay = Math.min(exponentialDelay + jitter, 120000); // Cap at 120s max delay
       }
 
+      logger.warn(
+        `Transient API failure (attempt ${attempt}/${maxRetries}): ${err?.message || status}. Retrying in ${Math.round(totalDelay)}ms...`
+      );
       await new Promise(res => setTimeout(res, totalDelay));
     }
   }

@@ -1015,18 +1015,28 @@ export class NotebookMigrator {
 
         // Fetch detailed source data (tailwindDoc, document text) for each source
         if (fullNotebook.sources && fullNotebook.sources.length > 0) {
+          const totalSources = fullNotebook.sources.length;
+          if (totalSources > 10) {
+            logger.info(`Fetching detailed content for ${totalSources} sources in Notebook "${result.displayName}" (${notebookId})...`);
+          }
+          let completedSources = 0;
           fullNotebook.sources = await mapConcurrent(
             fullNotebook.sources,
             3,
             async (s) => {
               const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
-              if (!sourceId) return s;
               try {
+                if (!sourceId) return s;
                 const fullSource = await this.client.getNotebookSource(notebookId, sourceId, sourceEnv, userImpersonation);
                 return { ...s, ...fullSource };
               } catch (err: any) {
                 logger.warn(`Could not fetch detailed source "${s.title || s.displayName || sourceId}" (${sourceId}) in notebook ${notebookId}: ${err.message}`);
                 return s;
+              } finally {
+                completedSources++;
+                if (totalSources > 10 && completedSources % 25 === 0 && completedSources < totalSources) {
+                  logger.info(`Fetched ${completedSources}/${totalSources} sources for Notebook "${result.displayName}" (${notebookId})...`);
+                }
               }
             }
           );
@@ -1036,7 +1046,7 @@ export class NotebookMigrator {
         try {
           notes = await this.client.listNotes(notebookId, sourceEnv, userImpersonation);
         } catch (noteErr: any) {
-          logger.debug(`No notes or failed to list notes for notebook ${notebookId}: ${noteErr.message}`);
+          logger.warn(`Could not list notes for Notebook "${result.displayName}" (${notebookId}): ${noteErr.message}`);
         }
 
         // Fetch artifacts (Studio outputs: Slide Decks, Infographics, Audio Overview, Reports) only when exportArtifacts is enabled
@@ -1047,11 +1057,11 @@ export class NotebookMigrator {
               logger.info(`Found ${artifacts.length} Studio artifacts for Notebook "${result.displayName}"`);
             }
           } catch (artErr: any) {
-            logger.debug(`Could not list artifacts for notebook ${notebookId}: ${artErr.message}`);
+            logger.warn(`Could not list Studio artifacts for Notebook "${result.displayName}" (${notebookId}): ${artErr.message}`);
           }
         }
       } catch (fetchErr: any) {
-        logger.debug(`Could not fetch detailed notebook object for ${notebookId}: ${fetchErr.message}`);
+        logger.warn(`Could not fetch detailed notebook object for "${result.displayName}" (${notebookId}): ${fetchErr.message}`);
       }
 
       const rawSources = fullNotebook.sources || [];
