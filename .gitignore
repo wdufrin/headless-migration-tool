@@ -9,8 +9,13 @@ coverage/
 
 # Service Account Keys & Certificates
 sa-dwd-key.json
+sa-dwd-key.json.*
 sa-*.json
 *-key.json
+*-key.json.*
+dwd-keyless-config.json
+*-keyless-config.json
+*.bak
 credentials*.json
 client_secret*.json
 *.pem

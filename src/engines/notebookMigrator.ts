@@ -757,7 +757,7 @@ export class NotebookMigrator {
           }
         }
       } catch (err: any) {
-        logger.debug(`Per-user notebook discovery skipped for "${userEmail}": ${err.message}`);
+        logger.warn(`Per-user notebook discovery failed for "${userEmail}" on source project "${sourceEnv.projectId}": ${err.message}`);
       }
     }
 

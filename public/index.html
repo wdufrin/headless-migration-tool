@@ -2807,6 +2807,26 @@
                 </div>
               </div>
 
+              <!-- Experimental: Keyless DWD (IAM signJwt) Option -->
+              <div class="p-3.5 bg-purple-950/30 border border-purple-500/40 rounded-xl text-xs space-y-2.5">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input type="checkbox" id="wizDwdKeylessToggle" onchange="onToggleKeylessDwd()" class="w-4 h-4 rounded border-gray-600 bg-gray-900 text-purple-600 focus:ring-purple-500">
+                    <span class="font-bold text-purple-200 flex items-center gap-1.5">
+                      <span>🛡️</span> Use Keyless DWD via IAM <code class="font-mono text-purple-300">signJwt</code> (Zero Service Account Keys)
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/30 text-purple-200 border border-purple-400/40 uppercase tracking-wider">Experimental</span>
+                  </label>
+                  <button type="button" id="btnActivateKeylessDwd" onclick="activateKeylessDwdConfig()" class="hidden px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[11px] font-semibold transition shrink-0 shadow-sm">
+                    ⚡ Save Keyless DWD &amp; Resolve Client ID
+                  </button>
+                </div>
+                <p class="text-[11px] text-gray-300 leading-relaxed">
+                  For organizations where <code class="text-amber-300 font-mono">constraints/iam.disableServiceAccountKeyCreation</code> is strictly enforced: instead of downloading <code class="font-mono text-gray-200">sa-dwd-key.json</code>, the tool signs DWD assertions remotely via the Google Cloud IAM Credentials API (<code class="font-mono text-purple-300">iamcredentials.googleapis.com/...:signJwt</code>) using your active <code class="font-mono text-gray-200">gcloud auth login</code> session (<code class="font-mono text-purple-300">roles/iam.serviceAccountTokenCreator</code>).
+                </p>
+                <div id="keylessDwdStatusMsg" class="hidden text-[11px] font-mono px-3 py-2 rounded-lg border"></div>
+              </div>
+
               <!-- Dynamic Live Organization Policy Warning / Clean Status Banner -->
               <div id="dwdOrgPolicyBanner" class="hidden rounded-xl border p-4 text-xs space-y-3"></div>
 
@@ -2834,11 +2854,11 @@
                 </a>
               </div>
 
-              <!-- Detected Client ID from sa-dwd-key.json -->
+              <!-- Detected Client ID from sa-dwd-key.json or Keyless DWD -->
               <div id="dwdDetectedKeyBanner" class="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3.5 space-y-2 text-xs">
                 <div class="flex items-center justify-between">
-                  <span class="text-indigo-300 font-semibold flex items-center gap-1.5">
-                    <span>🔑</span> Active Service Account Key Detected
+                  <span id="dwdDetectedBannerTitle" class="text-indigo-300 font-semibold flex items-center gap-1.5">
+                    <span>🔑</span> Active DWD Service Account Status
                   </span>
                   <span id="dwdKeyStatusBadge" class="text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/50 text-indigo-300 font-mono">Checking key...</span>
                 </div>
@@ -5855,6 +5875,29 @@ gcloud org-policies set-policy /tmp/override_sa_key.yaml --project=${projectId}`
       const tgtProj = document.getElementById('wizDwdProject')?.value?.trim() || document.getElementById('auditTgtProj')?.value?.trim() || document.getElementById('tgtProjectId')?.value?.trim() || '<TARGET_PROJECT_ID>';
       const saName = document.getElementById('wizDwdSaName')?.value?.trim() || 'gemini-dwd-migrator';
       const saEmail = `${saName}@${tgtProj}.iam.gserviceaccount.com`;
+      const isKeyless = Boolean(document.getElementById('wizDwdKeylessToggle')?.checked);
+
+      const step4Block = isKeyless
+        ? `# ==============================================================================
+# 4. EXPERIMENTAL KEYLESS DWD (IAM signJwt — ZERO SERVICE ACCOUNT KEYS)
+# ==============================================================================
+gcloud services enable iamcredentials.googleapis.com --project="${tgtProj}"
+
+gcloud iam service-accounts add-iam-policy-binding "${saEmail}" \\
+    --member="user:$(gcloud config get-value account)" \\
+    --role="roles/iam.serviceAccountTokenCreator" \\
+    --project="${tgtProj}"
+
+# Print numeric OAuth2 Client ID for Google Workspace Admin Console:
+gcloud iam service-accounts describe "${saEmail}" \\
+    --project="${tgtProj}" \\
+    --format="value(uniqueId)"`
+        : `# ==============================================================================
+# 4. GENERATE & DOWNLOAD SA KEY (saved locally as sa-dwd-key.json)
+# ==============================================================================
+gcloud iam service-accounts keys create sa-dwd-key.json \\
+    --iam-account="${saEmail}" \\
+    --project="${tgtProj}"`;
 
       const script = `# ==============================================================================
 # 1. CREATE SERVICE ACCOUNT (in Target Project: ${tgtProj})
@@ -5893,15 +5936,86 @@ gcloud projects add-iam-policy-binding "${srcProj}" \\
     --member="serviceAccount:${saEmail}" \\
     --role="roles/iam.securityReviewer"
 
-# ==============================================================================
-# 4. GENERATE & DOWNLOAD SA KEY (saved locally as sa-dwd-key.json)
-# ==============================================================================
-gcloud iam service-accounts keys create sa-dwd-key.json \\
-    --iam-account="${saEmail}" \\
-    --project="${tgtProj}"`;
+${step4Block}`;
 
       const el = document.getElementById('wizDwdScript');
       if (el) el.textContent = script;
+    }
+
+    async function onToggleKeylessDwd() {
+      const toggle = document.getElementById('wizDwdKeylessToggle');
+      const btn = document.getElementById('btnActivateKeylessDwd');
+      const statusBox = document.getElementById('keylessDwdStatusMsg');
+      const isKeyless = Boolean(toggle?.checked);
+
+      if (btn) {
+        btn.classList.toggle('hidden', !isKeyless);
+      }
+      updateDwdScript();
+
+      if (!isKeyless) {
+        try {
+          await fetch('/api/wizard/configure-keyless-dwd', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ disable: true })
+          });
+        } catch (_) {}
+        if (statusBox) statusBox.classList.add('hidden');
+        await loadDwdKeyInfo();
+      }
+    }
+
+    async function activateKeylessDwdConfig() {
+      const tgtProj = document.getElementById('wizDwdProject')?.value?.trim() || document.getElementById('auditTgtProj')?.value?.trim() || document.getElementById('tgtProjectId')?.value?.trim() || '';
+      const srcProj = document.getElementById('wizDwdSrcProject')?.value?.trim() || document.getElementById('auditSrcProj')?.value?.trim() || document.getElementById('srcProjectId')?.value?.trim() || '';
+      const saName = document.getElementById('wizDwdSaName')?.value?.trim() || 'gemini-dwd-migrator';
+      const statusBox = document.getElementById('keylessDwdStatusMsg');
+
+      if (!tgtProj || tgtProj.includes('<')) {
+        alert('Please enter your Target GCP Project ID first.');
+        return;
+      }
+
+      const saEmail = saName.includes('@') ? saName : `${saName}@${tgtProj}.iam.gserviceaccount.com`;
+      if (statusBox) {
+        statusBox.classList.remove('hidden');
+        statusBox.className = 'text-[11px] font-mono px-3 py-2 rounded-lg border border-purple-500/40 bg-gray-900/90 text-purple-200 animate-pulse';
+        statusBox.textContent = `⏳ Saving Keyless DWD config for ${saEmail} and resolving Client ID via gcloud...`;
+      }
+
+      try {
+        const res = await fetch('/api/wizard/configure-keyless-dwd', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            serviceAccountEmail: saEmail,
+            projectId: tgtProj,
+            sourceProjectId: srcProj || undefined
+          })
+        });
+        const data = await res.json();
+        if (statusBox) statusBox.classList.remove('animate-pulse');
+
+        if (res.ok && data.success) {
+          if (statusBox) {
+            statusBox.className = 'text-[11px] font-mono px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-950/30 text-emerald-300';
+            statusBox.textContent = `✅ ${data.message}`;
+          }
+          await loadDwdKeyInfo();
+        } else {
+          if (statusBox) {
+            statusBox.className = 'text-[11px] font-mono px-3 py-2 rounded-lg border border-red-500/40 bg-red-950/30 text-red-300';
+            statusBox.textContent = `❌ ${data.message || 'Failed to configure Keyless DWD.'}`;
+          }
+        }
+      } catch (err) {
+        if (statusBox) {
+          statusBox.classList.remove('animate-pulse');
+          statusBox.className = 'text-[11px] font-mono px-3 py-2 rounded-lg border border-red-500/40 bg-red-950/30 text-red-300';
+          statusBox.textContent = `❌ Error: ${err.message}`;
+        }
+      }
     }
 
     /**
@@ -6923,12 +7037,18 @@ ${projectIamBlock}`;
         resultBox.classList.remove('animate-pulse');
 
         if (data.success) {
+          const isKeyless = data.mode === 'KEYLESS_SIGNJWT';
+          const modeBadge = isKeyless
+            ? `<span class="px-2 py-0.5 rounded bg-amber-950/60 border border-amber-500/40 text-amber-300 font-mono text-[10px]">🛡️ Keyless DWD (IAM signJwt)</span>`
+            : `<span class="px-2 py-0.5 rounded bg-blue-950/60 border border-blue-500/40 text-blue-300 font-mono text-[10px]">🔑 Local JSON Key</span>`;
           resultBox.className = 'rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-3.5 text-xs text-emerald-300 space-y-1.5';
           resultBox.innerHTML = `
-            <div class="flex items-center gap-2 font-bold">
+            <div class="flex items-center justify-between gap-2 font-bold">
               <span>✅ DWD Impersonation Verified</span>
+              ${modeBadge}
             </div>
             <p>${data.message}</p>
+            ${data.serviceAccountEmail ? `<div class="font-mono text-[11px] text-gray-400">SA: ${data.serviceAccountEmail}</div>` : ''}
             <div class="font-mono text-[11px] text-emerald-400">Token: ${data.tokenPrefix}</div>
           `;
         } else {
@@ -6979,7 +7099,19 @@ ${projectIamBlock}`;
         const saEl = document.getElementById('wizDetectedSaEmail');
 
         if (badge && cidEl && saEl) {
-          if (data.exists && data.clientId) {
+          if (data.exists && data.keyless) {
+            badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-500/40 font-mono font-semibold';
+            badge.textContent = 'Keyless DWD Active (IAM signJwt)';
+            cidEl.textContent = data.clientId || 'Click "Save Keyless DWD & Resolve Client ID" after creating SA';
+            saEl.textContent = data.clientEmail || 'Keyless DWD Service Account';
+            const toggle = document.getElementById('wizDwdKeylessToggle');
+            const btn = document.getElementById('btnActivateKeylessDwd');
+            if (toggle && !toggle.checked) {
+              toggle.checked = true;
+              if (btn) btn.classList.remove('hidden');
+              updateDwdScript();
+            }
+          } else if (data.exists && data.clientId) {
             badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-mono font-semibold';
             badge.textContent = 'Active Key Found';
             cidEl.textContent = data.clientId;
@@ -6987,7 +7119,7 @@ ${projectIamBlock}`;
           } else {
             badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/40 font-mono font-semibold';
             badge.textContent = 'sa-dwd-key.json Not Detected';
-            cidEl.textContent = 'Run Step 1 to generate or upload key';
+            cidEl.textContent = 'Run Step 1 to generate key or enable Keyless DWD';
             saEl.textContent = 'None';
           }
         }

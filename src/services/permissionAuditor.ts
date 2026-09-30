@@ -781,6 +781,17 @@ export class PermissionAuditor {
             `service account keys, so "constraints/iam.disableServiceAccountKeyCreation" cannot block this migration. ` +
             `This is a property of WiF, not a verified check against project ${safeTargetProj}.`
         });
+      } else if (this.authService.isKeylessDwd?.()) {
+        permissions.push({
+          id: 'ORG_POLICY_KEY_CREATION',
+          category: 'TARGET_RESTORE',
+          name: 'Org Policy: Service Account Key Exemption (Keyless DWD)',
+          status: 'INFO',
+          level: 'RECOMMENDED',
+          details:
+            `Not applicable: Keyless Domain-Wide Delegation (${this.authService.getDwdServiceAccountEmail?.()}) signs JWT assertions via ` +
+            `iamcredentials.googleapis.com (signJwt) without creating service account keys, so "constraints/iam.disableServiceAccountKeyCreation" cannot block this migration.`
+        });
       } else if (!keyCreationRead.ok) {
         pushPolicyUnknown(
           'ORG_POLICY_KEY_CREATION',
@@ -796,15 +807,15 @@ export class PermissionAuditor {
           status: 'MISSING',
           level: 'REQUIRED',
           details: `Organization policy "constraints/iam.disableServiceAccountKeyCreation" is enforced on ${safeTargetProj}. Generating sa-dwd-key.json will fail.`,
-          remediation: `Apply a project-level override on ${safeTargetProj} (enforce: false) or switch to Workforce Identity Federation (WiF).`,
+          remediation: `Enable Experimental Keyless DWD (IAM signJwt) in the DWD tab, apply a project-level override on ${safeTargetProj} (enforce: false), or switch to Workforce Identity Federation (WiF).`,
           fixAction: {
             type: 'NAVIGATE_TAB',
-            title: 'Apply Org Policy Override in DWD Tab',
+            title: 'Configure Keyless DWD or Override in DWD Tab',
             targetTab: 'dwd',
             steps: [
               `1. Switch to the Domain-Wide Delegation (DWD) tab in the wizard.`,
-              `2. Click "1-Click Project Override" under Step 1 to allow key creation for ${safeTargetProj}.`,
-              `3. Or switch to the WiF tab for keyless authentication.`
+              `2. Enable "Experimental: Keyless DWD (IAM signJwt)" to impersonate users without generating a service account key.`,
+              `3. Or click "1-Click Project Override" under Step 1 to allow key creation for ${safeTargetProj}.`
             ]
           }
         });
@@ -1037,6 +1048,8 @@ export class PermissionAuditor {
   }
 
   private getSaEmail(): string {
+    const configuredSa = this.authService.getDwdServiceAccountEmail?.();
+    if (configuredSa) return configuredSa;
     try {
       const saPath = process.env.SERVICE_ACCOUNT_KEY_PATH || './sa-dwd-key.json';
       if (fs.existsSync(saPath)) {
@@ -1044,6 +1057,6 @@ export class PermissionAuditor {
         if (key.client_email) return key.client_email;
       }
     } catch {}
-    return process.env.SERVICE_ACCOUNT_EMAIL || 'migration-service-account@project.iam.gserviceaccount.com';
+    return process.env.DWD_SERVICE_ACCOUNT_EMAIL || process.env.SERVICE_ACCOUNT_EMAIL || 'migration-service-account@project.iam.gserviceaccount.com';
   }
 }

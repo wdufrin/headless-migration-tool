@@ -29,6 +29,17 @@ export interface TokenProviderOptions {
   useAdc?: boolean;
   serviceAccountKeyPath?: string;
   serviceAccountKeyJson?: any;
+  /**
+   * Experimental: Keyless Domain-Wide Delegation Service Account email
+   * (e.g. "gemini-dwd-migrator@my-project.iam.gserviceaccount.com").
+   * When configured without a local JSON key, user-impersonated DWD tokens are minted
+   * via the IAM Service Account Credentials API (`projects/-/serviceAccounts/{sa}:signJwt`)
+   * using the active caller's ADC credentials (`roles/iam.serviceAccountTokenCreator`).
+   */
+  dwdServiceAccountEmail?: string;
+  dwdClientId?: string;
+  dwdProjectId?: string;
+  dwdCallerAccount?: string;
   wifConfigPath?: string;
   wifConfigJson?: any;
   authType?: 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS';
@@ -36,9 +47,9 @@ export interface TokenProviderOptions {
 
 /**
  * Controls *implicit* credential discovery from the current working directory
- * (./sa-dwd-key.json, ./workforce-identity-config.json, ./wif-migration-key.pem).
+ * (./sa-dwd-key.json, ./dwd-keyless-config.json, ./workforce-identity-config.json, ./wif-migration-key.pem).
  *
- * Explicitly-configured credentials (serviceAccountKeyPath / wifConfigPath / *Json options)
+ * Explicitly-configured credentials (serviceAccountKeyPath / wifConfigPath / *Json / dwdServiceAccountEmail options)
  * are ALWAYS honoured and are unaffected by this gate.
  *
  * Rationale: implicit CWD pickup meant `vitest` silently loaded live production
@@ -89,6 +100,10 @@ export class GcpAuthService {
 
   private staticToken?: string;
   private serviceAccountKey?: any;
+  private dwdServiceAccountEmail?: string;
+  private dwdClientId?: string;
+  private dwdProjectId?: string;
+  private dwdCallerAccount?: string;
   private wifConfig?: any;
   private wifConfigPath?: string;
   private authType: 'SERVICE_ACCOUNT_KEY' | 'WORKFORCE_IDENTITY_FEDERATION' | 'APPLICATION_DEFAULT_CREDENTIALS' = 'SERVICE_ACCOUNT_KEY';
@@ -143,9 +158,48 @@ export class GcpAuthService {
       this.ensureSubjectTokenFile();
     }
 
+    // Experimental: Keyless Domain-Wide Delegation (IAM signJwt)
+    // Checked before default ./sa-dwd-key.json so enabling Keyless DWD in the wizard
+    // takes precedence even if an old ./sa-dwd-key.json file is still sitting on disk.
+    const isDefaultSaKeyPath =
+      !options.serviceAccountKeyPath ||
+      options.serviceAccountKeyPath === './sa-dwd-key.json' ||
+      options.serviceAccountKeyPath === 'sa-dwd-key.json';
+
+    if (options.dwdServiceAccountEmail && options.dwdServiceAccountEmail.trim()) {
+      this.dwdServiceAccountEmail = options.dwdServiceAccountEmail.trim();
+      this.dwdClientId = options.dwdClientId?.trim() || undefined;
+      this.dwdProjectId = options.dwdProjectId?.trim() || undefined;
+      this.dwdCallerAccount = options.dwdCallerAccount?.trim() || undefined;
+      logger.info(`Configured Keyless DWD (IAM signJwt) for Service Account: ${this.dwdServiceAccountEmail}`);
+    } else if (!options.serviceAccountKeyJson && isDefaultSaKeyPath && !isCredentialAutoloadDisabled()) {
+      if (process.env.DWD_SERVICE_ACCOUNT_EMAIL && process.env.DWD_SERVICE_ACCOUNT_EMAIL.trim()) {
+        this.dwdServiceAccountEmail = process.env.DWD_SERVICE_ACCOUNT_EMAIL.trim();
+        this.dwdClientId = process.env.DWD_CLIENT_ID?.trim() || undefined;
+        this.dwdProjectId = process.env.DWD_PROJECT_ID?.trim() || undefined;
+        logger.info(`Loaded Keyless DWD Service Account from DWD_SERVICE_ACCOUNT_EMAIL: ${this.dwdServiceAccountEmail}`);
+      } else if (fs.existsSync('./dwd-keyless-config.json')) {
+        try {
+          const content = fs.readFileSync('./dwd-keyless-config.json', 'utf-8').trim();
+          if (content) {
+            const parsed = JSON.parse(content);
+            if (parsed.serviceAccountEmail && typeof parsed.serviceAccountEmail === 'string') {
+              this.dwdServiceAccountEmail = parsed.serviceAccountEmail.trim();
+              this.dwdClientId = typeof parsed.clientId === 'string' ? parsed.clientId.trim() : undefined;
+              this.dwdProjectId = typeof parsed.projectId === 'string' ? parsed.projectId.trim() : undefined;
+              this.dwdCallerAccount = typeof parsed.callerAccount === 'string' ? parsed.callerAccount.trim() : undefined;
+              logger.info(`Auto-loaded Keyless DWD Config (IAM signJwt): ${this.dwdServiceAccountEmail}`);
+            }
+          }
+        } catch (err: any) {
+          logger.warn(`Failed to parse ./dwd-keyless-config.json: ${err.message}`);
+        }
+      }
+    }
+
     if (options.serviceAccountKeyJson) {
       this.serviceAccountKey = options.serviceAccountKeyJson;
-    } else if (options.serviceAccountKeyPath && fs.existsSync(options.serviceAccountKeyPath)) {
+    } else if (!this.dwdServiceAccountEmail && options.serviceAccountKeyPath && fs.existsSync(options.serviceAccountKeyPath)) {
       try {
         const content = fs.readFileSync(options.serviceAccountKeyPath, 'utf-8').trim();
         if (content) {
@@ -155,7 +209,7 @@ export class GcpAuthService {
       } catch (err: any) {
         logger.warn(`Failed to parse Service Account Key file: ${err.message}`);
       }
-    } else if (!isCredentialAutoloadDisabled() && fs.existsSync('./sa-dwd-key.json')) {
+    } else if (!this.dwdServiceAccountEmail && !isCredentialAutoloadDisabled() && fs.existsSync('./sa-dwd-key.json')) {
       try {
         const content = fs.readFileSync('./sa-dwd-key.json', 'utf-8').trim();
         if (content) {
@@ -194,10 +248,28 @@ export class GcpAuthService {
     }
   }
 
+  setKeylessDwdServiceAccount(serviceAccountEmail: string, clientId?: string, projectId?: string) {
+    this.dwdServiceAccountEmail = serviceAccountEmail.trim();
+    if (clientId !== undefined) this.dwdClientId = clientId.trim() || undefined;
+    if (projectId !== undefined) this.dwdProjectId = projectId.trim() || undefined;
+  }
+
   private callerEmailCache?: string;
 
   hasDwdConfigured(): boolean {
-    return !!this.serviceAccountKey;
+    return Boolean(this.serviceAccountKey || this.dwdServiceAccountEmail);
+  }
+
+  isKeylessDwd(): boolean {
+    return Boolean(!this.serviceAccountKey && this.dwdServiceAccountEmail);
+  }
+
+  getDwdServiceAccountEmail(): string | undefined {
+    return this.serviceAccountKey?.client_email || this.dwdServiceAccountEmail;
+  }
+
+  getDwdClientId(): string | undefined {
+    return this.serviceAccountKey?.client_id || this.dwdClientId;
   }
 
   /**
@@ -236,12 +308,209 @@ export class GcpAuthService {
   }
 
   /**
-   * Returns the home GCP project_id of the loaded Service Account key (if any).
+   * Returns the home GCP project_id of the loaded Service Account key or Keyless DWD SA (if any).
    * Used as the fallback quota project (X-Goog-User-Project) when cross-project
    * requests fail with 403 USER_PROJECT_DENIED.
    */
   getServiceAccountProjectId(): string | undefined {
-    return this.serviceAccountKey?.project_id;
+    if (this.serviceAccountKey?.project_id) {
+      return this.serviceAccountKey.project_id;
+    }
+    if (this.dwdProjectId) {
+      return this.dwdProjectId;
+    }
+    if (this.dwdServiceAccountEmail) {
+      const match = this.dwdServiceAccountEmail.match(/@([^.]+)\.iam\.gserviceaccount\.com$/i);
+      if (match?.[1]) {
+        return match[1];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Obtains the base operator access token (static bearer token, local `gcloud auth print-access-token`,
+   * or GCE/Cloud Run metadata server) used to authenticate calls to
+   * `iamcredentials.googleapis.com` during Keyless DWD (`signJwt`).
+   *
+   * Note: `gcloud auth print-access-token` is intentionally tried BEFORE `metadata.google.internal`
+   * because on Google Cloudtop / Cloud Workstations, `metadata.google.internal` returns the workstation VM's
+   * shared service account (`insecure-cloudtop-shared-user@...`) rather than the operator's `gcloud` login.
+   */
+  private async getCallerBaseToken(): Promise<string> {
+    if (this.staticToken) {
+      return this.staticToken;
+    }
+    if (this.cachedAdcToken && this.cachedAdcToken.expiresAt > Date.now() + 60000) {
+      return this.cachedAdcToken.token;
+    }
+    if (this.dwdCallerAccount) {
+      try {
+        const { stdout } = await execFileAsync('gcloud', ['auth', 'print-access-token', `--account=${this.dwdCallerAccount}`]);
+        const token = stdout.trim();
+        if (token) {
+          this.cachedAdcToken = {
+            token,
+            expiresAt: Date.now() + 3000 * 1000
+          };
+          return token;
+        }
+      } catch (err: any) {
+        logger.debug(`Could not print access token for configured callerAccount "${this.dwdCallerAccount}": ${err.message}`);
+      }
+    }
+    try {
+      const { stdout } = await execFileAsync('gcloud', ['auth', 'print-access-token']);
+      const token = stdout.trim();
+      if (token) {
+        this.cachedAdcToken = {
+          token,
+          expiresAt: Date.now() + 3000 * 1000
+        };
+        return token;
+      }
+    } catch (err: any) {
+      logger.debug(`gcloud auth print-access-token not available (${err.message}); trying metadata server.`);
+    }
+    try {
+      const metaRes = await fetch('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token', {
+        headers: { 'Metadata-Flavor': 'Google' },
+        signal: AbortSignal.timeout(1000)
+      });
+      if (metaRes.ok) {
+        const metaData: any = await metaRes.json();
+        if (metaData.access_token) {
+          this.cachedAdcToken = {
+            token: metaData.access_token,
+            expiresAt: Date.now() + (metaData.expires_in || 3600) * 1000
+          };
+          return metaData.access_token;
+        }
+      }
+    } catch {
+      // Ignore metadata server timeout outside GCP
+    }
+    throw new Error(
+      'Keyless DWD (IAM signJwt) requires active operator credentials (gcloud auth login, GCE/Cloud Run metadata server, or static bearer token) with roles/iam.serviceAccountTokenCreator.'
+    );
+  }
+
+  /**
+   * Experimental: Mints a Google Workspace Domain-Wide Delegation access token WITHOUT a service account key file
+   * by delegating JWT signing to the Google Cloud IAM Service Account Credentials API (`signJwt`) and exchanging
+   * the signed assertion at `https://oauth2.googleapis.com/token`.
+   */
+  public async mintKeylessDwdToken(userEmail: string, scopes?: string[]): Promise<string> {
+    const saEmail = this.dwdServiceAccountEmail;
+    if (!saEmail) {
+      throw new Error('No Keyless DWD Service Account email is configured.');
+    }
+    const cleanEmail = userEmail.replace(/^user:/i, '').trim();
+    if (!cleanEmail) {
+      throw new Error('User email is required for Keyless DWD impersonation.');
+    }
+    const requestedScopes = scopes && scopes.length > 0 ? scopes : DISCOVERY_ENGINE_SCOPES;
+    const callerToken = await this.getCallerBaseToken();
+
+    const now = Math.floor(Date.now() / 1000);
+    const claimSet = {
+      iss: saEmail,
+      sub: cleanEmail,
+      scope: requestedScopes.join(' '),
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600
+    };
+
+    const signJwtUrl = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:signJwt`;
+    const saProject = this.getServiceAccountProjectId();
+
+    const callSignJwt = async (includeQuotaProject: boolean) => {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${callerToken}`,
+        'Content-Type': 'application/json'
+      };
+      if (includeQuotaProject && saProject) {
+        headers['x-goog-user-project'] = saProject;
+      }
+      return fetch(signJwtUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ payload: JSON.stringify(claimSet) }),
+        signal: AbortSignal.timeout(30000)
+      });
+    };
+
+    let signRes = await callSignJwt(false);
+    if (!signRes.ok && signRes.status === 403 && saProject) {
+      const errText = await signRes.text();
+      if (errText.includes('USER_PROJECT_DENIED') || errText.includes('quota project')) {
+        signRes = await callSignJwt(true);
+      } else {
+        let parsedMsg = errText;
+        try {
+          const parsed = JSON.parse(errText);
+          parsedMsg = parsed.error?.message || errText;
+        } catch (parseErr: any) {
+          logger.debug(`Keyless DWD signJwt 403 error body was not JSON: ${parseErr.message}`);
+        }
+        throw new Error(
+          `Keyless DWD signJwt failed for "${saEmail}" (HTTP 403): ${parsedMsg}. Ensure iamcredentials.googleapis.com is enabled and the caller holds roles/iam.serviceAccountTokenCreator on ${saEmail}.`
+        );
+      }
+    }
+
+    if (!signRes.ok) {
+      const errText = await signRes.text();
+      let parsedMsg = errText;
+      try {
+        const parsed = JSON.parse(errText);
+        parsedMsg = parsed.error?.message || errText;
+      } catch (parseErr: any) {
+        logger.debug(`Keyless DWD signJwt error body was not JSON: ${parseErr.message}`);
+      }
+      throw new Error(
+        `Keyless DWD signJwt failed for "${saEmail}" (HTTP ${signRes.status}): ${parsedMsg}`
+      );
+    }
+
+    const signData: any = await signRes.json();
+    const signedJwt = signData?.signedJwt;
+    if (!signedJwt || typeof signedJwt !== 'string') {
+      throw new Error(`Keyless DWD signJwt for "${saEmail}" returned HTTP ${signRes.status} without a signedJwt field.`);
+    }
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: signedJwt
+      }).toString(),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!tokenRes.ok) {
+      const oauthErrText = await tokenRes.text();
+      let oauthErrSummary = oauthErrText;
+      try {
+        const parsed = JSON.parse(oauthErrText);
+        if (parsed.error && parsed.error_description) {
+          oauthErrSummary = `${parsed.error}: ${parsed.error_description}`;
+        } else if (parsed.error) {
+          oauthErrSummary = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+        }
+      } catch (parseErr: any) {
+        logger.debug(`Keyless DWD oauth2 token error body was not JSON: ${parseErr.message}`);
+      }
+      throw new Error(`Keyless DWD OAuth2 token exchange failed for "${cleanEmail}" via ${saEmail} (HTTP ${tokenRes.status}): ${oauthErrSummary}`);
+    }
+
+    const tokenData: any = await tokenRes.json();
+    if (!tokenData?.access_token) {
+      throw new Error(`Keyless DWD OAuth2 token exchange for "${cleanEmail}" returned no access_token.`);
+    }
+    return tokenData.access_token;
   }
 
   /**
@@ -264,10 +533,13 @@ export class GcpAuthService {
       'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
     ];
     const effectiveMode = preferredMode || (this.authType === 'WORKFORCE_IDENTITY_FEDERATION' ? 'WIF' : 'DWD');
-    const cacheKey = `${cleanEmail || 'default'}_${cleanEmail ? effectiveMode : 'ADMIN'}_${requestedScopes.slice().sort().join(',')}`;
+    const scopesKey = requestedScopes.slice().sort().join(',');
+    const buildCacheKey = (mode: 'DWD' | 'WIF' | 'ADMIN') =>
+      `${cleanEmail || 'default'}_${cleanEmail ? mode : 'ADMIN'}_${scopesKey}`;
+    const cacheKey = buildCacheKey(effectiveMode);
 
     const cached = this.userTokenCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now() + 60000) {
+    if (cached && cached.expiresAt > Date.now() + 60000 && (!cleanEmail || cached.mode === effectiveMode)) {
       if (cleanEmail && cached.mode) {
         this.userMechanismCache.set(cleanEmail.toLowerCase(), cached.mode);
       }
@@ -276,7 +548,7 @@ export class GcpAuthService {
 
     // Helper to mint DWD token with automatic scope fallback on unauthorized_client
     const tryMintDwd = async (emailToImpersonate: string): Promise<string | null> => {
-      if (!this.serviceAccountKey) return null;
+      if (!this.hasDwdConfigured()) return null;
       const scopeSetsToTry = [
         dwdScopes,
         ['https://www.googleapis.com/auth/discoveryengine.readwrite', 'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'],
@@ -286,21 +558,29 @@ export class GcpAuthService {
       let lastErr: any = null;
       for (const scopeSet of scopeSetsToTry) {
         try {
-          const jwtClient = new JWT({
-            email: this.serviceAccountKey.client_email,
-            key: this.serviceAccountKey.private_key,
-            subject: emailToImpersonate,
-            scopes: scopeSet
-          });
-          const tokenResponse = await jwtClient.getAccessToken();
-          if (tokenResponse.token) {
-            logger.info(`Minted Google Workspace DWD Token for "${emailToImpersonate}" via ${this.serviceAccountKey.client_email}.`);
-            return tokenResponse.token;
+          if (this.serviceAccountKey) {
+            const jwtClient = new JWT({
+              email: this.serviceAccountKey.client_email,
+              key: this.serviceAccountKey.private_key,
+              subject: emailToImpersonate,
+              scopes: scopeSet
+            });
+            const tokenResponse = await jwtClient.getAccessToken();
+            if (tokenResponse.token) {
+              logger.info(`Minted Google Workspace DWD Token for "${emailToImpersonate}" via ${this.serviceAccountKey.client_email}.`);
+              return tokenResponse.token;
+            }
+          } else if (this.dwdServiceAccountEmail) {
+            const keylessToken = await this.mintKeylessDwdToken(emailToImpersonate, scopeSet);
+            if (keylessToken) {
+              logger.info(`Minted Keyless Google Workspace DWD Token (IAM signJwt) for "${emailToImpersonate}" via ${this.dwdServiceAccountEmail}.`);
+              return keylessToken;
+            }
           }
         } catch (err: any) {
           lastErr = err;
           if (!err.message?.includes('unauthorized_client')) {
-            // If invalid_grant (user does not exist in Google Workspace), break early
+            // If invalid_grant (user does not exist in Google Workspace) or IAM signJwt 403, break early
             break;
           }
         }
@@ -327,12 +607,12 @@ export class GcpAuthService {
         let lastWifError: Error | null = null;
 
         if (effectiveMode === 'DWD') {
-          if (!isExternalDomain && this.serviceAccountKey) {
+          if (!isExternalDomain && this.hasDwdConfigured()) {
             try {
               const dwdToken = await tryMintDwd(cleanEmail);
               if (dwdToken) {
                 this.userMechanismCache.set(lower, 'DWD');
-                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000, mode: 'DWD' });
+                this.userTokenCache.set(buildCacheKey('DWD'), { token: dwdToken, expiresAt: Date.now() + 3000 * 1000, mode: 'DWD' });
                 return dwdToken;
               }
             } catch (err: any) {
@@ -349,7 +629,7 @@ export class GcpAuthService {
               const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
               if (wifToken) {
                 this.userMechanismCache.set(lower, 'WIF');
-                this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000, mode: 'WIF' });
+                this.userTokenCache.set(buildCacheKey('WIF'), { token: wifToken, expiresAt: Date.now() + 3000 * 1000, mode: 'WIF' });
                 return wifToken;
               }
             } catch (wifErr: any) {
@@ -362,7 +642,7 @@ export class GcpAuthService {
             const wifToken = await this.mintWorkforceToken(cleanEmail, undefined, requestedScopes);
             if (wifToken) {
               this.userMechanismCache.set(lower, 'WIF');
-              this.userTokenCache.set(cacheKey, { token: wifToken, expiresAt: Date.now() + 3000 * 1000, mode: 'WIF' });
+              this.userTokenCache.set(buildCacheKey('WIF'), { token: wifToken, expiresAt: Date.now() + 3000 * 1000, mode: 'WIF' });
               return wifToken;
             }
           } catch (wifErr: any) {
@@ -370,12 +650,12 @@ export class GcpAuthService {
             logger.debug(`Workforce token minting failed for ${cleanEmail}: ${wifErr.message}`);
           }
           // Only fall back to DWD when the caller did NOT explicitly request 'WIF' (e.g. during a retry)
-          if (!isStrictMode && this.serviceAccountKey && !isExternalDomain) {
+          if (!isStrictMode && this.hasDwdConfigured() && !isExternalDomain) {
             try {
               const dwdToken = await tryMintDwd(cleanEmail);
               if (dwdToken) {
                 this.userMechanismCache.set(lower, 'DWD');
-                this.userTokenCache.set(cacheKey, { token: dwdToken, expiresAt: Date.now() + 3000 * 1000, mode: 'DWD' });
+                this.userTokenCache.set(buildCacheKey('DWD'), { token: dwdToken, expiresAt: Date.now() + 3000 * 1000, mode: 'DWD' });
                 return dwdToken;
               }
             } catch (err: any) {
@@ -415,7 +695,7 @@ export class GcpAuthService {
           ? lastDwdError.message
           : lastWifError
           ? lastWifError.message
-          : (!this.serviceAccountKey ? 'No Service Account Key configured for Domain-Wide Delegation' : 'User impersonation failed');
+          : (!this.hasDwdConfigured() ? 'No Service Account Key or Keyless DWD Service Account configured for Domain-Wide Delegation' : 'User impersonation failed');
         throw new Error(`${effectiveMode} Impersonation Failed for user "${cleanEmail}": ${failureReason}`);
       }
     }
@@ -442,6 +722,34 @@ export class GcpAuthService {
         }
       } catch (err: any) {
         logger.warn(`Service Account token minting failed: ${err.message}`);
+      }
+    } else if (this.dwdServiceAccountEmail) {
+      try {
+        const callerToken = await this.getCallerBaseToken();
+        const genUrl = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(this.dwdServiceAccountEmail)}:generateAccessToken`;
+        const iamRes = await fetch(genUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${callerToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ scope: requestedScopes }),
+          signal: AbortSignal.timeout(30000)
+        });
+        if (iamRes.ok) {
+          const iamData: any = await iamRes.json();
+          if (iamData?.accessToken) {
+            this.userTokenCache.set(cacheKey, {
+              token: iamData.accessToken,
+              expiresAt: Date.now() + 3000 * 1000
+            });
+            return iamData.accessToken;
+          }
+        } else {
+          logger.debug(`Keyless SA generateAccessToken returned HTTP ${iamRes.status}; falling back to caller ADC token.`);
+        }
+      } catch (err: any) {
+        logger.debug(`Keyless SA generateAccessToken skipped (${err.message}); falling back to caller ADC token.`);
       }
     }
 
@@ -516,8 +824,8 @@ export class GcpAuthService {
    * Unlike getAccessToken(), this throws directly if impersonation fails instead of falling back to the service account.
    */
   async mintDwdToken(userEmail: string, scopes?: string[]): Promise<string> {
-    if (!this.serviceAccountKey) {
-      throw new Error('No Service Account Key configured for Domain-Wide Delegation.');
+    if (!this.serviceAccountKey && !this.dwdServiceAccountEmail) {
+      throw new Error('No Service Account Key or Keyless DWD Service Account configured for Domain-Wide Delegation.');
     }
     const cleanEmail = userEmail.replace(/^user:/i, '').trim();
     const requestedScopes = scopes && scopes.length > 0 ? scopes : [
@@ -525,18 +833,22 @@ export class GcpAuthService {
       'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
     ];
 
-    const jwtClient = new JWT({
-      email: this.serviceAccountKey.client_email,
-      key: this.serviceAccountKey.private_key,
-      subject: cleanEmail,
-      scopes: requestedScopes
-    });
+    if (this.serviceAccountKey) {
+      const jwtClient = new JWT({
+        email: this.serviceAccountKey.client_email,
+        key: this.serviceAccountKey.private_key,
+        subject: cleanEmail,
+        scopes: requestedScopes
+      });
 
-    const tokenResponse = await jwtClient.getAccessToken();
-    if (!tokenResponse.token) {
-      throw new Error(`Failed to mint token for ${cleanEmail}: No token returned.`);
+      const tokenResponse = await jwtClient.getAccessToken();
+      if (!tokenResponse.token) {
+        throw new Error(`Failed to mint token for ${cleanEmail}: No token returned.`);
+      }
+      return tokenResponse.token;
     }
-    return tokenResponse.token;
+
+    return this.mintKeylessDwdToken(cleanEmail, requestedScopes);
   }
 
   /**
@@ -555,16 +867,22 @@ export class GcpAuthService {
     const lower = (userEmail || '').replace(/^user:/i, '').trim().toLowerCase();
 
     if (mode === 'DWD') {
-      if (!this.serviceAccountKey) {
+      if (!this.hasDwdConfigured()) {
         return {
           available: false,
-          reason: 'no Service Account Key is configured for Domain-Wide Delegation'
+          reason: 'no Service Account Key or Keyless DWD Service Account is configured for Domain-Wide Delegation'
         };
       }
       if (GcpAuthService.isExternalIdentityDomain(lower)) {
         return {
           available: false,
           reason: `"${lower}" is an external IdP identity, which Google Workspace Domain-Wide Delegation cannot impersonate`
+        };
+      }
+      if (this.isKeylessDwd()) {
+        return {
+          available: true,
+          reason: `Keyless Domain-Wide Delegation (IAM signJwt) is configured for ${this.dwdServiceAccountEmail}`
         };
       }
       return { available: true, reason: 'Domain-Wide Delegation service account key is configured' };
@@ -649,18 +967,38 @@ export class GcpAuthService {
       const stsUrl = 'https://sts.googleapis.com/v1/token';
       const effectiveAudience = audience || `//iam.googleapis.com/locations/global/workforcePools/${pool}/providers/${provider}`;
 
-      const exchangeForScope = async (scopeStr: string) => fetch(stsUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audience: effectiveAudience,
-          grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
-          requestedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
-          scope: scopeStr,
-          subjectTokenType: 'urn:ietf:params:oauth:token-type:id_token',
-          subjectToken: signedJwt
-        })
-      });
+      const exchangeForScope = async (scopeStr: string): Promise<Response> => {
+        let lastNetworkErr: any = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const res = await fetch(stsUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                audience: effectiveAudience,
+                grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
+                requestedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+                scope: scopeStr,
+                subjectTokenType: 'urn:ietf:params:oauth:token-type:id_token',
+                subjectToken: signedJwt
+              }),
+              signal: AbortSignal.timeout(15000)
+            });
+            if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < 3) {
+              await new Promise((r) => setTimeout(r, attempt * 250));
+              continue;
+            }
+            return res;
+          } catch (netErr: any) {
+            lastNetworkErr = netErr;
+            if (attempt < 3) {
+              await new Promise((r) => setTimeout(r, attempt * 250));
+              continue;
+            }
+          }
+        }
+        throw lastNetworkErr || new Error('STS fetch failed');
+      };
 
       let usedScopeStr = (scopes && scopes.length > 0 ? scopes : DEFAULT_WORKFORCE_SCOPES).join(' ');
       let stsRes = await exchangeForScope(usedScopeStr);
@@ -692,7 +1030,11 @@ export class GcpAuthService {
       logger.info(`Minted GCP Workforce Identity Token for "${userEmail}" via ${provider} (scopes: ${usedScopeStr}).`);
       return stsData.access_token;
     } catch (err: any) {
-      logger.debug(`Could not mint workforce token for ${userEmail}: ${err.message}`);
+      const cause = err?.cause;
+      const causeDetail = cause
+        ? ` [cause: ${cause.code ? `${cause.code} ` : ''}${cause.message || String(cause)}]`
+        : '';
+      logger.warn(`Could not mint workforce token for "${userEmail}" against STS (sts.googleapis.com): ${err.message}${causeDetail}`);
     }
     return undefined;
   }

@@ -220,7 +220,7 @@ wizardRouter.post('/idp/mapping-report', async (req, res) => {
   }
 });
 
-// Wizard: Inspect local DWD Service Account Key & Client ID
+// Wizard: Inspect local DWD Service Account Key or Keyless DWD Config & Client ID
 wizardRouter.get('/wizard/dwd-info', async (_req, res) => {
   try {
     let sourceProjectId = process.env.SOURCE_PROJECT_ID || process.env.GCP_PROJECT_ID || '';
@@ -234,31 +234,217 @@ wizardRouter.get('/wizard/dwd-info', async (_req, res) => {
       } catch {}
     }
 
-    const keyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : null);
-    if (!keyPath || !fs.existsSync(keyPath)) {
-      return res.status(200).json({ exists: false, sourceProjectId: sourceProjectId || '' });
+    const keylessPath = './dwd-keyless-config.json';
+    if (fs.existsSync(keylessPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(keylessPath, 'utf-8'));
+        if (parsed.serviceAccountEmail) {
+          const inferredProj =
+            parsed.projectId ||
+            parsed.serviceAccountEmail.match(/@([^.]+)\.iam\.gserviceaccount\.com$/i)?.[1] ||
+            '';
+          return res.status(200).json({
+            exists: true,
+            mode: 'KEYLESS_SIGNJWT',
+            keyless: true,
+            filePath: keylessPath,
+            clientEmail: parsed.serviceAccountEmail,
+            clientId: parsed.clientId || '',
+            projectId: inferredProj,
+            targetProjectId: inferredProj,
+            sourceProjectId: parsed.sourceProjectId || sourceProjectId || ''
+          });
+        }
+      } catch (err: any) {
+        logger.warn(`Failed to parse ./dwd-keyless-config.json in /wizard/dwd-info: ${err.message}`);
+      }
     }
-    const content = fs.readFileSync(keyPath, 'utf-8');
-    const parsed = JSON.parse(content);
-    const targetProject = parsed.project_id || '';
+
+    if (process.env.DWD_SERVICE_ACCOUNT_EMAIL) {
+      const saEmail = process.env.DWD_SERVICE_ACCOUNT_EMAIL.trim();
+      const inferredProj =
+        process.env.DWD_PROJECT_ID ||
+        saEmail.match(/@([^.]+)\.iam\.gserviceaccount\.com$/i)?.[1] ||
+        '';
+      return res.status(200).json({
+        exists: true,
+        mode: 'KEYLESS_SIGNJWT',
+        keyless: true,
+        filePath: 'env:DWD_SERVICE_ACCOUNT_EMAIL',
+        clientEmail: saEmail,
+        clientId: process.env.DWD_CLIENT_ID || '',
+        projectId: inferredProj,
+        targetProjectId: inferredProj,
+        sourceProjectId: sourceProjectId || ''
+      });
+    }
+
+    const keyPath = process.env.SERVICE_ACCOUNT_KEY_PATH || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : null);
+    if (keyPath && fs.existsSync(keyPath)) {
+      const content = fs.readFileSync(keyPath, 'utf-8');
+      const parsed = JSON.parse(content);
+      const targetProject = parsed.project_id || '';
+      return res.status(200).json({
+        exists: true,
+        mode: 'KEY_FILE',
+        keyless: false,
+        filePath: keyPath,
+        clientEmail: parsed.client_email || '',
+        clientId: parsed.client_id || '',
+        projectId: targetProject,
+        targetProjectId: targetProject,
+        sourceProjectId: sourceProjectId || ''
+      });
+    }
+
+    return res.status(200).json({ exists: false, keyless: false, sourceProjectId: sourceProjectId || '' });
+  } catch (err: any) {
+    return res.status(200).json({ exists: false, keyless: false, error: err.message });
+  }
+});
+
+// Wizard: Configure Experimental Keyless DWD (IAM signJwt) without downloading a Service Account Key
+wizardRouter.post('/wizard/configure-keyless-dwd', async (req, res) => {
+  try {
+    const { serviceAccountEmail, clientId, projectId, sourceProjectId, disable } = req.body || {};
+    const keylessPath = './dwd-keyless-config.json';
+
+    if (disable) {
+      if (fs.existsSync(keylessPath)) {
+        fs.unlinkSync(keylessPath);
+      }
+      return res.status(200).json({
+        success: true,
+        disabled: true,
+        message: 'Keyless DWD configuration removed.'
+      });
+    }
+
+    const cleanSaEmail = String(serviceAccountEmail || '').trim();
+    if (!cleanSaEmail || !cleanSaEmail.includes('@') || !cleanSaEmail.endsWith('.gserviceaccount.com')) {
+      return res.status(400).json({
+        success: false,
+        error: 'InvalidServiceAccountEmail',
+        message: 'Please provide a valid GCP Service Account email ending in .gserviceaccount.com (e.g. gemini-dwd-migrator@my-project.iam.gserviceaccount.com).'
+      });
+    }
+
+    const inferredProject =
+      String(projectId || '').trim() ||
+      cleanSaEmail.match(/@([^.]+)\.iam\.gserviceaccount\.com$/i)?.[1] ||
+      '';
+
+    let resolvedClientId = String(clientId || '').trim();
+    let callerAccount = '';
+    let iamBindingGranted = false;
+
+    if (inferredProject && process.env.NODE_ENV !== 'test') {
+      try {
+        const { execFile } = await import('child_process');
+        const { promisify } = await import('util');
+        const execFileAsync = promisify(execFile);
+
+        try {
+          const { stdout: acctOut } = await execFileAsync('gcloud', ['config', 'get-value', 'account']);
+          const activeAcct = acctOut.trim();
+          if (activeAcct && !activeAcct.startsWith('insecure-cloudtop-shared-user@')) {
+            callerAccount = activeAcct;
+          }
+        } catch (acctErr: any) {
+          logger.debug(`Could not read active gcloud account: ${acctErr.message}`);
+        }
+
+        try {
+          await execFileAsync('gcloud', [
+            'services',
+            'enable',
+            'iamcredentials.googleapis.com',
+            `--project=${inferredProject}`,
+            '--quiet'
+          ]);
+        } catch (svcErr: any) {
+          logger.debug(`Could not auto-enable iamcredentials.googleapis.com on ${inferredProject}: ${svcErr.message}`);
+        }
+
+        if (callerAccount) {
+          const memberPrefix = callerAccount.startsWith('principal://') || callerAccount.startsWith('principalSet://')
+            ? callerAccount
+            : callerAccount.endsWith('.gserviceaccount.com')
+            ? `serviceAccount:${callerAccount}`
+            : `user:${callerAccount}`;
+          try {
+            await execFileAsync('gcloud', [
+              'iam',
+              'service-accounts',
+              'add-iam-policy-binding',
+              cleanSaEmail,
+              `--member=${memberPrefix}`,
+              '--role=roles/iam.serviceAccountTokenCreator',
+              `--project=${inferredProject}`,
+              '--quiet'
+            ]);
+            iamBindingGranted = true;
+            logger.info(`Granted roles/iam.serviceAccountTokenCreator on ${cleanSaEmail} to ${memberPrefix}`);
+          } catch (bindErr: any) {
+            logger.debug(`Could not auto-grant roles/iam.serviceAccountTokenCreator on ${cleanSaEmail}: ${bindErr.message}`);
+          }
+        }
+
+        if (!resolvedClientId) {
+          const { stdout } = await execFileAsync('gcloud', [
+            'iam',
+            'service-accounts',
+            'describe',
+            cleanSaEmail,
+            `--project=${inferredProject}`,
+            '--format=json'
+          ]);
+          const desc = JSON.parse(stdout || '{}');
+          if (desc.uniqueId || desc.oauth2ClientId) {
+            resolvedClientId = String(desc.uniqueId || desc.oauth2ClientId).trim();
+          }
+        }
+      } catch (gcloudErr: any) {
+        logger.debug(`Could not resolve SA uniqueId via gcloud describe: ${gcloudErr.message}`);
+      }
+    }
+
+    const configPayload = {
+      mode: 'KEYLESS_SIGNJWT',
+      serviceAccountEmail: cleanSaEmail,
+      clientId: resolvedClientId || undefined,
+      projectId: inferredProject || undefined,
+      sourceProjectId: sourceProjectId ? String(sourceProjectId).trim() : undefined,
+      callerAccount: callerAccount || undefined,
+      updatedAt: new Date().toISOString()
+    };
+
+    fs.writeFileSync(keylessPath, JSON.stringify(configPayload, null, 2), { encoding: 'utf-8', mode: 0o600 });
+
     return res.status(200).json({
-      exists: true,
-      filePath: keyPath,
-      clientEmail: parsed.client_email || '',
-      clientId: parsed.client_id || '',
-      projectId: targetProject,
-      targetProjectId: targetProject,
-      sourceProjectId: sourceProjectId || ''
+      success: true,
+      keyless: true,
+      mode: 'KEYLESS_SIGNJWT',
+      filePath: keylessPath,
+      clientEmail: cleanSaEmail,
+      clientId: resolvedClientId,
+      projectId: inferredProject,
+      callerAccount: callerAccount || undefined,
+      iamBindingGranted,
+      message: resolvedClientId
+        ? `Keyless DWD enabled for ${cleanSaEmail} (Resolved Client ID: ${resolvedClientId}${iamBindingGranted ? `, Token Creator granted to ${callerAccount}` : ''}). No JSON key file was created.`
+        : `Keyless DWD enabled for ${cleanSaEmail}. No JSON key file was created.`
     });
   } catch (err: any) {
-    return res.status(200).json({ exists: false, error: err.message });
+    logger.error(`Configure Keyless DWD failed: ${err.message}`);
+    return res.status(500).json({ success: false, error: 'ConfigureKeylessDwdFailed', message: err.message });
   }
 });
 
 // Wizard: Test Domain-Wide Delegation (DWD)
 wizardRouter.post('/wizard/test-dwd', async (req, res) => {
   try {
-    const { testUserEmail, keyPath, keyJson } = req.body || {};
+    const { testUserEmail, keyPath, keyJson, dwdServiceAccountEmail, dwdClientId } = req.body || {};
     if (!testUserEmail) {
       return res.status(200).json({ 
         success: false, 
@@ -270,30 +456,35 @@ wizardRouter.post('/wizard/test-dwd', async (req, res) => {
     const effectiveKeyPath = keyPath || (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
     const authService = new GcpAuthService({
       serviceAccountKeyPath: effectiveKeyPath,
-      serviceAccountKeyJson: keyJson
+      serviceAccountKeyJson: keyJson,
+      dwdServiceAccountEmail,
+      dwdClientId
     });
 
     if (!authService.hasDwdConfigured()) {
       return res.status(200).json({
         success: false,
         error: 'KeyNotFound',
-        message: 'No Service Account Key found. Please upload or specify a valid sa-dwd-key.json path.'
+        message: 'No Service Account Key or Keyless DWD Service Account found. Please upload sa-dwd-key.json or enable Experimental Keyless DWD (IAM signJwt).'
       });
     }
 
-    let clientId = '';
-    let clientEmail = '';
-    try {
-      if (keyJson) {
-        const k = typeof keyJson === 'string' ? JSON.parse(keyJson) : keyJson;
-        clientId = k.client_id || '';
-        clientEmail = k.client_email || '';
-      } else if (effectiveKeyPath && fs.existsSync(effectiveKeyPath)) {
-        const k = JSON.parse(fs.readFileSync(effectiveKeyPath, 'utf-8'));
-        clientId = k.client_id || '';
-        clientEmail = k.client_email || '';
-      }
-    } catch {}
+    let clientId = authService.getDwdClientId() || '';
+    let clientEmail = authService.getDwdServiceAccountEmail() || '';
+    const isKeyless = authService.isKeylessDwd();
+    if (!isKeyless) {
+      try {
+        if (keyJson) {
+          const k = typeof keyJson === 'string' ? JSON.parse(keyJson) : keyJson;
+          clientId = k.client_id || clientId;
+          clientEmail = k.client_email || clientEmail;
+        } else if (effectiveKeyPath && fs.existsSync(effectiveKeyPath)) {
+          const k = JSON.parse(fs.readFileSync(effectiveKeyPath, 'utf-8'));
+          clientId = k.client_id || clientId;
+          clientEmail = k.client_email || clientEmail;
+        }
+      } catch {}
+    }
 
     const scopes = [
       'https://www.googleapis.com/auth/discoveryengine.readwrite',
@@ -305,30 +496,45 @@ wizardRouter.post('/wizard/test-dwd', async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message: `DWD impersonation successful for "${testUserEmail}". Minted valid user-scoped OAuth2 token.`,
+        keyless: isKeyless,
+        mode: isKeyless ? 'KEYLESS_SIGNJWT' : 'KEY_FILE',
+        message: isKeyless
+          ? `Keyless DWD (IAM signJwt) impersonation successful for "${testUserEmail}" via ${clientEmail}. Minted valid user-scoped OAuth2 token without a local key.`
+          : `DWD impersonation successful for "${testUserEmail}". Minted valid user-scoped OAuth2 token.`,
         tokenPrefix: token ? `${token.substring(0, 15)}...` : 'None',
         clientId,
         clientEmail,
         scopesVerified: scopes
       });
     } catch (dwdErr: any) {
-      const isAccessDenied = dwdErr.message?.includes('access_denied') || dwdErr.message?.includes('Requested client not authorized');
+      const isAccessDenied = dwdErr.message?.includes('access_denied') || dwdErr.message?.includes('Requested client not authorized') || dwdErr.message?.includes('unauthorized_client');
+      const isSignJwtIamError = dwdErr.message?.includes('signJwt failed') || dwdErr.message?.includes('iam.serviceAccounts.signJwt');
+      const saProject = authService.getServiceAccountProjectId() || '<TARGET_PROJECT_ID>';
       return res.status(200).json({
         success: false,
+        keyless: isKeyless,
+        mode: isKeyless ? 'KEYLESS_SIGNJWT' : 'KEY_FILE',
         error: 'DwdImpersonationFailed',
         clientId,
         clientEmail,
         testUserEmail,
         isAccessDenied,
         message: `DWD impersonation failed: ${dwdErr.message}`,
-        remediation: isAccessDenied ? [
-          `Authorize Client ID "${clientId || 'from sa-dwd-key.json'}" in Google Workspace Admin Console (admin.google.com/ac/owl/domainwidedelegation).`,
+        remediation: isSignJwtIamError ? [
+          `Enable the IAM Service Account Credentials API: gcloud services enable iamcredentials.googleapis.com --project="${saProject}"`,
+          `Grant roles/iam.serviceAccountTokenCreator on "${clientEmail}" to your active gcloud operator account:`,
+          `gcloud iam service-accounts add-iam-policy-binding "${clientEmail}" --member="user:$(gcloud config get-value account)" --role="roles/iam.serviceAccountTokenCreator" --project="${saProject}"`,
+          `Ensure you have an active ADC session: gcloud auth login`
+        ] : isAccessDenied ? [
+          `Authorize Client ID "${clientId || 'from your DWD Service Account'}" in Google Workspace Admin Console (admin.google.com/ac/owl/domainwidedelegation).`,
           `Ensure the user email "${testUserEmail}" belongs to the Google Workspace domain where the Client ID was authorized.`,
           `Ensure the exact OAuth scopes (${scopes.join(', ')}) are configured.`,
           `If you just added the Client ID to Google Admin Console, please allow 5-15 minutes for global Google Workspace propagation.`
         ] : [
-          `Verify network connectivity to oauth2.googleapis.com.`,
-          `Ensure the service account key has not been revoked or expired.`
+          `Verify network connectivity to oauth2.googleapis.com and iamcredentials.googleapis.com.`,
+          isKeyless
+            ? `Ensure the service account "${clientEmail}" exists and your caller holds roles/iam.serviceAccountTokenCreator.`
+            : `Ensure the service account key has not been revoked or expired.`
         ]
       });
     }
@@ -356,11 +562,13 @@ wizardRouter.post('/wizard/audit-permissions', async (req, res) => {
       targetUserEmail,
       testUserEmail,
       keyPath,
+      dwdServiceAccountEmail,
       wifConfigPath
     } = req.body || {};
 
     const authService = new GcpAuthService({
-      serviceAccountKeyPath: keyPath || './sa-dwd-key.json'
+      serviceAccountKeyPath: keyPath || './sa-dwd-key.json',
+      dwdServiceAccountEmail
     });
 
     const auditor = new PermissionAuditor(authService);

@@ -283,5 +283,35 @@ describe('DiscoveryEngineClient 403 impersonation retry', () => {
 
     expect(wifSpy).not.toHaveBeenCalled();
   });
+
+  it('ConEd case: when initial WIF mint fails and falls back to DWD, does NOT poison the WIF cache key with the DWD token', async () => {
+    const auth = makeAuth({ withSaKey: true, withWifKeyOnDisk: true });
+    let wifAttempt = 0;
+    const wifSpy = vi.spyOn(auth, 'mintWorkforceToken').mockImplementation(async () => {
+      wifAttempt++;
+      if (wifAttempt === 1) {
+        return undefined; // First WIF attempt fails (e.g. transient STS fetch error)
+      }
+      return 'genuine-wif-token-on-retry';
+    });
+
+    vi.spyOn(auth as any, 'mintKeylessDwdToken').mockResolvedValue('dwd-fallback-token');
+    (auth as any).serviceAccountKey = undefined;
+    (auth as any).dwdServiceAccountEmail = 'gemini-dwd-migrator@cei-gemini-prd-01.iam.gserviceaccount.com';
+
+    // 1. Initial call (preferredMode = undefined, effectiveMode = 'WIF'):
+    //    WIF fails on attempt 1 -> falls back to DWD -> returns 'dwd-fallback-token'
+    const firstToken = await auth.getAccessToken('minglae@coned.com');
+    expect(firstToken).toBe('dwd-fallback-token');
+    expect(auth.getLastUsedImpersonationMode('minglae@coned.com')).toBe('DWD');
+
+    // 2. Retry call explicitly requesting 'WIF' (preferredMode = 'WIF'):
+    //    Must NOT return 'dwd-fallback-token' from userTokenCache! Must call mintWorkforceToken again.
+    const retryToken = await auth.getAccessToken('minglae@coned.com', undefined, 'WIF');
+    expect(retryToken).toBe('genuine-wif-token-on-retry');
+    expect(wifSpy).toHaveBeenCalledTimes(2);
+    expect(auth.getLastUsedImpersonationMode('minglae@coned.com')).toBe('WIF');
+  });
 });
+
 
