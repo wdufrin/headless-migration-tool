@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.6.1</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.6.2</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -619,6 +619,7 @@
                   </div>
                   <button type="button" onclick="toggleAllUsers(true)" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-medium rounded-lg border border-gray-700 transition">Select All</button>
                   <button type="button" onclick="toggleAllUsers(false)" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-medium rounded-lg border border-gray-700 transition">Deselect All</button>
+                  <button type="button" onclick="clearAllTargetedUsers()" id="btnClearAllTargetedUsers" class="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/60 text-red-300 text-[11px] font-medium rounded-lg border border-red-800/60 transition flex items-center gap-1" title="Clear / Delete all users and identity overrides"><span>🗑️</span><span>Delete All</span></button>
                   <button type="button" onclick="toggleSection('sec-user-selection')" class="text-xs font-semibold px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition border border-gray-700 flex items-center gap-1">
                     <span id="sec-user-selection-icon">▼</span>
                   </button>
@@ -685,6 +686,9 @@
                   <button type="button" onclick="document.getElementById('bulkUserImportPanel').classList.toggle('hidden')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-indigo-300 border border-indigo-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1" title="Paste a CSV mapping (old_id,new_id) or list of user emails">
                     <span>📋</span> Paste CSV / Users
                   </button>
+                  <button type="button" onclick="clearAllTargetedUsers()" class="px-3 py-1.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/50 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="Clear all discovered and entered users before uploading a new CSV mapping">
+                    <span>🗑️</span> Delete All
+                  </button>
                   <button type="button" onclick="toggleAndRenderMappingReport()" id="btnToggleMappingReport" class="px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900/70 text-purple-300 border border-purple-500/50 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm" title="View and export the Source-to-Destination User ID Mapping Report">
                     <span>📊</span> Mapping Report
                     <span id="mappingReportCountBadge" class="hidden px-1.5 py-0.2 bg-purple-800 text-white rounded-full text-[10px] font-mono">0</span>
@@ -729,7 +733,12 @@
                         <th class="py-2 px-3">Source User ID (Old)</th>
                         <th class="py-2 px-3">Discovered Assets / Sources</th>
                         <th class="py-2 px-3">Destination User ID (New / Mapped)</th>
-                        <th class="py-2 px-3 w-16 text-center">Action</th>
+                        <th class="py-2 px-3 w-20 text-center">
+                          <div class="flex items-center justify-center gap-1">
+                            <span>Action</span>
+                            <button type="button" onclick="clearAllTargetedUsers()" class="text-red-400 hover:text-red-300 p-0.5 rounded hover:bg-red-950/60 transition" title="Delete / Clear all users from filter list">🗑️</button>
+                          </div>
+                        </th>
                       </tr>
                     </thead>
                     <tbody id="userSelectionTableBody" class="divide-y divide-gray-800/60">
@@ -1003,6 +1012,11 @@
                 <span id="auditSpinner" class="hidden animate-spin">🌀</span>
                 <span>🔄 Run Pre-Check</span>
               </button>
+              <button type="button" onclick="toggleStep2GlobalHitlFilter()" id="btnStep2GlobalHitlFilter" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-amber-300 hover:text-amber-200 border border-amber-700/50 rounded-lg transition flex items-center gap-1.5 shadow-sm" title="Toggle filter across Step 2 boxes to show only items needing action or HITL resolution">
+                <span>⚡</span>
+                <span id="step2HitlFilterLabel">Filter: Action / HITL Only</span>
+                <span id="step2HitlGlobalCountBadge" class="hidden px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-700/60">0</span>
+              </button>
               <button type="button" onclick="downloadAuditReport('markdown')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-medium text-gray-200 border border-gray-700 rounded-lg transition flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 Export Report (.md)
@@ -1225,19 +1239,19 @@
               </div>
               <div id="auditGaugeIndicator" class="text-2xl">⏳</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl cursor-pointer hover:border-gray-600 transition" onclick="setAuditStatusFilter('ALL')" title="Click to view all checks">
               <div class="text-xs text-gray-400 font-medium">Total Checks</div>
               <div id="auditTotalChecks" class="text-2xl font-bold text-white mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl cursor-pointer hover:border-emerald-600/60 transition" onclick="setAuditStatusFilter('MATCH')" title="Click to filter to matching items">
               <div class="text-xs text-gray-400 font-medium">Exact Matches</div>
               <div id="auditMatchesCount" class="text-2xl font-bold text-emerald-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl cursor-pointer hover:border-rose-600/60 transition" onclick="setAuditStatusFilter('ACTION_NEEDED')" title="Click to filter to missing target gaps">
               <div class="text-xs text-gray-400 font-medium">Missing in Target (Gaps)</div>
               <div id="auditGapsCount" class="text-2xl font-bold text-rose-400 mt-1">0</div>
             </div>
-            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl">
+            <div class="bg-gray-950/80 border border-gray-800 p-4 rounded-xl cursor-pointer hover:border-amber-600/60 transition" onclick="setAuditStatusFilter('ACTION_NEEDED')" title="Click to filter to differences and warnings">
               <div class="text-xs text-gray-400 font-medium">Differences / Warnings</div>
               <div id="auditWarningsCount" class="text-2xl font-bold text-amber-400 mt-1">0</div>
             </div>
@@ -1266,14 +1280,24 @@
                   <div class="flex items-center gap-2 flex-wrap">
                     <h3 class="text-sm font-bold text-white">Dynamic Connector &amp; DataStore Mapping (Auto-Map + HITL Validation)</h3>
                     <span id="auditConnectorAutoBadge" class="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700/60">0 Auto-Mapped (_#####)</span>
-                    <span id="auditConnectorHitlBadge" class="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold bg-amber-950 text-amber-300 border border-amber-700/60 hidden">0 HITL Required</span>
+                    <button type="button" onclick="setConnectorMappingFilter('HITL_ONLY')" id="auditConnectorHitlBadge" class="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold bg-amber-950 text-amber-300 border border-amber-700/60 hover:bg-amber-900 transition cursor-pointer hidden" title="Click to filter to only items needing HITL resolution">0 HITL Required</button>
                   </div>
                   <p class="text-xs text-gray-400 mt-1">
                     Automatically links Source ➔ Destination Connectors &amp; DataStores that share the same name with different <code class="text-indigo-300 font-mono">_#####</code> identifiers, synchronizing parent Connector Collections (<code class="text-indigo-300 font-mono">collections/{id}/dataConnector</code>) and child entity DataStores (<code class="text-indigo-300 font-mono">_issue</code>, <code class="text-indigo-300 font-mono">_pull_request</code>, <code class="text-indigo-300 font-mono">_repository</code>) so a 1-source No-Code Agent never splits into 3 separate sources. If auto-mapping cannot find a unique match, select the destination via <strong>HITL</strong> below.
                   </p>
                 </div>
               </div>
-              <div class="flex items-center gap-2 shrink-0">
+              <div class="flex items-center gap-2 shrink-0 flex-wrap">
+                <!-- Filter buttons for Connector Mapping -->
+                <div class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 text-[11px]">
+                  <button type="button" onclick="setConnectorMappingFilter('ALL')" id="cmFilterAll" class="cm-filter-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm">All (<span id="cmCountAll">0</span>)</button>
+                  <button type="button" onclick="setConnectorMappingFilter('HITL_ONLY')" id="cmFilterHitl" class="cm-filter-btn px-2.5 py-1 rounded-md text-amber-300 hover:text-white font-medium flex items-center gap-1">
+                    <span>⚠️ Needs HITL</span>
+                    <span id="cmCountHitl" class="px-1.5 py-0.2 bg-amber-950 text-amber-300 border border-amber-800 rounded-full text-[9px] font-mono">0</span>
+                  </button>
+                  <button type="button" onclick="setConnectorMappingFilter('MAPPED_ONLY')" id="cmFilterMapped" class="cm-filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium">Mapped (<span id="cmCountMapped">0</span>)</button>
+                </div>
+                <input type="text" id="cmSearchInput" oninput="onConnectorSearchInput(this.value)" placeholder="Search connectors / datastores..." class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 w-44 font-mono">
                 <button type="button" onclick="resetConnectorMappingsToAuto()" class="px-2.5 py-1.5 bg-gray-900 hover:bg-gray-800 text-[11px] font-medium text-gray-300 border border-gray-700 rounded-lg transition" title="Reset manual overrides back to automatic _##### matching">
                   ↺ Reset to Auto-Map
                 </button>
@@ -1311,9 +1335,18 @@
                 </button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
+                <!-- Status Action Filter Buttons -->
+                <div class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 text-[11px]">
+                  <button type="button" onclick="setAuditStatusFilter('ALL')" id="auditStatusBtnAll" class="audit-status-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm">All Statuses</button>
+                  <button type="button" onclick="setAuditStatusFilter('ACTION_NEEDED')" id="auditStatusBtnAction" class="audit-status-btn px-2.5 py-1 rounded-md text-amber-300 hover:text-white font-medium flex items-center gap-1">
+                    <span>⚠️ Action Needed</span>
+                    <span id="auditActionNeededCountBadge" class="hidden px-1.5 py-0.2 bg-amber-950 text-amber-300 border border-amber-800 rounded-full text-[9px] font-mono">0</span>
+                  </button>
+                  <button type="button" onclick="setAuditStatusFilter('MATCH')" id="auditStatusBtnMatch" class="audit-status-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium">Matches</button>
+                </div>
                 <!-- Category Filter Buttons -->
                 <div class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 text-[11px]">
-                  <button type="button" onclick="setAuditCategoryFilter('ALL')" class="audit-cat-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium" data-cat="ALL">All</button>
+                  <button type="button" onclick="setAuditCategoryFilter('ALL')" class="audit-cat-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium" data-cat="ALL">All Categories</button>
                   <button type="button" onclick="setAuditCategoryFilter('DATASTORE')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="DATASTORE">DataStores</button>
                   <button type="button" onclick="setAuditCategoryFilter('ENGINE')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="ENGINE">Engine</button>
                   <button type="button" onclick="setAuditCategoryFilter('IDP')" class="audit-cat-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white" data-cat="IDP">IdP</button>
@@ -3886,6 +3919,10 @@
     let tableItems = [];
     let activeAuditResult = null;
     let selectedAuditCategory = 'ALL';
+    let selectedAuditStatusFilter = 'ALL';
+    let connectorMappingFilter = 'ALL';
+    let connectorSearchQuery = '';
+    let isStep2GlobalHitlFilterActive = false;
 
     let isAuditRunning = false;
 
@@ -4624,6 +4661,7 @@
 
       renderConnectorMappingPanel(audit);
       filterAuditTable();
+      updateStep2HitlGlobalCount();
     }
 
     let userCollectionMappingOverrides = {};
@@ -4681,6 +4719,8 @@
         console.warn('Could not clear saved connector mappings:', err);
       }
       if (activeAuditResult) {
+        renderConnectorMappingPanel(activeAuditResult);
+        updateStep2HitlGlobalCount();
         runConfigPreCheck();
       }
     }
@@ -4731,26 +4771,35 @@
       saveConnectorMappingOverrides();
       if (activeAuditResult) {
         renderConnectorMappingPanel(activeAuditResult);
+        updateStep2HitlGlobalCount();
       }
     }
 
     function onCustomConnectorTargetChange(kind, sourceId, inputEl) {
       const val = (inputEl.value || '').trim();
-      if (!val) return;
-      if (kind === 'CONNECTOR_COLLECTION') {
-        userCollectionMappingOverrides[sourceId] = val;
-        const entry = (activeAuditResult?.connectorMappings?.entries || []).find(
-          e => e.kind === 'CONNECTOR_COLLECTION' && e.sourceId === sourceId
-        );
-        if (entry && Array.isArray(entry.entityMappings)) {
-          for (const em of entry.entityMappings) {
-            userDatastoreMappingOverrides[em.sourceDataStoreId] = `${val}_${em.entityName}`;
-          }
+      if (!val) {
+        if (kind === 'CONNECTOR_COLLECTION') {
+          delete userCollectionMappingOverrides[sourceId];
+        } else {
+          delete userDatastoreMappingOverrides[sourceId];
         }
       } else {
-        userDatastoreMappingOverrides[sourceId] = val;
+        if (kind === 'CONNECTOR_COLLECTION') {
+          userCollectionMappingOverrides[sourceId] = val;
+          const entry = (activeAuditResult?.connectorMappings?.entries || []).find(
+            e => e.kind === 'CONNECTOR_COLLECTION' && e.sourceId === sourceId
+          );
+          if (entry && Array.isArray(entry.entityMappings)) {
+            for (const em of entry.entityMappings) {
+              userDatastoreMappingOverrides[em.sourceDataStoreId] = `${val}_${em.entityName}`;
+            }
+          }
+        } else {
+          userDatastoreMappingOverrides[sourceId] = val;
+        }
       }
       saveConnectorMappingOverrides();
+      updateStep2HitlGlobalCount();
     }
 
     function renderConnectorMappingPanel(audit) {
@@ -4763,22 +4812,14 @@
       const cm = audit?.connectorMappings;
       const entries = cm?.entries || [];
 
-      if (entries.length === 0) {
-        if (autoBadge) autoBadge.textContent = '0 Connectors / DataStores';
-        if (hitlBadge) hitlBadge.classList.add('hidden');
-        tbody.innerHTML = '<tr><td colspan="4" class="py-6 text-center text-gray-500">No Connectors or DataStores discovered in the source environment.</td></tr>';
-        return;
-      }
-
       let autoOrExactCount = 0;
       let needsHitlCount = 0;
 
-      const rowsHtml = entries.map(entry => {
+      for (const entry of entries) {
         const isConnector = entry.kind === 'CONNECTOR_COLLECTION';
         const userOverride = isConnector
           ? userCollectionMappingOverrides[entry.sourceId]
           : userDatastoreMappingOverrides[entry.sourceId];
-        const effectiveTargetId = userOverride !== undefined ? userOverride : (entry.targetId || '');
         const effectiveStatus = userOverride !== undefined
           ? (userOverride === '__STRIP__' ? 'STRIPPED' : 'HITL_CONFIRMED')
           : entry.matchStatus;
@@ -4788,6 +4829,134 @@
         } else {
           autoOrExactCount++;
         }
+      }
+
+      if (autoBadge) {
+        autoBadge.textContent = `${autoOrExactCount} Mapped`;
+      }
+      if (hitlBadge) {
+        if (needsHitlCount > 0) {
+          hitlBadge.textContent = `⚠️ ${needsHitlCount} HITL Required`;
+          hitlBadge.classList.remove('hidden');
+        } else {
+          hitlBadge.classList.add('hidden');
+        }
+      }
+
+      const cmCountAllEl = document.getElementById('cmCountAll');
+      const cmCountHitlEl = document.getElementById('cmCountHitl');
+      const cmCountMappedEl = document.getElementById('cmCountMapped');
+      if (cmCountAllEl) cmCountAllEl.textContent = String(entries.length);
+      if (cmCountHitlEl) cmCountHitlEl.textContent = String(needsHitlCount);
+      if (cmCountMappedEl) cmCountMappedEl.textContent = String(autoOrExactCount);
+
+      const btnCmAll = document.getElementById('cmFilterAll');
+      const btnCmHitl = document.getElementById('cmFilterHitl');
+      const btnCmMapped = document.getElementById('cmFilterMapped');
+      if (btnCmAll) {
+        btnCmAll.className = connectorMappingFilter === 'ALL'
+          ? 'cm-filter-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm'
+          : 'cm-filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium';
+      }
+      if (btnCmHitl) {
+        btnCmHitl.className = connectorMappingFilter === 'HITL_ONLY'
+          ? 'cm-filter-btn px-2.5 py-1 rounded-md text-white bg-amber-600 font-medium shadow-sm flex items-center gap-1'
+          : 'cm-filter-btn px-2.5 py-1 rounded-md text-amber-300 hover:text-white font-medium flex items-center gap-1';
+      }
+      if (btnCmMapped) {
+        btnCmMapped.className = connectorMappingFilter === 'MAPPED_ONLY'
+          ? 'cm-filter-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm'
+          : 'cm-filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium';
+      }
+
+      if (entries.length === 0) {
+        if (autoBadge) autoBadge.textContent = '0 Connectors / DataStores';
+        if (hitlBadge) hitlBadge.classList.add('hidden');
+        tbody.innerHTML = '<tr><td colspan="4" class="py-6 text-center text-gray-500">No Connectors or DataStores discovered in the source environment.</td></tr>';
+        return;
+      }
+
+      const q = (connectorSearchQuery || '').toLowerCase().trim();
+      const filteredEntries = entries.filter(entry => {
+        const isConnector = entry.kind === 'CONNECTOR_COLLECTION';
+        const userOverride = isConnector
+          ? userCollectionMappingOverrides[entry.sourceId]
+          : userDatastoreMappingOverrides[entry.sourceId];
+        const effectiveStatus = userOverride !== undefined
+          ? (userOverride === '__STRIP__' ? 'STRIPPED' : 'HITL_CONFIRMED')
+          : entry.matchStatus;
+
+        if (connectorMappingFilter === 'HITL_ONLY' && effectiveStatus !== 'NEEDS_HITL') {
+          return false;
+        }
+        if (connectorMappingFilter === 'MAPPED_ONLY' && effectiveStatus === 'NEEDS_HITL') {
+          return false;
+        }
+
+        if (q) {
+          const matchName = (entry.sourceDisplayName || '').toLowerCase().includes(q);
+          const matchId = (entry.sourceId || '').toLowerCase().includes(q);
+          const matchBase = (entry.baseName || '').toLowerCase().includes(q);
+          const matchTarget = (entry.targetId || '').toLowerCase().includes(q);
+          const matchEntities = Array.isArray(entry.entityMappings) && entry.entityMappings.some(em =>
+            (em.entityName || '').toLowerCase().includes(q) ||
+            (em.sourceDataStoreId || '').toLowerCase().includes(q) ||
+            (em.targetDataStoreId || '').toLowerCase().includes(q)
+          );
+          const matchAgents = Array.isArray(entry.referencedByAgents) && entry.referencedByAgents.some(a =>
+            a.toLowerCase().includes(q)
+          );
+          if (!matchName && !matchId && !matchBase && !matchTarget && !matchEntities && !matchAgents) {
+            return false;
+          }
+        }
+        return true;
+      });
+
+      if (filteredEntries.length === 0) {
+        if (connectorMappingFilter === 'HITL_ONLY') {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="4" class="py-8 text-center">
+                <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-400 text-xl mb-2">🎉</div>
+                <div class="text-sm font-bold text-emerald-300">Zero HITL Actions Remaining!</div>
+                <p class="text-xs text-gray-400 mt-1">All ${entries.length} discovered Connectors and DataStores have resolved targets.</p>
+                <button type="button" onclick="setConnectorMappingFilter('ALL')" class="mt-3 px-3 py-1 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-200 border border-gray-700 rounded-lg transition">View All Connectors</button>
+              </td>
+            </tr>
+          `;
+        } else if (connectorMappingFilter === 'MAPPED_ONLY') {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="4" class="py-8 text-center text-gray-400">
+                <div class="text-sm font-semibold text-gray-300">No Mapped Connectors or DataStores</div>
+                <p class="text-xs text-gray-500 mt-1">Select destination mappings from the dropdowns to resolve unmapped items.</p>
+                <button type="button" onclick="setConnectorMappingFilter('ALL')" class="mt-3 px-3 py-1 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-200 border border-gray-700 rounded-lg transition">View All</button>
+              </td>
+            </tr>
+          `;
+        } else {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="4" class="py-8 text-center text-gray-500">
+                No Connectors or DataStores match "${escapeHtml(q)}".
+                <button type="button" onclick="onConnectorSearchInput(''); document.getElementById('cmSearchInput').value='';" class="block mx-auto mt-2 text-indigo-400 text-xs hover:underline">Clear search</button>
+              </td>
+            </tr>
+          `;
+        }
+        return;
+      }
+
+      const rowsHtml = filteredEntries.map(entry => {
+        const isConnector = entry.kind === 'CONNECTOR_COLLECTION';
+        const userOverride = isConnector
+          ? userCollectionMappingOverrides[entry.sourceId]
+          : userDatastoreMappingOverrides[entry.sourceId];
+        const effectiveTargetId = userOverride !== undefined ? userOverride : (entry.targetId || '');
+        const effectiveStatus = userOverride !== undefined
+          ? (userOverride === '__STRIP__' ? 'STRIPPED' : 'HITL_CONFIRMED')
+          : entry.matchStatus;
 
         let statusBadge = '';
         if (effectiveStatus === 'AUTO_MATCHED') {
@@ -4875,6 +5044,8 @@
                   value="${isCustomTarget ? escapeHtml(effectiveTargetId) : ''}"
                   placeholder="Enter target ${isConnector ? 'Connector Collection' : 'DataStore'} ID..."
                   oninput="onCustomConnectorTargetChange('${escapeHtml(entry.kind)}', '${escapeHtml(entry.sourceId)}', this)"
+                  onblur="if (activeAuditResult) renderConnectorMappingPanel(activeAuditResult);"
+                  onkeydown="if (event.key === 'Enter') { this.blur(); }"
                   class="w-full bg-gray-900 border border-indigo-500/70 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
                 />
               </div>
@@ -4888,19 +5059,153 @@
         `;
       }).join('');
 
-      if (autoBadge) {
-        autoBadge.textContent = `${autoOrExactCount} Mapped`;
+      tbody.innerHTML = rowsHtml;
+    }
+
+    function setConnectorMappingFilter(filterType) {
+      connectorMappingFilter = filterType;
+      checkGlobalFilterSync();
+      if (activeAuditResult) {
+        renderConnectorMappingPanel(activeAuditResult);
       }
-      if (hitlBadge) {
-        if (needsHitlCount > 0) {
-          hitlBadge.textContent = `⚠️ ${needsHitlCount} HITL Required`;
-          hitlBadge.classList.remove('hidden');
-        } else {
-          hitlBadge.classList.add('hidden');
+    }
+
+    function onConnectorSearchInput(query) {
+      connectorSearchQuery = query || '';
+      if (activeAuditResult) {
+        renderConnectorMappingPanel(activeAuditResult);
+      }
+    }
+
+    function setAuditStatusFilter(status) {
+      selectedAuditStatusFilter = status;
+      const btnAll = document.getElementById('auditStatusBtnAll');
+      const btnAction = document.getElementById('auditStatusBtnAction');
+      const btnMatch = document.getElementById('auditStatusBtnMatch');
+
+      if (btnAll) {
+        btnAll.className = status === 'ALL'
+          ? 'audit-status-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm'
+          : 'audit-status-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium';
+      }
+      if (btnAction) {
+        btnAction.className = status === 'ACTION_NEEDED'
+          ? 'audit-status-btn px-2.5 py-1 rounded-md text-white bg-amber-600 font-medium shadow-sm flex items-center gap-1'
+          : 'audit-status-btn px-2.5 py-1 rounded-md text-amber-300 hover:text-white font-medium flex items-center gap-1';
+      }
+      if (btnMatch) {
+        btnMatch.className = status === 'MATCH'
+          ? 'audit-status-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm'
+          : 'audit-status-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium';
+      }
+
+      checkGlobalFilterSync();
+      filterAuditTable();
+    }
+
+    function getStep2HitlRemainingCounts() {
+      loadSavedConnectorMappingOverrides();
+      const entries = activeAuditResult?.connectorMappings?.entries || [];
+      let connectorHitlCount = 0;
+      for (const entry of entries) {
+        const isConnector = entry.kind === 'CONNECTOR_COLLECTION';
+        const userOverride = isConnector
+          ? userCollectionMappingOverrides[entry.sourceId]
+          : userDatastoreMappingOverrides[entry.sourceId];
+        const effectiveStatus = userOverride !== undefined
+          ? (userOverride === '__STRIP__' ? 'STRIPPED' : 'HITL_CONFIRMED')
+          : entry.matchStatus;
+        if (effectiveStatus === 'NEEDS_HITL') {
+          connectorHitlCount++;
         }
       }
 
-      tbody.innerHTML = rowsHtml;
+      const items = activeAuditResult?.items || [];
+      const parityActionCount = items.filter(i => i.status !== 'MATCH').length;
+
+      return {
+        connectorHitlCount,
+        parityActionCount,
+        totalRemaining: connectorHitlCount + parityActionCount
+      };
+    }
+
+    function updateStep2HitlGlobalCount() {
+      const { connectorHitlCount, parityActionCount, totalRemaining } = getStep2HitlRemainingCounts();
+      const badge = document.getElementById('step2HitlGlobalCountBadge');
+      const btn = document.getElementById('btnStep2GlobalHitlFilter');
+      const label = document.getElementById('step2HitlFilterLabel');
+
+      if (badge) {
+        if (!activeAuditResult) {
+          badge.classList.add('hidden');
+        } else if (totalRemaining > 0) {
+          badge.textContent = String(totalRemaining);
+          badge.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-700/60';
+          badge.classList.remove('hidden');
+        } else {
+          badge.textContent = '✓ 0';
+          badge.className = 'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60';
+          badge.classList.remove('hidden');
+        }
+      }
+
+      if (btn && label) {
+        if (isStep2GlobalHitlFilterActive) {
+          btn.className = 'px-3 py-2 bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white border border-amber-400 rounded-lg transition flex items-center gap-1.5 shadow-md';
+          label.textContent = 'Show All Step 2 Items';
+          btn.setAttribute('title', 'Filter active: showing only items needing action. Click to show all items.');
+        } else {
+          btn.className = 'px-3 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-amber-300 hover:text-amber-200 border border-amber-700/50 rounded-lg transition flex items-center gap-1.5 shadow-sm';
+          label.textContent = 'Filter: Action / HITL Only';
+          btn.setAttribute('title', 'Toggle filter across Step 2 boxes to show only items needing action or HITL resolution');
+        }
+      }
+    }
+
+    function toggleStep2GlobalHitlFilter() {
+      isStep2GlobalHitlFilterActive = !isStep2GlobalHitlFilterActive;
+      if (isStep2GlobalHitlFilterActive) {
+        connectorMappingFilter = 'HITL_ONLY';
+        selectedAuditStatusFilter = 'ACTION_NEEDED';
+      } else {
+        connectorMappingFilter = 'ALL';
+        selectedAuditStatusFilter = 'ALL';
+      }
+
+      const btnAll = document.getElementById('auditStatusBtnAll');
+      const btnAction = document.getElementById('auditStatusBtnAction');
+      const btnMatch = document.getElementById('auditStatusBtnMatch');
+      if (btnAll) {
+        btnAll.className = selectedAuditStatusFilter === 'ALL'
+          ? 'audit-status-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm'
+          : 'audit-status-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium';
+      }
+      if (btnAction) {
+        btnAction.className = selectedAuditStatusFilter === 'ACTION_NEEDED'
+          ? 'audit-status-btn px-2.5 py-1 rounded-md text-white bg-amber-600 font-medium shadow-sm flex items-center gap-1'
+          : 'audit-status-btn px-2.5 py-1 rounded-md text-amber-300 hover:text-white font-medium flex items-center gap-1';
+      }
+      if (btnMatch) {
+        btnMatch.className = selectedAuditStatusFilter === 'MATCH'
+          ? 'audit-status-btn px-2.5 py-1 rounded-md text-white bg-indigo-600 font-medium shadow-sm'
+          : 'audit-status-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white font-medium';
+      }
+
+      if (activeAuditResult) {
+        renderConnectorMappingPanel(activeAuditResult);
+        filterAuditTable();
+      }
+      updateStep2HitlGlobalCount();
+    }
+
+    function checkGlobalFilterSync() {
+      if (connectorMappingFilter === 'HITL_ONLY' && selectedAuditStatusFilter === 'ACTION_NEEDED') {
+        isStep2GlobalHitlFilterActive = true;
+      } else {
+        isStep2GlobalHitlFilterActive = false;
+      }
+      updateStep2HitlGlobalCount();
     }
 
     function copyTextValue(text, btn) {
@@ -5060,8 +5365,22 @@
       const badge = document.getElementById('auditItemsBadge');
       if (!tbody) return;
 
-      const filtered = (activeAuditResult.items || []).filter(item => {
+      const allItems = activeAuditResult.items || [];
+      const totalActionItems = allItems.filter(i => i.status !== 'MATCH').length;
+      const actionCountBadge = document.getElementById('auditActionNeededCountBadge');
+      if (actionCountBadge) {
+        actionCountBadge.textContent = String(totalActionItems);
+        if (totalActionItems > 0) {
+          actionCountBadge.classList.remove('hidden');
+        } else {
+          actionCountBadge.classList.add('hidden');
+        }
+      }
+
+      const filtered = allItems.filter(item => {
         if (selectedAuditCategory !== 'ALL' && item.category !== selectedAuditCategory) return false;
+        if (selectedAuditStatusFilter === 'ACTION_NEEDED' && item.status === 'MATCH') return false;
+        if (selectedAuditStatusFilter === 'MATCH' && item.status !== 'MATCH') return false;
         if (q) {
           const matchName = (item.name || '').toLowerCase().includes(q);
           const matchSrc = String(item.sourceValue || '').toLowerCase().includes(q);
@@ -5075,7 +5394,30 @@
       if (badge) badge.textContent = `${filtered.length} Items`;
 
       if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-500">No items match the selected filter.</td></tr>';
+        if (selectedAuditStatusFilter === 'ACTION_NEEDED') {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" class="py-8 text-center">
+                <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-400 text-xl mb-2">🎉</div>
+                <div class="text-sm font-bold text-emerald-300">100% Configuration Parity Achieved!</div>
+                <p class="text-xs text-gray-400 mt-1">Zero missing gaps or configuration differences detected across the inspected settings.</p>
+                <button type="button" onclick="setAuditStatusFilter('ALL')" class="mt-3 px-3 py-1 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-200 border border-gray-700 rounded-lg transition">View All Parity Checks</button>
+              </td>
+            </tr>
+          `;
+        } else if (selectedAuditStatusFilter === 'MATCH') {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" class="py-8 text-center text-gray-400">
+                <div class="text-sm font-semibold text-gray-300">No Matching Items</div>
+                <p class="text-xs text-gray-500 mt-1">None of the inspected items currently match between source and target.</p>
+                <button type="button" onclick="setAuditStatusFilter('ALL')" class="mt-3 px-3 py-1 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-200 border border-gray-700 rounded-lg transition">View All</button>
+              </td>
+            </tr>
+          `;
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-500">No items match the selected filter.</td></tr>';
+        }
         return;
       }
 
@@ -8063,12 +8405,13 @@ ${projectIamBlock}`;
               <td class="py-2 px-3 font-mono text-gray-300">
                 <div class="flex items-center gap-1.5">
                   <span class="w-2 h-2 rounded-full ${isTransformed ? 'bg-emerald-400' : 'bg-gray-500'}"></span>
-                  <span>${m.sourceIdentity}</span>
+                  <span>${escapeHtml(m.sourceIdentity)}</span>
                 </div>
               </td>
               <td class="py-2 px-3 font-mono">
-                <input type="text" value="${m.targetIdentity}" 
-                  onchange="setExplicitMapping('${m.sourceIdentity}', this.value)" 
+                <input type="text" value="${escapeHtml(m.targetIdentity)}" 
+                  data-source-identity="${escapeHtml(m.sourceIdentity)}"
+                  onchange="setExplicitMapping(this.dataset.sourceIdentity, this.value)" 
                   class="w-full max-w-xs bg-gray-900 border ${isTransformed ? 'border-emerald-500/50 text-emerald-300' : 'border-gray-700 text-gray-300'} rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:border-indigo-500 focus:text-white"
                   title="Click to edit destination Google identity"
                 />
@@ -8150,7 +8493,7 @@ ${projectIamBlock}`;
         return `
           <tr class="hover:bg-gray-800/40 transition ${u.selected ? '' : 'opacity-50'}">
             <td class="py-2 px-3 text-center">
-              <input type="checkbox" ${u.selected ? 'checked' : ''} onchange="toggleUserSelection('${escapeHtml(u.email)}')" class="w-4 h-4 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-emerald-500 cursor-pointer">
+              <input type="checkbox" ${u.selected ? 'checked' : ''} data-email="${escapeHtml(u.email)}" onchange="toggleUserSelection(this.dataset.email)" class="w-4 h-4 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-emerald-500 cursor-pointer">
             </td>
             <td class="py-2 px-3 font-mono text-gray-200">
               <span class="${u.selected ? 'text-white font-medium' : 'line-through text-gray-500'}">${escapeHtml(u.email)}</span>
@@ -8163,14 +8506,15 @@ ${projectIamBlock}`;
                 <span class="text-gray-500 text-xs">➔</span>
                 <input type="text" 
                   value="${escapeHtml(mappedTarget)}" 
-                  onchange="updateTargetMappedIdentity('${escapeHtml(u.email)}', this.value)" 
+                  data-email="${escapeHtml(u.email)}"
+                  onchange="updateTargetMappedIdentity(this.dataset.email, this.value)" 
                   class="w-full max-w-xs bg-gray-900 border border-gray-700 hover:border-gray-600 focus:border-emerald-500 rounded px-2.5 py-1 text-xs text-emerald-300 font-mono focus:outline-none transition shadow-inner"
                   placeholder="Target mapped identity"
                   title="Click to edit destination identity for this user" />
               </div>
             </td>
             <td class="py-2 px-3 text-center">
-              <button type="button" onclick="removeUserFromSelection('${escapeHtml(u.email)}')" class="px-2 py-0.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/60 rounded transition" title="Delete / Remove this user from migration list">
+              <button type="button" data-email="${escapeHtml(u.email)}" onclick="removeUserFromSelection(this.dataset.email)" class="px-2 py-0.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/60 rounded transition" title="Delete / Remove this user from migration list">
                 🗑️
               </button>
             </td>
@@ -8189,7 +8533,10 @@ ${projectIamBlock}`;
 
     function updateTargetMappedIdentity(sourceEmail, targetEmail) {
       if (!sourceEmail) return;
-      const cleanSrc = sourceEmail.trim();
+      const cleanSrc = (typeof sourceEmail === 'string')
+        ? sourceEmail.trim()
+        : (sourceEmail?.dataset?.sourceIdentity || sourceEmail?.dataset?.email || '').trim();
+      if (!cleanSrc) return;
       const cleanTarget = (targetEmail || '').trim();
       if (cleanTarget && cleanTarget.toLowerCase() !== cleanSrc.toLowerCase()) {
         explicitIdpOverrides[cleanSrc] = cleanTarget;
@@ -8203,8 +8550,12 @@ ${projectIamBlock}`;
       renderUserMappingReport();
     }
 
-    function toggleUserSelection(email) {
-      const user = targetedUsersList.find(u => u.email === email);
+    function toggleUserSelection(emailOrEl) {
+      const email = (typeof emailOrEl === 'string')
+        ? emailOrEl
+        : (emailOrEl?.dataset?.email || emailOrEl?.getAttribute?.('data-email') || '');
+      if (!email) return;
+      const user = targetedUsersList.find(u => u.email === email || u.email.toLowerCase() === email.toLowerCase());
       if (user) {
         user.selected = !user.selected;
         renderUserSelectionTable();
@@ -8218,13 +8569,53 @@ ${projectIamBlock}`;
       renderUserMappingReport();
     }
 
-    function removeUserFromSelection(email) {
-      targetedUsersList = targetedUsersList.filter(u => u.email !== email);
+    function removeUserFromSelection(emailOrEl) {
+      const email = (typeof emailOrEl === 'string')
+        ? emailOrEl
+        : (emailOrEl?.dataset?.email || emailOrEl?.getAttribute?.('data-email') || '');
+      if (!email) return;
+      targetedUsersList = targetedUsersList.filter(u => u.email !== email && u.email.toLowerCase() !== email.toLowerCase());
       delete explicitIdpOverrides[email];
       delete explicitIdpOverrides[email.toLowerCase()];
       csvMappedKeysSet.delete(email.toLowerCase());
       renderUserSelectionTable();
       renderUserMappingReport();
+    }
+
+    function clearAllTargetedUsers() {
+      const userCount = (targetedUsersList || []).length;
+      const overrideCount = explicitIdpOverrides ? Object.keys(explicitIdpOverrides).length : 0;
+      if (userCount === 0 && overrideCount === 0) {
+        if (typeof addLog === 'function') {
+          addLog('Targeted user selection list is already empty.', 'INFO');
+        }
+        return;
+      }
+      const confirmMsg = userCount > 0
+        ? `Are you sure you want to remove all ${userCount} user(s) from targeted selection and discovery? This will also clear all CSV and manual identity mapping overrides.`
+        : 'Are you sure you want to clear all identity mapping overrides?';
+      if (!confirm(confirmMsg)) {
+        return;
+      }
+      for (const u of (targetedUsersList || [])) {
+        if (u && u.email) {
+          delete explicitIdpOverrides[u.email];
+          delete explicitIdpOverrides[u.email.toLowerCase()];
+          csvMappedKeysSet.delete(u.email.toLowerCase());
+        }
+      }
+      targetedUsersList = [];
+      explicitIdpOverrides = {};
+      csvMappedKeysSet.clear();
+      const customInput = document.getElementById('customUserEmailInput');
+      if (customInput) customInput.value = '';
+      const pasteTextarea = document.getElementById('bulkUserEmailsTextarea');
+      if (pasteTextarea) pasteTextarea.value = '';
+      renderUserSelectionTable();
+      renderUserMappingReport();
+      if (typeof addLog === 'function') {
+        addLog(`Cleared all ${userCount} targeted user(s) and mapping overrides. Ready for fresh CSV upload or discovery.`, 'INFO');
+      }
     }
 
     function addCustomUserToSelection() {
@@ -8580,7 +8971,8 @@ ${projectIamBlock}`;
             <td class="py-2 px-3 text-center text-emerald-400 font-bold">➔</td>
             <td class="py-2 px-3 font-mono">
               <input type="text" value="${escapeHtml(r.targetIdentity)}"
-                onchange="updateTargetMappedIdentity('${escapeHtml(r.sourceIdentity)}', this.value)"
+                data-source-identity="${escapeHtml(r.sourceIdentity)}"
+                onchange="updateTargetMappedIdentity(this.dataset.sourceIdentity, this.value)"
                 class="w-full max-w-xs bg-gray-950 border ${r.mappingMethod !== 'UNMAPPED' ? 'border-emerald-600/60 text-emerald-300' : 'border-gray-700 text-gray-300'} rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-purple-500" />
             </td>
             <td class="py-2 px-3">${methodBadge}</td>
@@ -11505,10 +11897,10 @@ ${projectIamBlock}`;
             </td>
             <td class="py-3.5 px-4 text-right">
               <div class="flex items-center justify-end gap-2">
-                <button onclick="previewUserChecklist('${escapeHtml(u.userEmail)}')" class="px-2.5 py-1 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                <button type="button" data-email="${escapeHtml(u.userEmail)}" onclick="previewUserChecklist(this.dataset.email)" class="px-2.5 py-1 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1">
                   <span>👁️ Preview HTML</span>
                 </button>
-                <button onclick="selectUserForEmail('${escapeHtml(u.userEmail)}')" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                <button type="button" data-email="${escapeHtml(u.userEmail)}" onclick="selectUserForEmail(this.dataset.email)" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-lg text-xs font-semibold transition flex items-center gap-1">
                   <span>✉️ Email</span>
                 </button>
               </div>
@@ -11596,7 +11988,11 @@ ${projectIamBlock}`;
       }
     }
 
-    function previewUserChecklist(userEmail) {
+    function previewUserChecklist(userEmailOrEl) {
+      const userEmail = (typeof userEmailOrEl === 'string')
+        ? userEmailOrEl
+        : (userEmailOrEl?.dataset?.email || userEmailOrEl?.getAttribute?.('data-email') || '');
+      if (!userEmail) return;
       document.getElementById('checklistModalTitle').textContent = `Migration Handover Checklist`;
       document.getElementById('checklistModalSubtitle').textContent = `Target User: ${userEmail}`;
       const iframe = document.getElementById('checklistIframe');
@@ -11606,7 +12002,11 @@ ${projectIamBlock}`;
       document.getElementById('userChecklistModal').classList.remove('hidden');
     }
 
-    function selectUserForEmail(userEmail) {
+    function selectUserForEmail(userEmailOrEl) {
+      const userEmail = (typeof userEmailOrEl === 'string')
+        ? userEmailOrEl
+        : (userEmailOrEl?.dataset?.email || userEmailOrEl?.getAttribute?.('data-email') || '');
+      if (!userEmail) return;
       switchEmailMode('single');
       const sel = document.getElementById('selEmailUser');
       if (sel) sel.value = userEmail;

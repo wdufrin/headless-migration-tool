@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.6.2-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.1-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.2-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -14,6 +14,20 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, `collectionMapping`, `datastoreMapping`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.6.2
+
+* **⚡ Step 2 Config & Parity Audit — HITL & Action Items Filtering**:
+  * **Dynamic Connector & DataStore Mapping Filter Toolbar**: Added filter buttons (`All`, `⚠️ Needs HITL`, `Mapped`), real-time search input, dynamic count badges, and an interactive `#auditConnectorHitlBadge` button. When an operator selects a mapping, the item automatically transitions out of `NEEDS_HITL` and disappears from the `HITL_ONLY` view, presenting a celebratory zero-state when all connectors and child entity datastores are resolved.
+  * **Parity Checklist & Gaps Status Filters**: Added status filters (`All Statuses`, `⚠️ Action Needed`, `Matches`) and made top metric cards ("Missing in Target (Gaps)" and "Differences / Warnings") clickable to immediately isolate actionable gaps from exact matches.
+  * **Global Step 2 Action Filter (`#btnStep2GlobalHitlFilter`)**: 1-click master filter in the audit header that simultaneously filters both panels to show only items needing action, paired with a unified live action count badge (`#step2HitlGlobalCountBadge`).
+* **👥 Targeted User Selection & Discovery Enhancements**:
+  * Added **"Delete All"** action buttons across discovery toolbars and table headers to quickly wipe candidate user lists and reset CSV staging fields.
+  * Hardened user deletion and selection handlers against email addresses containing single quotes / apostrophes (e.g., `o'connor@company.com`) using HTML5 `data-email` dataset passing instead of inline string interpolation.
+* **🧪 100% Passing Automated Tests (366/366 Tests across 30 suites)**:
+  * Full 366 automated tests passing across 30 test suites with zero failures or skipped assertions.
 
 ---
 

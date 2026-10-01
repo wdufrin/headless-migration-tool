@@ -5,6 +5,24 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-10-01
+
+### Added
+- **Step 2 Config & Parity Audit — HITL & Action Items Filtering**:
+  - Added status filtering toolbar to Dynamic Connector & DataStore Mapping panel (`All`, `⚠️ Needs HITL`, `Mapped`) and real-time resource search (`#cmSearchInput`).
+  - Added clickable trigger to `#auditConnectorHitlBadge` ("X HITL Required") to instantly isolate connectors requiring manual mapping.
+  - Interactive status filter toolbar on Parity Checklist & Gaps (`All Statuses`, `⚠️ Action Needed`, `Matches`) and interactive metric cards ("Missing in Target (Gaps)" and "Differences / Warnings") to filter down to actionable items (`item.status !== 'MATCH'`).
+  - Added Global Step 2 Filter Button (`#btnStep2GlobalHitlFilter`) in the audit header with unified remaining action count badge (`#step2HitlGlobalCountBadge`) to filter both panels simultaneously.
+  - Added dedicated success zero-state cards for both boxes when all HITL items or parity checks are resolved.
+- **Targeted User Selection Enhancements**:
+  - Added **"Delete All"** action button across user selection toolbar and table headers (`clearAllTargetedUsers`) to quickly clear user discovery staging lists.
+  - Resilient special character handling for email addresses with apostrophes/single quotes (e.g. `o'connor@company.com`) using `data-email` dataset passing.
+
+### Changed
+- Bumped platform version to `1.6.2` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and documentation (366 passing tests across 30 test suites).
+
+---
+
 ## [1.6.1] - 2026-09-30
 
 ### Fixed

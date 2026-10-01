@@ -1,4 +1,42 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.6.2
+
+**Release Date:** October 1, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.6.2** introduces **Comprehensive Step 2 HITL & Action Items Filtering** and **Targeted User Discovery Enhancements**. Operators can now instantly filter Step 2 (`Config & Parity Audit`) down to only items requiring human action (`Needs HITL` in Dynamic Connector Mapping, `Action Needed` in Parity Checklist & Gaps, or globally via `#btnStep2GlobalHitlFilter` with unified remaining action badge `#step2HitlGlobalCountBadge`). In Targeted User Selection, operators can clear staging lists with a 1-click **"Delete All"** button, and user management now robustly handles email addresses containing single quotes / apostrophes without JavaScript syntax errors. v1.6.2 includes **366 passing automated tests across 30 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. ⚡ Step 2 Config & Parity Audit — HITL & Action Items Filtering
+* **Dynamic Connector & DataStore Mapping Filter Toolbar**:
+  * Added filter buttons (`All`, `⚠️ Needs HITL`, `Mapped`), real-time search input (`#cmSearchInput`), and an interactive `#auditConnectorHitlBadge` trigger.
+  * When an operator selects a target from the dropdown or inputs a custom target ID, the entry dynamically transitions out of `NEEDS_HITL` (`HITL_CONFIRMED`) and immediately leaves the `HITL_ONLY` view with real-time count decrementing.
+  * When all items are resolved, the table renders a celebratory zero-state: `🎉 Zero HITL Actions Remaining!`.
+* **Parity Checklist & Gaps Status Filters**:
+  * Added filter buttons (`All Statuses`, `⚠️ Action Needed`, `Matches`) to isolate actionable gaps (`MISSING_IN_TARGET`, `WARNING`, `DIFF`) from `MATCH` checks.
+  * Made top metric cards ("Missing in Target (Gaps)" and "Differences / Warnings") interactive click triggers for `ACTION_NEEDED`.
+  * Displays celebratory zero-state when all checks match: `🎉 100% Configuration Parity Achieved!`.
+* **Global Step 2 Action Filter (`#btnStep2GlobalHitlFilter`)**:
+  * 1-click master filter in the audit header that simultaneously filters both panels to show only items needing action.
+  * Includes a live unified remaining action count badge (`#step2HitlGlobalCountBadge`) showing total remaining actions across both boxes.
+
+#### 2. 👥 Targeted User Selection & Discovery Enhancements
+* **"Delete All" User Action**: Added quick clear buttons across section headers and table action columns to easily wipe discovered users and reset staging fields before new CSV imports.
+* **Apostrophe & Special Character Resilience**: Hardened deletion and selection handlers against email addresses containing apostrophes (e.g., `o'connor@company.com`) using HTML5 `data-email` dataset passing instead of string literal interpolation.
+
+#### 3. 🧪 Automated Test Suite Stability (366/366 Tests Passing across 30 suites)
+* Full 366 automated unit, DOM, and behavioral tests passing across 30 test suites with zero failures or skipped assertions.
+
+---
+
 ## Release Notes — Version 1.6.1
 
 **Release Date:** September 30, 2026  
@@ -112,7 +150,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.6.0 &rarr; v1.6.1)
+### 📦 Upgrade Guide (v1.6.1 &rarr; v1.6.2)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -137,7 +175,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.6.1** *(Current)*: Fixed `retryWithBackoff` infinite retry loop (`attempt++`), added per-request `AbortSignal.timeout` (30s) to `DiscoveryEngineClient` and `AgentRegistryClient`, added 15s SSE keep-alive heartbeats on `/api/migrate/stream`, promoted notebook fetch errors to `WARN`, added large-notebook source progress logging, and expanded to 327 passing tests.
+* **v1.6.2** *(Current)*: Added comprehensive Step 2 Config & Parity Audit HITL and action items filtering (Dynamic Connector Mapping filters, Parity Checklist status filters, 1-click global audit filter button with unified remaining count badge), targeted user discovery "Delete All" action, and single quote / apostrophe email resilience, with 366 passing tests across 30 test suites.
+* **v1.6.1**: Fixed `retryWithBackoff` infinite retry loop (`attempt++`), added per-request `AbortSignal.timeout` (30s) to `DiscoveryEngineClient` and `AgentRegistryClient`, added 15s SSE keep-alive heartbeats on `/api/migrate/stream`, promoted notebook fetch errors to `WARN`, added large-notebook source progress logging, and expanded to 327 passing tests.
 * **v1.6.0**: Dynamic Connector & DataStore Auto-Mapping (`_#####` instance suffix matching), synchronized parent Connector + child entity DataStore rewriting (`collections/{id}/dataConnector` + `{id}_{entity}`), Step 2 interactive HITL mapping table, runtime Connector & Admin Notebook HITL modals, and 323 passing tests.
 * **v1.5.8**: Dry Run Permission Elevation Detection for NotebookLM, Workforce Identity Federation (WiF) role hardening (`roles/discoveryengine.user`), admin group filtering in group scraper, and 313 passing tests.
 * **v1.5.7**: Resilient Chat History Migration with full session hydration (`includeAnswerDetails=true`), companion-turn deduplication, target duplicate collision prevention, strict user session filtering, notebook source deduplication, and 307 passing tests.
