@@ -70,6 +70,8 @@ export interface ConnectorMappingEntry {
   attachedToEngine?: boolean;
   entityMappings?: ConnectorEntityMapping[];
   candidateTargets: ConnectorTargetCandidate[];
+  missingDataStoreIds?: string[];
+  missingEntities?: string[];
 }
 
 export interface MigrationOptions {

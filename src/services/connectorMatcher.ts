@@ -412,7 +412,7 @@ export function buildConnectorAndDataStoreMappings(
     // (e.g. `github_1773757636775_issue`, `_pull_request`, `_repository`), synthesize the parent connector group
     // if listCollections did not already include it.
     for (const [parentColId, children] of byParentPrefix.entries()) {
-      if (connectorGroups.has(parentColId) || children.length >= 2) {
+      if (connectorGroups.has(parentColId) || children.length >= 1) {
         if (!connectorGroups.has(parentColId)) {
           const parentParsed = parseTimestampedResourceId(parentColId);
           connectorGroups.set(parentColId, {
@@ -436,9 +436,11 @@ export function buildConnectorAndDataStoreMappings(
       const dsId = ds.name?.split('/').pop() || '';
       if (!dsId || !SAFE_RESOURCE_ID_REGEX.test(dsId)) continue;
       if (childToParentConnector.has(dsId)) continue;
+      const parsed = parseTimestampedResourceId(dsId);
+      if (parsed.parentCollectionId && parsed.entitySuffix) continue;
       standaloneDataStores.set(dsId, {
         ds,
-        parsed: parseTimestampedResourceId(dsId)
+        parsed
       });
     }
 
@@ -452,10 +454,12 @@ export function buildConnectorAndDataStoreMappings(
   for (const dsId of [...dataStoreRefs.keys(), ...sourceEngineDsSet]) {
     if (!SAFE_RESOURCE_ID_REGEX.test(dsId)) continue;
     if (srcGrouped.childToParentConnector.has(dsId)) continue;
+    const parsed = parseTimestampedResourceId(dsId);
+    if (parsed.parentCollectionId && parsed.entitySuffix) continue;
     if (!srcGrouped.standaloneDataStores.has(dsId)) {
       srcGrouped.standaloneDataStores.set(dsId, {
         ds: { name: dsId, displayName: dsId },
-        parsed: parseTimestampedResourceId(dsId)
+        parsed
       });
     }
   }
@@ -503,8 +507,6 @@ export function buildConnectorAndDataStoreMappings(
         tgtDsId = '__STRIP__';
       } else if (tgtGroup && tgtGroup.entities.has(entityName)) {
         tgtDsId = tgtGroup.entities.get(entityName)!;
-      } else if (explicitTargetColId) {
-        tgtDsId = `${explicitTargetColId}_${entityName}`;
       }
 
       if (tgtDsId) {
@@ -517,6 +519,21 @@ export function buildConnectorAndDataStoreMappings(
       });
     }
     return result;
+  };
+
+  // Helper to determine which underlying entity DataStores from source connector are missing in target candidate
+  const getMissingEntityDataStores = (
+    srcGroup: InternalConnectorGroup,
+    tgtGroup?: InternalConnectorGroup
+  ): { entityName: string; sourceDataStoreId: string }[] => {
+    const missing: { entityName: string; sourceDataStoreId: string }[] = [];
+    for (const [entityName, srcDsId] of srcGroup.entities.entries()) {
+      if (existingDsMap[srcDsId] !== undefined) continue;
+      if (!tgtGroup || !tgtGroup.entities.has(entityName)) {
+        missing.push({ entityName, sourceDataStoreId: srcDsId });
+      }
+    }
+    return missing;
   };
 
   // 1. Match Parent Connector Collections
@@ -557,35 +574,88 @@ export function buildConnectorAndDataStoreMappings(
 
       const tgtGroup = tgtGrouped.connectorGroups.get(explicitOverride);
       const tgtParsed = parseTimestampedResourceId(explicitOverride);
-      resolvedCollectionMapping[srcGroup.id] = explicitOverride;
+      const missingEntities = getMissingEntityDataStores(srcGroup, tgtGroup);
       const entityMappings = buildEntityMappingsForConnector(srcGroup, tgtGroup, explicitOverride);
 
-      entries.push({
-        sourceId: srcGroup.id,
-        sourceDisplayName: srcGroup.displayName,
-        kind: 'CONNECTOR_COLLECTION',
-        dataSource: srcGroup.dataSource,
-        baseName: srcGroup.parsed.baseName,
-        sourceNumericId: srcGroup.parsed.instanceNumericId,
-        targetId: explicitOverride,
-        targetDisplayName: tgtGroup?.displayName || tgtParsed.baseName,
-        targetNumericId: tgtParsed.instanceNumericId,
-        matchStatus: 'HITL_CONFIRMED',
-        matchReason: `Mapped via operator HITL selection to "${explicitOverride}".`,
-        referencedByAgents: Array.from(refAgents),
-        attachedToEngine,
-        entityMappings,
-        candidateTargets: targetConnectorCandidates
-      });
+      if (missingEntities.length > 0) {
+        const missingDesc = missingEntities
+          .map(m => `"${m.entityName}" (source: ${m.sourceDataStoreId})`)
+          .join(', ');
+        entries.push({
+          sourceId: srcGroup.id,
+          sourceDisplayName: srcGroup.displayName,
+          kind: 'CONNECTOR_COLLECTION',
+          dataSource: srcGroup.dataSource,
+          baseName: srcGroup.parsed.baseName,
+          sourceNumericId: srcGroup.parsed.instanceNumericId,
+          targetId: explicitOverride,
+          targetDisplayName: tgtGroup?.displayName || tgtParsed.baseName,
+          targetNumericId: tgtParsed.instanceNumericId,
+          matchStatus: 'NEEDS_HITL',
+          matchReason: `Target connector "${explicitOverride}" selected via HITL is missing required underlying entity DataStore(s): ${missingDesc}. Direct matching of underlying DataStores is skipped. Flagged connector as not matching.`,
+          referencedByAgents: Array.from(refAgents),
+          attachedToEngine,
+          entityMappings,
+          candidateTargets: targetConnectorCandidates,
+          missingDataStoreIds: missingEntities.map(m => m.sourceDataStoreId),
+          missingEntities: missingEntities.map(m => m.entityName)
+        });
+      } else {
+        resolvedCollectionMapping[srcGroup.id] = explicitOverride;
+        entries.push({
+          sourceId: srcGroup.id,
+          sourceDisplayName: srcGroup.displayName,
+          kind: 'CONNECTOR_COLLECTION',
+          dataSource: srcGroup.dataSource,
+          baseName: srcGroup.parsed.baseName,
+          sourceNumericId: srcGroup.parsed.instanceNumericId,
+          targetId: explicitOverride,
+          targetDisplayName: tgtGroup?.displayName || tgtParsed.baseName,
+          targetNumericId: tgtParsed.instanceNumericId,
+          matchStatus: 'HITL_CONFIRMED',
+          matchReason: `Mapped via operator HITL selection to "${explicitOverride}". All ${entityMappings.length} underlying entity DataStore(s) verified present.`,
+          referencedByAgents: Array.from(refAgents),
+          attachedToEngine,
+          entityMappings,
+          candidateTargets: targetConnectorCandidates
+        });
+      }
       continue;
     }
 
     // Check 1a: Exact ID match
     if (tgtGrouped.connectorGroups.has(srcGroup.id)) {
       const tgtGroup = tgtGrouped.connectorGroups.get(srcGroup.id)!;
-      resolvedCollectionMapping[srcGroup.id] = tgtGroup.id;
+      const missingEntities = getMissingEntityDataStores(srcGroup, tgtGroup);
       const entityMappings = buildEntityMappingsForConnector(srcGroup, tgtGroup, tgtGroup.id);
 
+      if (missingEntities.length > 0) {
+        const missingDesc = missingEntities
+          .map(m => `"${m.entityName}" (source: ${m.sourceDataStoreId})`)
+          .join(', ');
+        entries.push({
+          sourceId: srcGroup.id,
+          sourceDisplayName: srcGroup.displayName,
+          kind: 'CONNECTOR_COLLECTION',
+          dataSource: srcGroup.dataSource,
+          baseName: srcGroup.parsed.baseName,
+          sourceNumericId: srcGroup.parsed.instanceNumericId,
+          targetId: tgtGroup.id,
+          targetDisplayName: tgtGroup.displayName,
+          targetNumericId: tgtGroup.parsed.instanceNumericId,
+          matchStatus: 'NEEDS_HITL',
+          matchReason: `Target connector "${tgtGroup.id}" has matching ID but is missing required underlying entity DataStore(s): ${missingDesc}. Direct matching of underlying DataStores is skipped. Flagged connector as not matching.`,
+          referencedByAgents: Array.from(refAgents),
+          attachedToEngine,
+          entityMappings,
+          candidateTargets: targetConnectorCandidates,
+          missingDataStoreIds: missingEntities.map(m => m.sourceDataStoreId),
+          missingEntities: missingEntities.map(m => m.entityName)
+        });
+        continue;
+      }
+
+      resolvedCollectionMapping[srcGroup.id] = tgtGroup.id;
       entries.push({
         sourceId: srcGroup.id,
         sourceDisplayName: srcGroup.displayName,
@@ -597,7 +667,7 @@ export function buildConnectorAndDataStoreMappings(
         targetDisplayName: tgtGroup.displayName,
         targetNumericId: tgtGroup.parsed.instanceNumericId,
         matchStatus: 'EXACT_MATCH',
-        matchReason: 'Exact connector collection ID exists in target environment.',
+        matchReason: `Exact connector collection ID exists in target environment and all ${entityMappings.length} underlying entity DataStore(s) match. Direct matching of underlying DataStores skipped.`,
         referencedByAgents: Array.from(refAgents),
         attachedToEngine,
         entityMappings,
@@ -619,8 +689,12 @@ export function buildConnectorAndDataStoreMappings(
       );
     });
 
-    if (baseMatches.length === 1) {
-      const matchedTgt = baseMatches[0];
+    const candidatesWithAllEntities = baseMatches.filter(tgt => {
+      return getMissingEntityDataStores(srcGroup, tgt).length === 0;
+    });
+
+    if (candidatesWithAllEntities.length === 1) {
+      const matchedTgt = candidatesWithAllEntities[0];
       resolvedCollectionMapping[srcGroup.id] = matchedTgt.id;
       const entityMappings = buildEntityMappingsForConnector(srcGroup, matchedTgt, matchedTgt.id);
 
@@ -635,7 +709,7 @@ export function buildConnectorAndDataStoreMappings(
         targetDisplayName: matchedTgt.displayName,
         targetNumericId: matchedTgt.parsed.instanceNumericId,
         matchStatus: 'AUTO_MATCHED',
-        matchReason: `Auto-mapped base name "${srcGroup.parsed.baseName}" (_${srcGroup.parsed.instanceNumericId || 'src'} ➔ _${matchedTgt.parsed.instanceNumericId || 'tgt'}) across ${entityMappings.length || 1} connector entity source(s).`,
+        matchReason: `Auto-mapped base name "${srcGroup.parsed.baseName}" (_${srcGroup.parsed.instanceNumericId || 'src'} ➔ _${matchedTgt.parsed.instanceNumericId || 'tgt'}) with all ${entityMappings.length} matching entity DataStore(s). Direct matching of underlying DataStores skipped.`,
         referencedByAgents: Array.from(refAgents),
         attachedToEngine,
         entityMappings,
@@ -644,11 +718,42 @@ export function buildConnectorAndDataStoreMappings(
       continue;
     }
 
-    // Ambiguous (>1 matches) or 0 base-name matches -> NEEDS_HITL
+    if (candidatesWithAllEntities.length === 0 && baseMatches.length === 1) {
+      const candidateTgt = baseMatches[0];
+      const missingEntities = getMissingEntityDataStores(srcGroup, candidateTgt);
+      const missingDesc = missingEntities
+        .map(m => `"${m.entityName}" (source: ${m.sourceDataStoreId})`)
+        .join(', ');
+      const entityMappings = buildEntityMappingsForConnector(srcGroup, candidateTgt, undefined);
+
+      entries.push({
+        sourceId: srcGroup.id,
+        sourceDisplayName: srcGroup.displayName,
+        kind: 'CONNECTOR_COLLECTION',
+        dataSource: srcGroup.dataSource,
+        baseName: srcGroup.parsed.baseName,
+        sourceNumericId: srcGroup.parsed.instanceNumericId,
+        targetId: candidateTgt.id,
+        targetDisplayName: candidateTgt.displayName,
+        targetNumericId: candidateTgt.parsed.instanceNumericId,
+        matchStatus: 'NEEDS_HITL',
+        matchReason: `Target connector candidate "${candidateTgt.id}" matches base name "${srcGroup.parsed.baseName}" but is missing required underlying entity DataStore(s): ${missingDesc}. Direct matching of underlying DataStores is skipped. Flagged connector as not matching.`,
+        referencedByAgents: Array.from(refAgents),
+        attachedToEngine,
+        entityMappings,
+        candidateTargets: targetConnectorCandidates,
+        missingDataStoreIds: missingEntities.map(m => m.sourceDataStoreId),
+        missingEntities: missingEntities.map(m => m.entityName)
+      });
+      continue;
+    }
+
     const reason =
-      baseMatches.length > 1
-        ? `Ambiguous auto-map: ${baseMatches.length} target connectors share base name "${srcGroup.parsed.baseName}" (${baseMatches.map(m => m.id).join(', ')}). HITL selection required.`
-        : `No target connector with base name "${srcGroup.parsed.baseName}" found in destination. HITL mapping required.`;
+      candidatesWithAllEntities.length > 1
+        ? `Ambiguous auto-map: ${candidatesWithAllEntities.length} target connectors share base name "${srcGroup.parsed.baseName}" with all matching DataStores (${candidatesWithAllEntities.map(m => m.id).join(', ')}). Direct matching of underlying DataStores is skipped. HITL selection required.`
+        : baseMatches.length > 1
+          ? `Ambiguous auto-map: ${baseMatches.length} target connectors share base name "${srcGroup.parsed.baseName}" (${baseMatches.map(m => m.id).join(', ')}). Direct matching of underlying DataStores is skipped. HITL selection required.`
+          : `No target connector with base name "${srcGroup.parsed.baseName}" found in destination. Direct matching of underlying DataStores is skipped. HITL mapping required.`;
 
     const entityMappings = buildEntityMappingsForConnector(srcGroup, undefined, undefined);
     entries.push({
@@ -663,12 +768,18 @@ export function buildConnectorAndDataStoreMappings(
       referencedByAgents: Array.from(refAgents),
       attachedToEngine,
       entityMappings,
-      candidateTargets: targetConnectorCandidates
+      candidateTargets: targetConnectorCandidates,
+      missingDataStoreIds: Array.from(srcGroup.entities.values()),
+      missingEntities: Array.from(srcGroup.entities.keys())
     });
   }
 
   // 2. Match Standalone DataStores
   for (const [srcDsId, { ds: srcDs, parsed: srcParsed }] of srcGrouped.standaloneDataStores.entries()) {
+    // Only match datastore to datastore if they are not part of a connector
+    if (srcGrouped.childToParentConnector.has(srcDsId) || (srcParsed.parentCollectionId && srcParsed.entitySuffix)) {
+      continue;
+    }
     const refAgents = Array.from(dataStoreRefs.get(srcDsId)?.referencedByAgents || []);
     const attachedToEngine = sourceEngineDsSet.has(srcDsId);
 

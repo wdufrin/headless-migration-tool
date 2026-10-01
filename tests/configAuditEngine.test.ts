@@ -70,6 +70,7 @@ describe('ConfigAuditEngine', () => {
     mockClient = {
       getEngine: vi.fn(),
       listDataStores: vi.fn(),
+      listCollections: vi.fn().mockResolvedValue([]),
       detectEngineIdpConfig: vi.fn()
     } as unknown as DiscoveryEngineClient;
 
@@ -472,6 +473,90 @@ describe('ConfigAuditEngine', () => {
     const issueItem = result.items.find(i => i.id === 'datastore-github_1773757636775_issue');
     expect(issueItem?.status).toBe('MATCH');
     expect(issueItem?.details).toContain('Auto-mapped');
+  });
+
+  it('should flag connector and avoid direct datastore matching when target connector is missing underlying DataStores', async () => {
+    (mockClient.getEngine as any).mockImplementation((env: any) => {
+      if (env.projectId === 'source-proj') {
+        return Promise.resolve({
+          name: 'projects/source-proj/engines/source-engine',
+          displayName: 'Source Engine',
+          dataStoreIds: ['github_1773757636775_issue', 'github_1773757636775_pull_request']
+        });
+      }
+      return Promise.resolve({
+        name: 'projects/target-proj/engines/target-engine',
+        displayName: 'Target Engine',
+        dataStoreIds: []
+      });
+    });
+
+    (mockClient.listCollections as any).mockImplementation((env: any) => {
+      if (env.projectId === 'source-proj') {
+        return Promise.resolve([
+          {
+            name: 'projects/source-proj/locations/global/collections/github_1773757636775',
+            displayName: 'GitHub Enterprise',
+            dataConnector: {
+              dataSource: 'github',
+              entities: [
+                { entityName: 'issue', dataStore: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_issue' },
+                { entityName: 'pull_request', dataStore: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_pull_request' }
+              ]
+            }
+          }
+        ]);
+      }
+      return Promise.resolve([
+        {
+          name: 'projects/target-proj/locations/global/collections/github_1780931139999',
+          displayName: 'GitHub Enterprise',
+          dataConnector: {
+            dataSource: 'github',
+            entities: [
+              // Target is MISSING pull_request!
+              { entityName: 'issue', dataStore: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_issue' }
+            ]
+          }
+        }
+      ]);
+    });
+
+    (mockClient.listDataStores as any).mockImplementation((env: any) => {
+      if (env.projectId === 'source-proj') {
+        return Promise.resolve([
+          { name: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_issue', displayName: 'GitHub Issues' },
+          { name: 'projects/source-proj/locations/global/collections/github_1773757636775/dataStores/github_1773757636775_pull_request', displayName: 'GitHub PRs' }
+        ]);
+      }
+      return Promise.resolve([
+        { name: 'projects/target-proj/locations/global/collections/github_1780931139999/dataStores/github_1780931139999_issue', displayName: 'GitHub Issues' },
+        // Distractor: a standalone target datastore that has display name 'GitHub PRs'
+        { name: 'projects/target-proj/locations/global/dataStores/standalone_prs', displayName: 'GitHub PRs' }
+      ]);
+    });
+
+    (mockClient.detectEngineIdpConfig as any).mockResolvedValue({ idpType: 'GOOGLE_CLOUD_IDENTITY' });
+
+    const result = await auditEngine.runAudit({
+      ...mockConfig,
+      datastoreMapping: {},
+      collectionMapping: {}
+    });
+
+    // Connector item must be flagged as WARNING/NEEDS_HITL with missing datastores
+    const connectorItem = result.items.find(i => i.id === 'connector-github_1773757636775');
+    expect(connectorItem).toBeDefined();
+    expect(connectorItem?.status).toBe('WARNING');
+    expect(connectorItem?.details).toContain('missing required underlying entity DataStore(s)');
+    expect(connectorItem?.details).toContain('"pull_request"');
+
+    // Child datastore must NOT be matched directly to standalone_prs
+    const prItem = result.items.find(i => i.id === 'datastore-github_1773757636775_pull_request');
+    expect(prItem).toBeDefined();
+    expect(prItem?.status).toBe('MISSING_IN_TARGET');
+    expect(prItem?.details).toContain('Parent connector "GitHub Enterprise" (github_1773757636775) does not match target');
+    expect(prItem?.details).toContain('Direct matching of underlying DataStores is skipped');
   });
 });
 

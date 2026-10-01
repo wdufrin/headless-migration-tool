@@ -18,6 +18,7 @@ import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { AgentRegistryClient } from '../services/agentRegistry.js';
 import { GcpAuthService } from '../services/gcpAuth.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
+import { DataStore } from '../types/index.js';
 import { ConnectorMappingEntry, ConnectorTargetCandidate } from '../types/migration.js';
 import { buildConnectorAndDataStoreMappings } from '../services/connectorMatcher.js';
 import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
@@ -605,14 +606,60 @@ export class ConfigAuditEngine {
     };
     const missingTargetIdsToAttach: string[] = [];
 
+    // Build lookup for DataStores belonging to Connectors
+    const connectorChildToParent = new Map<string, ConnectorMappingEntry>();
+    for (const entry of connectorMappingResult.entries) {
+      if (entry.kind === 'CONNECTOR_COLLECTION') {
+        for (const em of entry.entityMappings || []) {
+          connectorChildToParent.set(em.sourceDataStoreId, entry);
+        }
+      }
+    }
+
+    const targetConnectorChildIds = new Set<string>();
+    for (const cand of connectorMappingResult.targetConnectorCandidates) {
+      if (cand.entityDataStores) {
+        for (const childId of Object.values(cand.entityDataStores)) {
+          targetConnectorChildIds.add(childId);
+        }
+      }
+    }
+
     for (const item of sourceAttachedDataStores) {
       const srcId = item.id;
       const srcDisplayName = item.displayName;
+      const parentConnector = connectorChildToParent.get(srcId);
       const mappedTgtId = effectiveMapping[srcId];
-      const matchedTgtDs =
-        mappedTgtId && mappedTgtId !== '__STRIP__'
-          ? targetDsMap.get(mappedTgtId)
-          : (targetDsMap.get(srcId) || targetDsByDisplay.get(srcDisplayName.toLowerCase()));
+      let matchedTgtDs: DataStore | undefined;
+
+      if (parentConnector) {
+        // If the DataStore belongs to a Connector:
+        // Do NOT match datastore-to-datastore directly.
+        // It is only matched if the parent connector has a match.
+        if (
+          (parentConnector.matchStatus === 'AUTO_MATCHED' ||
+            parentConnector.matchStatus === 'EXACT_MATCH' ||
+            parentConnector.matchStatus === 'HITL_CONFIRMED') &&
+          mappedTgtId &&
+          mappedTgtId !== '__STRIP__'
+        ) {
+          matchedTgtDs = targetDsMap.get(mappedTgtId);
+        }
+      } else {
+        // Standalone DataStore: only match datastore to datastore if they are not part of a connector
+        if (mappedTgtId && mappedTgtId !== '__STRIP__') {
+          matchedTgtDs = targetDsMap.get(mappedTgtId);
+        } else {
+          const directCandidate = targetDsMap.get(srcId) || targetDsByDisplay.get(srcDisplayName.toLowerCase());
+          if (directCandidate) {
+            const directCandId = directCandidate.name?.split('/').pop() || '';
+            if (!targetConnectorChildIds.has(directCandId)) {
+              matchedTgtDs = directCandidate;
+            }
+          }
+        }
+      }
+
       const targetId = matchedTgtDs ? (matchedTgtDs.name.split('/').pop() || '') : (mappedTgtId || srcId);
       const isAttachedToTarget = targetAttachedIdSet.has(targetId);
       const isAutoMappedDiffId = Boolean(matchedTgtDs && targetId !== srcId);
@@ -644,15 +691,19 @@ export class ConfigAuditEngine {
           details: `DataStore exists in target project "${tgt.projectId}"${isAutoMappedDiffId ? ` (auto-mapped from "${srcId}" ➔ "${targetId}")` : ''} but is NOT attached to target engine "${tgt.appId}". Grounded queries will not access it until attached.`
         });
       } else {
-        // MISSING_IN_TARGET: Not provisioned in target project and not attached
+        // MISSING_IN_TARGET: Not provisioned in target project or parent connector does not match
         items.push({
           id: `datastore-${srcId}`,
           category: 'DATASTORE',
           name: `Attached DataStore: ${srcDisplayName}`,
           status: 'MISSING_IN_TARGET',
           sourceValue: `${srcDisplayName} (${srcId}) [Attached]`,
-          targetValue: 'MISSING (Needs Target Connector / HITL Mapping)',
-          details: `Source attached DataStore "${srcDisplayName}" (${srcId}) could not be auto-mapped to a target DataStore in "${tgt.projectId}". Map it via the Connector & DataStore Mapping panel above or provision it in Google Cloud Console.`
+          targetValue: parentConnector
+            ? 'MISSING (Parent Connector Not Matched / Incomplete)'
+            : 'MISSING (Needs Target Connector / HITL Mapping)',
+          details: parentConnector
+            ? `Parent connector "${parentConnector.sourceDisplayName}" (${parentConnector.sourceId}) does not match target (missing underlying DataStores). Direct matching of underlying DataStores is skipped. Resolve connector match in Step 2.`
+            : `Source attached DataStore "${srcDisplayName}" (${srcId}) could not be auto-mapped to a target DataStore in "${tgt.projectId}". Map it via the Connector & DataStore Mapping panel above or provision it in Google Cloud Console.`
         });
       }
     }
@@ -682,10 +733,14 @@ export class ConfigAuditEngine {
         items.push({
           id: `connector-${entry.sourceId}`,
           category: 'DATASTORE',
-          name: `Connector Mapping (HITL Required): ${entry.sourceDisplayName}`,
+          name: entry.missingDataStoreIds?.length
+            ? `Connector Mapping (Missing Underlying DataStores): ${entry.sourceDisplayName}`
+            : `Connector Mapping (HITL Required): ${entry.sourceDisplayName}`,
           status: 'WARNING',
           sourceValue: `${entry.sourceId} (${entityCount} entity DataStores)`,
-          targetValue: '⚠️ Needs HITL Mapping Selection',
+          targetValue: entry.missingDataStoreIds?.length
+            ? `⚠️ Missing ${entry.missingDataStoreIds.length} Entity DataStore(s)`
+            : '⚠️ Needs HITL Mapping Selection',
           details: `${entry.matchReason} (${agentSummary}). Select a target connector in the Connector Mapping table above so migrated No-Code agents do not split into ${entityCount || 3} separate unlinked sources.`
         });
       }
@@ -693,11 +748,20 @@ export class ConfigAuditEngine {
 
     // Consolidated informational guidance for missing DataStores (no CLI command)
     const missingAttachedCount = sourceAttachedDataStores.filter(item => {
+      if (connectorChildToParent.has(item.id)) return false;
       const mappedTgtId = effectiveMapping[item.id];
-      const matchedTgtDs =
-        mappedTgtId && mappedTgtId !== '__STRIP__'
-          ? targetDsMap.get(mappedTgtId)
-          : (targetDsMap.get(item.id) || targetDsByDisplay.get(item.displayName.toLowerCase()));
+      let matchedTgtDs: DataStore | undefined;
+      if (mappedTgtId && mappedTgtId !== '__STRIP__') {
+        matchedTgtDs = targetDsMap.get(mappedTgtId);
+      } else {
+        const directCandidate = targetDsMap.get(item.id) || targetDsByDisplay.get(item.displayName.toLowerCase());
+        if (directCandidate) {
+          const directCandId = directCandidate.name?.split('/').pop() || '';
+          if (!targetConnectorChildIds.has(directCandId)) {
+            matchedTgtDs = directCandidate;
+          }
+        }
+      }
       return !matchedTgtDs;
     }).length;
 
