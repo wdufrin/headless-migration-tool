@@ -243,12 +243,41 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       // 1. Discover user creators from Custom Agents & Agent IAM Policies across target engines
       for (const curAppId of enginesToScan) {
         try {
-          const agUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/assistants/default_assistant/agents?pageSize=100`;
-          const agResp = await fetchWithQuotaFallback(agUrl);
-          if (agResp.ok) {
-            const agData: any = await agResp.json();
-            const agents = agData.agents || [];
-            
+          const agents: any[] = [];
+          let pageToken: string | undefined = undefined;
+          const seenPageTokens = new Set<string>();
+          let permissionDenied = false;
+
+          do {
+            const query = new URLSearchParams({ pageSize: '100' });
+            if (pageToken) query.set('pageToken', pageToken);
+            const agUrl = `${baseUrl}/v1alpha/projects/${projectId}/locations/${location}/collections/${collectionId}/engines/${curAppId}/assistants/default_assistant/agents?${query.toString()}`;
+            const agResp = await fetchWithQuotaFallback(agUrl);
+            if (agResp.ok) {
+              const agData: any = await agResp.json();
+              if (Array.isArray(agData.agents)) {
+                agents.push(...agData.agents);
+              }
+              const nextToken = agData.nextPageToken ? String(agData.nextPageToken) : undefined;
+              if (nextToken && !seenPageTokens.has(nextToken)) {
+                seenPageTokens.add(nextToken);
+                pageToken = nextToken;
+              } else {
+                pageToken = undefined;
+              }
+            } else {
+              if (agResp.status === 403) {
+                permissionDenied = true;
+              }
+              break;
+            }
+          } while (pageToken);
+
+          if (permissionDenied && agents.length === 0) {
+            const warnMsg = `Service account lacks 'roles/discoveryengine.admin' on project '${projectId}'. Custom agents and agent IAM policies could not be enumerated for engine '${curAppId}'.`;
+            logger.warn(warnMsg);
+            if (!warnings.includes(warnMsg)) warnings.push(warnMsg);
+          } else if (agents.length > 0) {
             // Check direct agent owner / creator fields
             for (const a of agents) {
               const directOwner = extractUserIdentity(a.owner || a.creator || a.skillAgentDefinition?.owner || '');
@@ -273,6 +302,7 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
             for (let i = 0; i < agents.length; i += chunkSize) {
               const chunk = agents.slice(i, i + chunkSize);
               await Promise.all(chunk.map(async (a: any) => {
+                if (!a?.name) return;
                 try {
                   const iamRes = await fetchWithQuotaFallback(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`);
                   if (iamRes.ok) {
@@ -298,13 +328,11 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
                       }
                     }
                   }
-                } catch {}
+                } catch (iamErr: any) {
+                  logger.debug(`Agent IAM policy check failed for ${a.name}: ${iamErr.message}`);
+                }
               }));
             }
-          } else if (agResp.status === 403) {
-            const warnMsg = `Service account lacks 'roles/discoveryengine.admin' on project '${projectId}'. Custom agents and agent IAM policies could not be enumerated for engine '${curAppId}'.`;
-            logger.warn(warnMsg);
-            if (!warnings.includes(warnMsg)) warnings.push(warnMsg);
           }
         } catch (agErr: any) {
           logger.debug(`Agents user discovery skipped for ${curAppId}: ${agErr.message}`);

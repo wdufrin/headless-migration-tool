@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.6.2-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.6.3-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.2-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.3-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -14,6 +14,18 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, `collectionMapping`, `datastoreMapping`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.6.3
+
+* **🔄 Multi-Page Agent Pagination in User Discovery & Auto-Map (`src/routes/discovery.ts` & `src/routes/wizard.ts`)**:
+  * Resolved an issue where `GET /api/users/discover` and `POST /api/idp/auto-map` only inspected the first 100 agents (`?pageSize=100` without following `nextPageToken`), which omitted agent owners on pages 2+ from `options.userFilter` in engines with `> 100` agents.
+  * Both endpoints now follow `nextPageToken` across all pages (with cycle protection) and batch `:getIamPolicy` calls in concurrent chunks of 10.
+* **📦 Public npm Registry Lockfile Sanitization**:
+  * Replaced internal proxy tarball URLs in `package-lock.json` with standard `https://registry.npmjs.org/` URLs for seamless external customer installation.
+* **🧪 100% Passing Automated Tests (369/369 Tests across 31 suites)**:
+  * Full 369 automated tests passing across 31 test suites with zero failures or skipped assertions.
 
 ---
 

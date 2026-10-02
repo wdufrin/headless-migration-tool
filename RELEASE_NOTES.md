@@ -1,4 +1,32 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.6.3
+
+**Release Date:** October 2, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.6.3** resolves a **Multi-Page Agent Pagination Bug in Step 3 User Discovery & Auto-Mapping** (`GET /api/users/discover` and `POST /api/idp/auto-map`) where engines with `> 100` agents previously only inspected the first 100 agents (`?pageSize=100` without following `nextPageToken`), causing agent owners on subsequent pages to be omitted from `userFilter` and producing inconsistent discovered agent counts across runs. v1.6.3 also sanitizes `package-lock.json` to use public `https://registry.npmjs.org/` tarball URLs and includes **369 passing automated tests across 31 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & Fixes
+
+#### 1. 🔄 Full Multi-Page Agent Pagination in User Discovery (`src/routes/discovery.ts` & `src/routes/wizard.ts`)
+* **Complete Agent Enumeration**: Both `GET /api/users/discover` and `POST /api/idp/auto-map` now loop through all `nextPageToken` pages (with `seenPageTokens` cycle protection) so every custom agent and skill agent across engines with hundreds of agents is inspected for direct ownership and IAM policy bindings.
+* **Batched IAM Policy Inspection in Auto-Map**: Updated `POST /api/idp/auto-map` to fetch `:getIamPolicy` in concurrent batches of 10 (`Promise.all`), matching `discovery.ts` and avoiding sequential request bottlenecks on large engines.
+
+#### 2. 📦 Public Registry `package-lock.json` Sanitization
+* Replaced internal proxy `"resolved"` URLs in `package-lock.json` with `https://registry.npmjs.org/` so external customer deployments can run `npm ci` / `npm install` cleanly.
+
+#### 3. 🧪 Automated Test Suite Stability (369/369 Tests Passing across 31 suites)
+* Added `tests/userDiscoveryPagination.test.ts` covering multi-page agent pagination, IAM binding extraction, non-user principal filtering, cyclic `nextPageToken` termination, and HTTP 403 warning propagation.
+
+---
+
 ## Release Notes — Version 1.6.2
 
 **Release Date:** October 1, 2026  
@@ -150,7 +178,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.6.1 &rarr; v1.6.2)
+### 📦 Upgrade Guide (v1.6.2 &rarr; v1.6.3)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -175,7 +203,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.6.2** *(Current)*: Added comprehensive Step 2 Config & Parity Audit HITL and action items filtering (Dynamic Connector Mapping filters, Parity Checklist status filters, 1-click global audit filter button with unified remaining count badge), targeted user discovery "Delete All" action, and single quote / apostrophe email resilience, with 366 passing tests across 30 test suites.
+* **v1.6.3** *(Current)*: Fixed multi-page agent pagination (`nextPageToken`) in Step 3 User Discovery (`GET /api/users/discover`) and IdP Auto-Mapping (`POST /api/idp/auto-map`), batched `:getIamPolicy` lookups in auto-map, sanitized `package-lock.json` resolved URLs to `https://registry.npmjs.org/`, and expanded to 369 passing tests across 31 test suites.
+* **v1.6.2**: Added comprehensive Step 2 Config & Parity Audit HITL and action items filtering (Dynamic Connector Mapping filters, Parity Checklist status filters, 1-click global audit filter button with unified remaining count badge), targeted user discovery "Delete All" action, and single quote / apostrophe email resilience, with 366 passing tests across 30 test suites.
 * **v1.6.1**: Fixed `retryWithBackoff` infinite retry loop (`attempt++`), added per-request `AbortSignal.timeout` (30s) to `DiscoveryEngineClient` and `AgentRegistryClient`, added 15s SSE keep-alive heartbeats on `/api/migrate/stream`, promoted notebook fetch errors to `WARN`, added large-notebook source progress logging, and expanded to 327 passing tests.
 * **v1.6.0**: Dynamic Connector & DataStore Auto-Mapping (`_#####` instance suffix matching), synchronized parent Connector + child entity DataStore rewriting (`collections/{id}/dataConnector` + `{id}_{entity}`), Step 2 interactive HITL mapping table, runtime Connector & Admin Notebook HITL modals, and 323 passing tests.
 * **v1.5.8**: Dry Run Permission Elevation Detection for NotebookLM, Workforce Identity Federation (WiF) role hardening (`roles/discoveryengine.user`), admin group filtering in group scraper, and 313 passing tests.

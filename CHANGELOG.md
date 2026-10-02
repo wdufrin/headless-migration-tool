@@ -5,6 +5,20 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] - 2026-10-02
+
+### Fixed
+- **Multi-Page Agent Pagination in User Discovery & Auto-Map (`src/routes/discovery.ts` & `src/routes/wizard.ts`)**:
+  - Fixed unpaginated `?pageSize=100` agent queries in `GET /api/users/discover` and `POST /api/idp/auto-map` that previously stopped after the first 100 agents, omitting agent owners on pages 2+ from `options.userFilter` in engines with `> 100` agents.
+  - Added `nextPageToken` pagination loops with cycle protection (`seenPageTokens`) and concurrent batching (`chunkSize = 10`) for `:getIamPolicy` calls in `POST /api/idp/auto-map`.
+- **Public npm Registry Resolution in `package-lock.json`**:
+  - Replaced internal corporate proxy tarball URLs (`airlock-proxy.uplink.goog`) with standard `https://registry.npmjs.org/` URLs so external customer environments can run `npm ci` and `npm install` without proxy resolution errors.
+
+### Changed
+- Bumped platform version to `1.6.3` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and documentation (369 passing tests across 31 test suites).
+
+---
+
 ## [1.6.2] - 2026-10-01
 
 ### Added

@@ -90,32 +90,63 @@ wizardRouter.post('/idp/auto-map', async (req, res) => {
             }
           }
           for (const curApp of enginesToScan) {
-            const agUrl = `${baseUrl}/v1alpha/projects/${sourceProjectId}/locations/${location}/collections/default_collection/engines/${curApp}/assistants/default_assistant/agents?pageSize=100`;
-            const agResp = await fetch(agUrl, {
-              headers: { 'Authorization': `Bearer ${token}`, 'X-Goog-User-Project': sourceProjectId }
-            });
-            if (agResp.ok) {
+            const agents: any[] = [];
+            let pageToken: string | undefined = undefined;
+            const seenPageTokens = new Set<string>();
+
+            do {
+              const query = new URLSearchParams({ pageSize: '100' });
+              if (pageToken) query.set('pageToken', pageToken);
+              const agUrl = `${baseUrl}/v1alpha/projects/${sourceProjectId}/locations/${location}/collections/default_collection/engines/${curApp}/assistants/default_assistant/agents?${query.toString()}`;
+              const agResp = await fetch(agUrl, {
+                headers: { 'Authorization': `Bearer ${token}`, 'X-Goog-User-Project': sourceProjectId }
+              });
+              if (!agResp.ok) break;
               const agData: any = await agResp.json();
-              for (const a of (agData.agents || [])) {
-                const directOwner = extractUserIdentity(a.owner || a.creator || a.skillAgentDefinition?.owner || '');
-                if (directOwner && !usersToMap.includes(directOwner)) {
-                  usersToMap.push(directOwner);
-                }
-                const iamRes = await fetch(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`, {
-                  headers: { 'Authorization': `Bearer ${token}`, 'X-Goog-User-Project': sourceProjectId }
-                });
-                if (iamRes.ok) {
-                  const iamData: any = await iamRes.json();
-                  for (const binding of iamData.bindings || []) {
-                    for (const m of binding.members || []) {
-                      const cleanEmail = extractUserIdentity(m);
-                      if (cleanEmail && !usersToMap.includes(cleanEmail)) {
-                        usersToMap.push(cleanEmail);
+              if (Array.isArray(agData.agents)) {
+                agents.push(...agData.agents);
+              }
+              const nextToken = agData.nextPageToken ? String(agData.nextPageToken) : undefined;
+              if (nextToken && !seenPageTokens.has(nextToken)) {
+                seenPageTokens.add(nextToken);
+                pageToken = nextToken;
+              } else {
+                pageToken = undefined;
+              }
+            } while (pageToken);
+
+            for (const a of agents) {
+              const directOwner = extractUserIdentity(a.owner || a.creator || a.skillAgentDefinition?.owner || '');
+              if (directOwner && !usersToMap.includes(directOwner)) {
+                usersToMap.push(directOwner);
+              }
+            }
+
+            // Inspect IAM policies on agents in concurrent batches of 10
+            const chunkSize = 10;
+            for (let i = 0; i < agents.length; i += chunkSize) {
+              const chunk = agents.slice(i, i + chunkSize);
+              await Promise.all(chunk.map(async (a: any) => {
+                if (!a?.name) return;
+                try {
+                  const iamRes = await fetch(`${baseUrl}/v1alpha/${a.name}:getIamPolicy`, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'X-Goog-User-Project': sourceProjectId }
+                  });
+                  if (iamRes.ok) {
+                    const iamData: any = await iamRes.json();
+                    for (const binding of iamData.bindings || []) {
+                      for (const m of binding.members || []) {
+                        const cleanEmail = extractUserIdentity(m);
+                        if (cleanEmail && !usersToMap.includes(cleanEmail)) {
+                          usersToMap.push(cleanEmail);
+                        }
                       }
                     }
                   }
+                } catch (iamErr: any) {
+                  logger.debug(`Agent IAM policy check failed for ${a.name}: ${iamErr.message}`);
                 }
-              }
+              }));
             }
           }
         }
