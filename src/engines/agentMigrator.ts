@@ -585,14 +585,33 @@ export class AgentMigrator {
   }
 
   /**
-   * Determines if the source agent was in a deployed / published state in the source environment.
+   * Determines if the source agent was in a created/deployed (Private) or shared (Published) state
+   * in the source environment, rather than an unsaved/undeployed UI draft (e.g. "My Agent" / "My Workflow").
+   *
+   * Discovery Engine Agent States:
+   * - Published / Shared: `state === 'ENABLED'` or `sharingConfig.scope === 'ALL_USERS' | 'RESTRICTED'`
+   * - Private (Created / Deployed for Author): `state === 'PRIVATE'` with `lowCodeAgentDefinition.deployedNodes`
+   *   (or `deployedRootAgentId`), `workflowAgentDefinition.deployedAgentFlow`, `activeRevision`, or registered ADK/A2A definition.
+   * - Draft (Unsaved / Undeployed): `state === 'PRIVATE'` (or unspecified) with no `deployedNodes`, no `activeRevision`,
+   *   and no `sharingConfig.scope`.
    */
   isSourceAgentPublished(agent: Agent): boolean {
+    if ((agent as any).state === 'DRAFT') return false;
     if (agent.state === 'ENABLED') return true;
     if (agent.sharingConfig?.scope === 'ALL_USERS' || agent.sharingConfig?.scope === 'RESTRICTED') return true;
     if (agent.lowCodeAgentDefinition?.deployedNodes && agent.lowCodeAgentDefinition.deployedNodes.length > 0) return true;
+    if ((agent.lowCodeAgentDefinition as any)?.deployedRootAgentId) return true;
+    if ((agent.workflowAgentDefinition as any)?.deployedAgentFlow) return true;
     if (agent.activeRevision) return true;
+    if (agent.adkAgentDefinition || agent.a2aAgentDefinition) return true;
     return false;
+  }
+
+  /**
+   * Returns true if the source agent is an undeployed/unsaved draft (neither Private-deployed nor Published/Shared).
+   */
+  isSourceAgentDraft(agent: Agent): boolean {
+    return !this.isSourceAgentPublished(agent);
   }
 
   /**
@@ -662,10 +681,12 @@ export class AgentMigrator {
     }
 
     if (options.excludeDraftAgents || options.agentStatusFilter === 'PUBLISHED_ONLY') {
+      const beforeCount = filteredAgents.length;
       filteredAgents = filteredAgents.filter(a => this.isSourceAgentPublished(a));
-      logger.info(`Filtered agents to published/shared only (drafts excluded): ${filteredAgents.length} matching agents.`);
+      const skippedDrafts = beforeCount - filteredAgents.length;
+      logger.info(`Filtered agents to private & published only (ignored ${skippedDrafts} draft agent(s)): ${filteredAgents.length} matching agents.`);
     } else if (options.agentStatusFilter === 'DRAFTS_ONLY') {
-      filteredAgents = filteredAgents.filter(a => !this.isSourceAgentPublished(a));
+      filteredAgents = filteredAgents.filter(a => this.isSourceAgentDraft(a));
       logger.info(`Filtered agents to drafts only: ${filteredAgents.length} matching agents.`);
     } else {
       logger.info(`Selected ${filteredAgents.length} agents matching user & lifecycle filters.`);

@@ -396,5 +396,98 @@ describe('AgentMigrator Engine', () => {
     expect(slackEntry?.matchStatus).toBe('NEEDS_HITL');
     expect(slackEntry?.targetId).toBeUndefined();
   });
+
+  it('should skip undeployed Draft agents ("My Agent" / "My Workflow") while migrating Private (created/deployed) and Published/Shared agents when excludeDraftAgents is true', async () => {
+    const draftLowCodeAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/draft-lc-1',
+      displayName: 'My Agent',
+      state: 'PRIVATE',
+      owner: 'alice@fedex.com',
+      lowCodeAgentDefinition: {
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { description: 'Root Agent', instruction: '' } }],
+        rootAgentId: '1'
+        // No deployedNodes or deployedRootAgentId -> Unsaved/undeployed UI draft
+      }
+    };
+
+    const draftWorkflowAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/draft-wf-1',
+      displayName: 'My Workflow',
+      state: 'PRIVATE',
+      owner: 'alice@fedex.com',
+      workflowAgentDefinition: {
+        agentFlow: { steps: [] }
+        // No deployedAgentFlow or activeRevision -> Undeployed workflow draft
+      } as any
+    };
+
+    const privateCreatedLowCodeAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/private-lc-1',
+      displayName: 'Personal Executive Briefing Agent',
+      state: 'PRIVATE',
+      owner: 'alice@fedex.com',
+      lowCodeAgentDefinition: {
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Summarize executive notes.' } }],
+        rootAgentId: '1',
+        deployedNodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Summarize executive notes.' } }],
+        deployedRootAgentId: '1'
+      } as any
+    };
+
+    const publishedSharedAgent: Agent = {
+      name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/published-1',
+      displayName: 'Org-Wide HR Policy Assistant',
+      state: 'ENABLED',
+      owner: 'alice@fedex.com',
+      sharingConfig: { scope: 'ALL_USERS' },
+      lowCodeAgentDefinition: {
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Answer HR questions.' } }],
+        rootAgentId: '1',
+        deployedNodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Answer HR questions.' } }]
+      }
+    };
+
+    // Direct classification checks
+    expect(migrator.isSourceAgentDraft(draftLowCodeAgent)).toBe(true);
+    expect(migrator.isSourceAgentPublished(draftLowCodeAgent)).toBe(false);
+    expect(migrator.isSourceAgentDraft(draftWorkflowAgent)).toBe(true);
+    expect(migrator.isSourceAgentPublished(draftWorkflowAgent)).toBe(false);
+    expect(migrator.isSourceAgentDraft(privateCreatedLowCodeAgent)).toBe(false);
+    expect(migrator.isSourceAgentPublished(privateCreatedLowCodeAgent)).toBe(true);
+    expect(migrator.isSourceAgentDraft(publishedSharedAgent)).toBe(false);
+    expect(migrator.isSourceAgentPublished(publishedSharedAgent)).toBe(true);
+
+    // End-to-end migrateAgents filtering with excludeDraftAgents: true
+    dummyClient.listAgents = vi.fn().mockResolvedValue([
+      draftLowCodeAgent,
+      draftWorkflowAgent,
+      privateCreatedLowCodeAgent,
+      publishedSharedAgent
+    ]);
+    dummyClient.getAgentIamPolicy = vi.fn().mockResolvedValue({ bindings: [] });
+
+    const results = await migrator.migrateAgents(
+      sourceEnv,
+      targetEnv,
+      {
+        dryRun: true,
+        excludeDraftAgents: true,
+        userFilter: ['alice@fedex.com']
+      }
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results.map(r => r.displayName)).toEqual([
+      'Personal Executive Briefing Agent',
+      'Org-Wide HR Policy Assistant'
+    ]);
+  });
+
+  it('should explicitly reject invalid excludeDraftAgents and agentStatusFilter values in MigrationOptionsSchema (negative test)', async () => {
+    const { MigrationOptionsSchema } = await import('../src/config/configSchema.js');
+    expect(() => MigrationOptionsSchema.parse({ excludeDraftAgents: 'true' as any })).toThrow(/Expected boolean/);
+    expect(() => MigrationOptionsSchema.parse({ agentStatusFilter: 'INVALID_FILTER' as any })).toThrow(/Invalid enum value/);
+  });
 });
+
 

@@ -388,6 +388,10 @@ export class NotebookMigrator {
    * Maps a source from the source environment into a payload accepted by target sources:batchCreate.
    */
   mapSourceToPayload(source: NotebookSource): any {
+    if ((source as any)?._fetchError) {
+      return null;
+    }
+
     const sourceName = source.title || source.displayName || 'Restored Source';
     const gDocsMeta = source.metadata?.googleDocsMetadata || source.metadata?.google_docs_metadata;
     const ytMeta = source.metadata?.youtubeMetadata || source.metadata?.youtube_metadata;
@@ -423,11 +427,13 @@ export class NotebookMigrator {
           }
         };
       }
-      return {
-        agentspaceContent: {
-          documentName: asMeta.documentName
-        }
-      };
+      if (asMeta.documentName) {
+        return {
+          agentspaceContent: {
+            documentName: asMeta.documentName
+          }
+        };
+      }
     }
 
     if (webMeta?.webpageUrl || source.webScrapeConfig?.url || source.url || /^https?:\/\/\S+$/i.test(sourceName.trim())) {
@@ -457,18 +463,9 @@ export class NotebookMigrator {
       };
     }
 
-    // GoogleCloudNotebooklmV1alphaSource only returns { sourceId, title, metadata: { wordCount, tokenCount, sourceAddedTimestamp }, settings }
-    // for uploaded documents and web sources. Recreate them as text-only sources so they are preserved in the destination notebook.
-    const wordCount = source.metadata?.wordCount ?? 0;
-    const tokenCount = source.metadata?.tokenCount ?? 0;
-    const addedTs = source.metadata?.sourceAddedTimestamp || 'unknown';
-    const srcId = source.sourceId?.id || source.name?.split('/').pop() || 'unknown';
-    return {
-      textContent: {
-        sourceName,
-        content: `[Restored Source: ${sourceName}]\nSource ID: ${srcId} | Word Count: ${wordCount} | Token Count: ${tokenCount} | Added: ${addedTs}`
-      }
-    };
+    // Do not fabricate a metadata-only text stub when full source content or link metadata is unavailable.
+    // Returning null signals that this source cannot be migrated automatically and requires manual re-upload.
+    return null;
   }
 
   /**
@@ -1020,9 +1017,10 @@ export class NotebookMigrator {
             logger.info(`Fetching detailed content for ${totalSources} sources in Notebook "${result.displayName}" (${notebookId})...`);
           }
           let completedSources = 0;
+          const sourceFetchConcurrency = Math.min(3, Math.max(1, options.concurrency || 10));
           fullNotebook.sources = await mapConcurrent(
             fullNotebook.sources,
-            3,
+            sourceFetchConcurrency,
             async (s) => {
               const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
               try {
@@ -1031,7 +1029,7 @@ export class NotebookMigrator {
                 return { ...s, ...fullSource };
               } catch (err: any) {
                 logger.warn(`Could not fetch detailed source "${s.title || s.displayName || sourceId}" (${sourceId}) in notebook ${notebookId}: ${err.message}`);
-                return s;
+                return { ...s, _fetchError: err.message } as NotebookSource;
               } finally {
                 completedSources++;
                 if (totalSources > 10 && completedSources % 25 === 0 && completedSources < totalSources) {
@@ -1065,12 +1063,38 @@ export class NotebookMigrator {
       }
 
       const rawSources = fullNotebook.sources || [];
+      let dryRunSourcesRestored = 0;
+      let dryRunSourcesFailed = 0;
       const dryRunSources: MigratedSourceItem[] = rawSources.map(s => {
         const sTitle = s.displayName || s.title || 'Source';
         const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
+        const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
+        const fetchError = (s as any)._fetchError;
+        if (fetchError) {
+          dryRunSourcesFailed++;
+          return {
+            title: sTitle,
+            sourceId,
+            type: sType,
+            status: 'FAILED',
+            error: `Source content fetch failed: ${fetchError}`
+          };
+        }
+        const payload = this.mapSourceToPayload(s);
+        if (payload === null) {
+          dryRunSourcesFailed++;
+          return {
+            title: sTitle,
+            sourceId,
+            type: sType,
+            status: 'MANUAL_REUPLOAD_REQUIRED',
+            error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
+          };
+        }
+        dryRunSourcesRestored++;
         return {
           title: sTitle,
-          sourceId: s.name?.split('/').pop() || s.sourceId?.id,
+          sourceId,
           type: sType,
           status: 'DRY_RUN'
         };
@@ -1092,8 +1116,8 @@ export class NotebookMigrator {
       result.details = {
         ...adminMetadataFlags,
         sourcesCount: rawSources.length,
-        sourcesRestored: rawSources.length,
-        sourcesFailed: 0,
+        sourcesRestored: dryRunSourcesRestored,
+        sourcesFailed: dryRunSourcesFailed,
         sources: dryRunSources,
         notesCount: notes.length,
         notes: (notes || []).map((n: any) => ({
@@ -1110,8 +1134,12 @@ export class NotebookMigrator {
         }))
       };
 
+      if (dryRunSourcesFailed > 0) {
+        result.error = `${dryRunSourcesFailed} source(s) failed to restore in target`;
+      }
+
       if (isDryRun) {
-        logger.info(`[DRY RUN] Would migrate Notebook "${result.displayName}" (ID: ${notebookId}) with ${result.details.sourcesCount} sources, ${result.details.notesCount} notes, and ${result.details.artifactsCount} Studio artifacts for owner ${targetOwner}`);
+        logger.info(`[DRY RUN] Would migrate Notebook "${result.displayName}" (ID: ${notebookId}) with ${result.details.sourcesRestored}/${result.details.sourcesCount} migratable sources (${result.details.sourcesFailed} failed/manual), ${result.details.notesCount} notes, and ${result.details.artifactsCount} Studio artifacts for owner ${targetOwner}`);
         result.status = 'DRY_RUN';
         result.durationMs = Date.now() - startTime;
         options.onItemCompleted?.(result);
@@ -1226,6 +1254,19 @@ export class NotebookMigrator {
               });
               sourcesRestored++;
               logger.info(`Source "${sTitle}" already exists in target Notebook ${newNotebookId}. Skipping re-creation.`);
+              continue;
+            }
+
+            const fetchError = (s as any)._fetchError;
+            if (fetchError) {
+              sourceDetails.push({
+                title: sTitle,
+                sourceId: oldSourceId,
+                type: sType,
+                status: 'FAILED',
+                error: `Source content fetch failed: ${fetchError}`
+              });
+              sourcesFailed++;
               continue;
             }
 

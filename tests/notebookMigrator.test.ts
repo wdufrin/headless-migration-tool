@@ -214,7 +214,7 @@ describe('NotebookMigrator Engine', () => {
       expect(mapped.textContent.content).toBe('Chapter 1: The Nightmare Painter.\nNikaro walked down the neon-lit street.');
     });
 
-    it('should recreate metadata-only v1alpha sources as textContent with source metadata', () => {
+    it('should return null for metadata-only v1alpha sources without content or URL instead of fabricating a fake [Restored Source: ...] stub', () => {
       const metadataOnlySource: NotebookSource = {
         sourceId: { id: '73ad2b63-5747-41a8-b488-a74f141caab5' },
         title: 'Agent Designer overview | Gemini Enterprise | Google Cloud Documentation',
@@ -226,11 +226,22 @@ describe('NotebookMigrator Engine', () => {
       };
 
       const mapped = migrator.mapSourceToPayload(metadataOnlySource);
-      expect(mapped).not.toBeNull();
-      expect(mapped.textContent).toBeDefined();
-      expect(mapped.textContent.sourceName).toBe('Agent Designer overview | Gemini Enterprise | Google Cloud Documentation');
-      expect(mapped.textContent.content).toContain('Word Count: 969');
-      expect(mapped.textContent.content).toContain('Token Count: 1577');
+      expect(mapped).toBeNull();
+    });
+
+    it('should return null when _fetchError is present on a source (e.g. 30s timeout during getNotebookSource)', () => {
+      const timedOutSource: NotebookSource = {
+        sourceId: { id: 'src-timeout-1' },
+        title: 'https://internal.ford.com/large-doc',
+        metadata: {
+          wordCount: 18500,
+          tokenCount: 24000
+        },
+        ...({ _fetchError: 'Request to https://discoveryengine.googleapis.com/... timed out after 30000ms' } as any)
+      };
+
+      const mapped = migrator.mapSourceToPayload(timedOutSource);
+      expect(mapped).toBeNull();
     });
 
     it('should extract text from tailwindDoc.chunks when present', () => {
@@ -248,6 +259,140 @@ describe('NotebookMigrator Engine', () => {
       expect(mapped.textContent).toBeDefined();
       expect(mapped.textContent.sourceName).toBe('Architecture_Spec.pdf');
       expect(mapped.textContent.content).toBe('Section 1: Overview.\nSection 2: Security Controls.');
+    });
+
+    it('should honestly report FAILED and MANUAL_REUPLOAD_REQUIRED sources in both Dry Run and Live Run without creating fake placeholder sources', async () => {
+      const sourceEnv: EnvironmentConfig = {
+        projectId: 'source-p',
+        appLocation: 'global',
+        collectionId: 'default_collection',
+        appId: 'app-1',
+        assistantId: 'default_assistant'
+      };
+      const targetEnv: EnvironmentConfig = {
+        projectId: 'target-p',
+        appLocation: 'global',
+        collectionId: 'default_collection',
+        appId: 'app-2',
+        assistantId: 'default_assistant'
+      };
+
+      const nbWithMixedSources: Notebook = {
+        name: 'projects/source-p/locations/global/notebooks/nb-mixed',
+        notebookId: 'nb-mixed',
+        title: 'Notebook With Mixed Sources',
+        metadata: {
+          userRole: 'PROJECT_ROLE_OWNER',
+          isShared: false,
+          isShareable: true,
+          ownerEmail: 'alice@company.com'
+        },
+        sources: [
+          {
+            name: 'projects/source-p/locations/global/notebooks/nb-mixed/sources/src-valid',
+            sourceId: { id: 'src-valid' },
+            title: 'Valid_Architecture.pdf',
+            metadata: { wordCount: 500 }
+          },
+          {
+            name: 'projects/source-p/locations/global/notebooks/nb-mixed/sources/src-timeout',
+            sourceId: { id: 'src-timeout' },
+            title: 'Huge_Service_Manual.pdf',
+            metadata: { wordCount: 95000 }
+          },
+          {
+            name: 'projects/source-p/locations/global/notebooks/nb-mixed/sources/src-empty-meta',
+            sourceId: { id: 'src-empty-meta' },
+            title: 'Binary_Only_No_TailwindDoc.pdf',
+            metadata: { wordCount: 1200, tokenCount: 1800 }
+          }
+        ]
+      };
+
+      const mockClient = {
+        listNotebooks: vi.fn().mockImplementation(async (env: EnvironmentConfig) => {
+          if (env.projectId === 'source-p') return [nbWithMixedSources];
+          return [];
+        }),
+        getNotebook: vi.fn().mockResolvedValue(nbWithMixedSources),
+        getNotebookSource: vi.fn().mockImplementation(async (_nbId: string, srcId: string) => {
+          if (srcId === 'src-valid') {
+            return {
+              name: 'projects/source-p/locations/global/notebooks/nb-mixed/sources/src-valid',
+              title: 'Valid_Architecture.pdf',
+              content: 'Real extracted PDF text content.'
+            };
+          }
+          if (srcId === 'src-timeout') {
+            throw new Error('Request timed out after 30000ms');
+          }
+          // src-empty-meta returns only metadata without tailwindDoc or content
+          return {
+            name: 'projects/source-p/locations/global/notebooks/nb-mixed/sources/src-empty-meta',
+            title: 'Binary_Only_No_TailwindDoc.pdf',
+            metadata: { wordCount: 1200, tokenCount: 1800 }
+          };
+        }),
+        createNotebook: vi.fn().mockResolvedValue({
+          name: 'projects/target-p/locations/global/notebooks/nb-target-mixed',
+          title: 'Notebook With Mixed Sources'
+        }),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({
+          sources: [
+            { name: 'projects/target-p/locations/global/notebooks/nb-target-mixed/sources/new-src-1' }
+          ]
+        }),
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+
+      // 1. Verify Dry Run honestly reports 1 migratable source and 2 failed/manual sources
+      const dryResults = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: true, concurrency: 2, userFilter: ['alice@company.com'] }
+      );
+      expect(dryResults).toHaveLength(1);
+      expect(dryResults[0].details?.sourcesCount).toBe(3);
+      expect(dryResults[0].details?.sourcesRestored).toBe(1);
+      expect(dryResults[0].details?.sourcesFailed).toBe(2);
+      expect(dryResults[0].error).toContain('2 source(s) failed to restore in target');
+      const drySourceStatuses = dryResults[0].details?.sources.map((s: any) => ({ title: s.title, status: s.status }));
+      expect(drySourceStatuses).toEqual([
+        { title: 'Valid_Architecture.pdf', status: 'DRY_RUN' },
+        { title: 'Huge_Service_Manual.pdf', status: 'FAILED' },
+        { title: 'Binary_Only_No_TailwindDoc.pdf', status: 'MANUAL_REUPLOAD_REQUIRED' }
+      ]);
+
+      // 2. Verify Live Run only sends the 1 valid source to batchCreateNotebookSources and never creates a fake stub
+      const liveResults = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: false, concurrency: 2, userFilter: ['alice@company.com'] }
+      );
+      expect(liveResults).toHaveLength(1);
+      expect(liveResults[0].details?.sourcesCount).toBe(3);
+      expect(liveResults[0].details?.sourcesRestored).toBe(1);
+      expect(liveResults[0].details?.sourcesFailed).toBe(2);
+      expect(mockClient.batchCreateNotebookSources).toHaveBeenCalledTimes(1);
+      const sentPayloads = vi.mocked(mockClient.batchCreateNotebookSources).mock.calls[0][1];
+      expect(sentPayloads).toHaveLength(1);
+      expect(sentPayloads[0]).toEqual({
+        textContent: {
+          sourceName: 'Valid_Architecture.pdf',
+          content: 'Real extracted PDF text content.'
+        }
+      });
+    });
+
+    it('should reject out-of-range or non-integer concurrency values in MigrationOptionsSchema (negative test)', () => {
+      expect(() => MigrationOptionsSchema.parse({ concurrency: 0 })).toThrow();
+      expect(() => MigrationOptionsSchema.parse({ concurrency: -3 })).toThrow();
+      expect(() => MigrationOptionsSchema.parse({ concurrency: 51 })).toThrow();
+      expect(() => MigrationOptionsSchema.parse({ concurrency: 2.5 })).toThrow();
+      expect(MigrationOptionsSchema.parse({ concurrency: 3 }).concurrency).toBe(3);
     });
   });
 

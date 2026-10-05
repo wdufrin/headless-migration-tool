@@ -147,14 +147,16 @@ export class MigrationReporter {
         if (stats.migrated === 0 && stats.skipped > 0) {
           userStatus = '⚠️ DROPPED (OFFBOARDED / UNMAPPED)';
           statusBadge = '⚠️';
-        } else if (stats.skipped > 0 || stats.failed > 0) {
+        } else if (stats.skipped > 0 || stats.failed > 0 || stats.sourcesFailed > 0) {
           userStatus = '🟡 PARTIALLY MIGRATED';
           statusBadge = '🟡';
         }
 
         const notes = stats.reasons.length > 0 
           ? stats.reasons.join('; ') 
-          : stats.migrated > 0 ? 'All assets restored to personal library' : 'No assets found';
+          : stats.sourcesFailed > 0
+            ? `${stats.sourcesFailed} notebook source(s) failed or require manual re-upload`
+            : stats.migrated > 0 ? 'All assets restored to personal library' : 'No assets found';
 
         const failedSourcesBadge = stats.sourcesFailed > 0 ? `⚠️ **${stats.sourcesFailed}**` : '0';
 
@@ -218,7 +220,7 @@ export class MigrationReporter {
       lines.push(`| :--- | :--- | :---: | :---: | :--- |`);
 
       for (const s of allNotebookSources) {
-        const statusBadge = s.status === 'SUCCESS' ? '✅ SUCCESS' : s.status === 'DRY_RUN' ? '🔍 DRY_RUN' : '❌ FAILED';
+        const statusBadge = s.status === 'SUCCESS' ? '✅ SUCCESS' : s.status === 'DRY_RUN' ? '🔍 DRY_RUN' : s.status === 'MANUAL_REUPLOAD_REQUIRED' ? '⚠️ MANUAL_REUPLOAD_REQUIRED' : '❌ FAILED';
         const detailMsg = s.error ? `**Error:** ${s.error}` : 'Indexed and ready in target notebook';
         lines.push(`| 📓 ${s.notebookName} | ${s.sourceTitle} | \`${s.type}\` | ${statusBadge} | ${detailMsg} |`);
       }

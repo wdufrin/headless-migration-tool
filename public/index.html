@@ -485,13 +485,22 @@
                     <input type="checkbox" id="optNotebooks" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
                     <span class="font-medium text-white">📓 Migrate Notebooks & Sources</span>
                   </label>
-                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" id="optAgents" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
-                    <div>
-                      <span class="font-medium text-white">🤖 Migrate Agents & Workflows</span>
-                      <span class="block text-[10px] text-gray-400">Transfers agent definitions, instructions, grounding data connectors & assistant configs</span>
-                    </div>
-                  </label>
+                  <div class="space-y-1.5">
+                    <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                      <input type="checkbox" id="optAgents" checked onchange="onOptAgentsChange()" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
+                      <div>
+                        <span class="font-medium text-white">🤖 Migrate Agents & Workflows</span>
+                        <span class="block text-[10px] text-gray-400">Transfers agent definitions, instructions, grounding data connectors & assistant configs</span>
+                      </div>
+                    </label>
+                    <label id="optExcludeDraftAgentsRow" class="flex items-start space-x-2 text-xs text-gray-300 cursor-pointer ml-5 pl-2.5 border-l border-indigo-500/40">
+                      <input type="checkbox" id="optExcludeDraftAgents" onchange="onExcludeDraftAgentsChange()" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-500 focus:ring-indigo-500">
+                      <div>
+                        <span class="font-medium text-indigo-300">🚫 Ignore Draft Agents (Private & Published Only)</span>
+                        <span class="block text-[10px] text-gray-400">Skips unsaved/undeployed source drafts (e.g. "My Agent") and only migrates created private & published agents</span>
+                      </div>
+                    </label>
+                  </div>
                   <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optSkills" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-blue-500">
                     <div>
@@ -550,7 +559,7 @@
                   </label>
                 </div>
 
-                <!-- Agent Type & Lifecycle Filters -->
+                <!-- Agent Type, Lifecycle & Concurrency Filters -->
                 <div class="space-y-3">
                   <div>
                     <label class="block text-xs font-medium text-gray-400 mb-1">Agent Type Filter</label>
@@ -565,11 +574,23 @@
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-400 mb-1">Lifecycle / Draft Filter</label>
-                    <select id="optAgentLifecycle" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
-                      <option value="ALL" selected>All Agents (Drafts + Published)</option>
-                      <option value="PUBLISHED_ONLY">Published / Shared Only (Exclude Drafts)</option>
+                    <select id="optAgentLifecycle" onchange="onAgentLifecycleSelectChange()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                      <option value="ALL" selected>All Agents (Drafts + Private + Published)</option>
+                      <option value="PUBLISHED_ONLY">Private & Published Only (Ignore Drafts)</option>
                       <option value="DRAFTS_ONLY">Drafts Only</option>
                     </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-400 mb-1">Worker Concurrency (Parallel API Workers)</label>
+                    <select id="optConcurrency" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                      <option value="1">1 Worker (Sequential — Avoids Timeouts on Heavy Notebooks)</option>
+                      <option value="2">2 Workers (Conservative — Low Rate-Limit Risk)</option>
+                      <option value="3">3 Workers (Moderate — Recommended for Large Tenants)</option>
+                      <option value="5">5 Workers (Balanced)</option>
+                      <option value="10" selected>10 Workers (Default High-Speed)</option>
+                      <option value="20">20 Workers (Aggressive Parallelism)</option>
+                    </select>
+                    <p class="text-[10px] text-gray-500 mt-1">Lower to 1–3 if source notebooks have many PDFs/sources or hit 30s read timeouts.</p>
                   </div>
                 </div>
 
@@ -9187,6 +9208,36 @@ ${projectIamBlock}`;
       return problems;
     }
 
+    function onOptAgentsChange() {
+      const agentsChecked = document.getElementById('optAgents')?.checked ?? true;
+      const excludeRow = document.getElementById('optExcludeDraftAgentsRow');
+      const excludeChk = document.getElementById('optExcludeDraftAgents');
+      if (excludeRow) {
+        excludeRow.classList.toggle('opacity-50', !agentsChecked);
+      }
+      if (excludeChk) {
+        excludeChk.disabled = !agentsChecked;
+      }
+    }
+
+    function onExcludeDraftAgentsChange() {
+      const excludeChk = document.getElementById('optExcludeDraftAgents');
+      const lifecycleSel = document.getElementById('optAgentLifecycle');
+      if (!excludeChk || !lifecycleSel) return;
+      if (excludeChk.checked) {
+        lifecycleSel.value = 'PUBLISHED_ONLY';
+      } else if (lifecycleSel.value === 'PUBLISHED_ONLY') {
+        lifecycleSel.value = 'ALL';
+      }
+    }
+
+    function onAgentLifecycleSelectChange() {
+      const excludeChk = document.getElementById('optExcludeDraftAgents');
+      const lifecycleSel = document.getElementById('optAgentLifecycle');
+      if (!excludeChk || !lifecycleSel) return;
+      excludeChk.checked = (lifecycleSel.value === 'PUBLISHED_ONLY');
+    }
+
     function setMigrationButtonBusy(busy) {
       const btn = document.getElementById('btnExecuteMigration');
       if (!btn) return;
@@ -9336,8 +9387,13 @@ ${projectIamBlock}`;
           agentTypes: document.getElementById('optAgentType').value === 'LOW_CODE_WORKFLOWS' 
             ? ['LOW_CODE', 'WORKFLOW'] 
             : [document.getElementById('optAgentType').value],
-          agentStatusFilter: document.getElementById('optAgentLifecycle')?.value || 'ALL',
-          excludeDraftAgents: document.getElementById('optAgentLifecycle')?.value === 'PUBLISHED_ONLY',
+          agentStatusFilter: document.getElementById('optExcludeDraftAgents')?.checked
+            ? 'PUBLISHED_ONLY'
+            : (document.getElementById('optAgentLifecycle')?.value || 'ALL'),
+          excludeDraftAgents: Boolean(
+            document.getElementById('optExcludeDraftAgents')?.checked ||
+            document.getElementById('optAgentLifecycle')?.value === 'PUBLISHED_ONLY'
+          ),
           preserveSharing: false,
           publishAgents: false,
           dryRun: isDryRun,
@@ -9345,7 +9401,7 @@ ${projectIamBlock}`;
           promptForConnectorHitl: true,
           debugMode: document.getElementById('optDebugMode') ? document.getElementById('optDebugMode').checked : false,
           logLevel: (document.getElementById('optDebugMode') && document.getElementById('optDebugMode').checked) ? 'DEBUG' : 'INFO',
-          concurrency: 10,
+          concurrency: Math.min(50, Math.max(1, parseInt(document.getElementById('optConcurrency')?.value || '10', 10) || 10)),
           preserveOwnership: true
         }
       };
