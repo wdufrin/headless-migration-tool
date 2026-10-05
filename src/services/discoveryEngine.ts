@@ -18,6 +18,7 @@ import { EnvironmentConfig } from '../types/migration.js';
 import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, ConnectorCollection, AppEngine, IamPolicy, Memory } from '../types/index.js';
 import { getSafeDiscoveryEngineUrl, validateResourceId } from '../security/validator.js';
 import { GcpAuthService } from './gcpAuth.js';
+import { registerDiscoveredPoolGroups } from './wifPreflight.js';
 import { retryWithBackoff, mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
@@ -678,6 +679,9 @@ export class DiscoveryEngineClient {
 
   /**
    * Fetches and caches the project-level IAM policy using base/admin credentials.
+   * Also extracts and registers any non-admin Workforce Identity Pool group bindings
+   * (`principalSet://.../workforcePools/<POOL>/group/<GROUP>`) so `mintWorkforceToken`
+   * includes required end-user IAM groups even when run directly without Wizard Step 1.
    */
   private async getProjectIamPolicyCached(projectId: string): Promise<IamPolicy | null> {
     if (this.projectIamPolicyCache.has(projectId)) {
@@ -688,6 +692,39 @@ export class DiscoveryEngineClient {
       const res = await this.request<IamPolicy>(url, 'POST', {}, projectId);
       if (res && Array.isArray(res.bindings)) {
         this.projectIamPolicyCache.set(projectId, res);
+        const adminDeleteRoles = new Set([
+          'roles/discoveryengine.admin',
+          'roles/discoveryengine.agentspaceadmin',
+          'roles/discoveryengine.notebooklmowner',
+          'roles/discoveryengine.notebookowner',
+          'roles/owner',
+          'roles/editor'
+        ]);
+        const groupsByPool = new Map<string, string[]>();
+        for (const binding of res.bindings) {
+          const role = String(binding?.role || '').trim();
+          const lowerRole = role.toLowerCase();
+          const isDiscoveryRole =
+            lowerRole.includes('discoveryengine') ||
+            lowerRole === 'roles/viewer' ||
+            lowerRole === 'roles/editor' ||
+            lowerRole === 'roles/owner';
+          if (!isDiscoveryRole || adminDeleteRoles.has(lowerRole)) continue;
+          for (const member of binding?.members || []) {
+            if (typeof member !== 'string') continue;
+            const poolMatch = member.match(/workforcePools\/([^/]+)\/group\/(.+)$/i);
+            if (poolMatch?.[1] && poolMatch?.[2]) {
+              const pId = poolMatch[1];
+              const gId = poolMatch[2].trim();
+              const list = groupsByPool.get(pId) || [];
+              list.push(gId);
+              groupsByPool.set(pId, list);
+            }
+          }
+        }
+        for (const [pId, groups] of groupsByPool.entries()) {
+          registerDiscoveredPoolGroups(pId, groups);
+        }
         return res;
       }
     } catch (err: any) {
@@ -845,16 +882,11 @@ export class DiscoveryEngineClient {
    */
   async testProjectIamPermissions(projectId: string, permissions: string[], forUserEmail?: string): Promise<string[]> {
     const cleanEmail = forUserEmail ? forUserEmail.replace(/^user:/i, '').trim().toLowerCase() : undefined;
-    const isDwdModeForUser =
-      Boolean(cleanEmail) &&
-      this.auth.getAuthType?.() !== 'WORKFORCE_IDENTITY_FEDERATION' &&
-      !GcpAuthService.isExternalIdentityDomain(cleanEmail!);
 
-    // For DWD-impersonated users, DWD tokens only carry Discovery Engine scopes (not cloud-platform),
-    // so calling cloudresourcemanager.googleapis.com:testIamPermissions with the user's DWD token
-    // fails with HTTP 403 "Request had insufficient authentication scopes". Evaluate via the project's
-    // IAM policy (using base/admin credentials) first.
-    if (cleanEmail && isDwdModeForUser) {
+    // Evaluate via the project's IAM policy (using base/admin credentials) first when checking a user:
+    // 1. Avoids DWD user token `cloud-platform` OAuth scope 403 errors on Cloud Resource Manager.
+    // 2. Populates `registerDiscoveredPoolGroups` from the project IAM policy before user WIF tokens are minted.
+    if (cleanEmail) {
       const fromPolicy = await this.evaluatePermissionsFromProjectIamPolicy(projectId, permissions, cleanEmail);
       if (fromPolicy !== null) {
         return fromPolicy;

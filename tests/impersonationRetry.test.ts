@@ -18,6 +18,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs';
 import { GcpAuthService } from '../src/services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
+import { getDiscoveredPoolGroups } from '../src/services/wifPreflight.js';
 import { logger } from '../src/utils/logger.js';
 
 /**
@@ -311,6 +312,53 @@ describe('DiscoveryEngineClient 403 impersonation retry', () => {
     expect(retryToken).toBe('genuine-wif-token-on-retry');
     expect(wifSpy).toHaveBeenCalledTimes(2);
     expect(auth.getLastUsedImpersonationMode('minglae@coned.com')).toBe('WIF');
+  });
+
+  it('ConEd preflight case: testProjectIamPermissions evaluates getIamPolicy first for WIF users without calling testIamPermissions and registers non-admin pool groups', async () => {
+    const auth = makeAuth({ withSaKey: true, withWifKeyOnDisk: true });
+    const getAccessTokenSpy = vi.spyOn(auth, 'getAccessToken').mockResolvedValue('admin-sa-token');
+
+    const calledUrls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      const url = typeof input === 'string' ? input : input?.url || String(input);
+      calledUrls.push(url);
+      if (url.includes(':getIamPolicy')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            bindings: [
+              {
+                role: 'roles/discoveryengine.user',
+                members: [
+                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-employees-group'
+                ]
+              },
+              {
+                role: 'roles/discoveryengine.admin',
+                members: [
+                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-admins-only-group'
+                ]
+              }
+            ]
+          })
+        } as any;
+      }
+      throw new Error(`Unexpected URL called during testProjectIamPermissions: ${url}`);
+    });
+
+    const client = new DiscoveryEngineClient(auth);
+    const granted = await client.testProjectIamPermissions(
+      'cei-vertex-prd-01',
+      ['discoveryengine.notebooks.delete'],
+      'minglae@coned.com'
+    );
+
+    expect(granted).toEqual([]);
+    expect(calledUrls.some((u) => u.includes(':testIamPermissions'))).toBe(false);
+    expect(getAccessTokenSpy).toHaveBeenCalledWith(undefined, undefined, undefined);
+    expect(getDiscoveredPoolGroups('coned-pool')).toContain('coned-employees-group');
+    expect(getDiscoveredPoolGroups('coned-pool')).not.toContain('coned-admins-only-group');
   });
 });
 

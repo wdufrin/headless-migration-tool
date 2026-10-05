@@ -18,9 +18,16 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import crypto from 'crypto';
+import dns from 'dns';
 import { JWT, GoogleAuth } from 'google-auth-library';
 import { getDiscoveredPoolGroups } from './wifPreflight.js';
 import { logger } from '../utils/logger.js';
+
+// Prefer IPv4 DNS resolution so Node/undici fetch() to sts.googleapis.com does not
+// stall for 10s (ConnectTimeoutError: fetch failed) when IPv6 is blackholed on corporate VPNs.
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const execFileAsync = promisify(execFile);
 
