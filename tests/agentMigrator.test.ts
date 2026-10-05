@@ -488,6 +488,130 @@ describe('AgentMigrator Engine', () => {
     expect(() => MigrationOptionsSchema.parse({ excludeDraftAgents: 'true' as any })).toThrow(/Expected boolean/);
     expect(() => MigrationOptionsSchema.parse({ agentStatusFilter: 'INVALID_FILTER' as any })).toThrow(/Invalid enum value/);
   });
+
+  it('should prevent duplicate agent creation on Run #2 using Admin SA listAgents when end-user lacks discoveryengine.agents.manage, and skip setAgentIamPolicy on private agents', async () => {
+    const sourceAgent1: Agent = {
+      name: 'projects/src/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/src-agent-1',
+      displayName: 'Inactive Agent Notifier',
+      state: 'PRIVATE',
+      lowCodeAgentDefinition: {
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Notify inactive agents.' } }],
+        deployedNodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Notify inactive agents.' } }]
+      }
+    };
+
+    const sourceAgent2: Agent = {
+      name: 'projects/src/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/src-agent-2',
+      displayName: 'Shared Name But Owned By Colleague In Target',
+      state: 'PRIVATE',
+      lowCodeAgentDefinition: {
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Run report.' } }],
+        deployedNodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Run report.' } }]
+      }
+    };
+
+    const existingTargetAgentOwnedByUser: Agent = {
+      name: 'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-existing-1',
+      displayName: 'Inactive Agent Notifier',
+      state: 'PRIVATE'
+    };
+
+    const existingTargetAgentOwnedByOtherUser: Agent = {
+      name: 'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-colleague-99',
+      displayName: 'Shared Name But Owned By Colleague In Target',
+      state: 'PRIVATE'
+    };
+
+    // Simulate real Discovery Engine behavior:
+    // Calling listAgents with a userOwner email throws HTTP 403 (Permission 'discoveryengine.agents.manage' denied),
+    // while calling listAgents with undefined (Admin Service Account) succeeds.
+    dummyClient.listAgents = vi.fn().mockImplementation(async (env: any, forUserEmail?: string) => {
+      if (forUserEmail) {
+        const err: any = new Error(
+          `Discovery Engine API Request Failed [403]: Permission 'discoveryengine.agents.manage' denied on resource 'projects/${env.projectId}/locations/global/collections/default_collection/engines/${env.appId}/assistants/default_assistant'`
+        );
+        err.status = 403;
+        throw err;
+      }
+      if (env.projectId === sourceEnv.projectId) {
+        return [sourceAgent1, sourceAgent2];
+      }
+      return [existingTargetAgentOwnedByUser, existingTargetAgentOwnedByOtherUser];
+    });
+
+    dummyClient.getAgentIamPolicy = vi.fn().mockImplementation(async (agentName: string) => {
+      if (agentName.endsWith('/src-agent-1') || agentName.endsWith('/src-agent-2')) {
+        return {
+          bindings: [
+            {
+              role: 'roles/discoveryengine.agentOwner',
+              members: ['user:greiler.abrahantes@geappliances.com']
+            }
+          ]
+        };
+      }
+      if (agentName.endsWith('/tgt-existing-1')) {
+        return {
+          bindings: [
+            {
+              role: 'roles/discoveryengine.agentOwner',
+              members: ['user:240168547@applhome.com']
+            }
+          ]
+        };
+      }
+      if (agentName.endsWith('/tgt-colleague-99')) {
+        return {
+          bindings: [
+            {
+              role: 'roles/discoveryengine.agentOwner',
+              members: ['user:other.colleague@applhome.com']
+            }
+          ]
+        };
+      }
+      return { bindings: [] };
+    });
+
+    const createAgentSpy = vi.fn().mockResolvedValue({
+      name: 'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-newly-created-2'
+    });
+    const setIamSpy = vi.fn().mockRejectedValue(
+      new Error('Discovery Engine API Request Failed [400]: Cannot set IAM policy on a private agent.')
+    );
+    dummyClient.createAgent = createAgentSpy;
+    dummyClient.setAgentIamPolicy = setIamSpy;
+    dummyClient.publishAgent = vi.fn().mockResolvedValue({});
+
+    const results = await migrator.migrateAgents(
+      sourceEnv,
+      targetEnv,
+      {
+        dryRun: false,
+        publishAgents: false,
+        userFilter: ['greiler.abrahantes@geappliances.com']
+      },
+      {},
+      {},
+      { 'greiler.abrahantes@geappliances.com': '240168547@applhome.com' }
+    );
+
+    expect(results).toHaveLength(2);
+    // 1. "Inactive Agent Notifier" already existed for 240168547@applhome.com -> reused tgt-existing-1 without calling createAgent
+    const res1 = results.find(r => r.displayName === 'Inactive Agent Notifier');
+    expect(res1?.status).toBe('SUCCESS');
+    expect(res1?.targetId).toBe('tgt-existing-1');
+
+    // 2. "Shared Name But Owned By Colleague In Target" belonged to other.colleague@applhome.com -> created a new agent for 240168547@applhome.com
+    const res2 = results.find(r => r.displayName === 'Shared Name But Owned By Colleague In Target');
+    expect(res2?.status).toBe('SUCCESS');
+    expect(res2?.targetId).toBe('tgt-newly-created-2');
+
+    // createAgent must only be called ONCE (for sourceAgent2, NOT for sourceAgent1)
+    expect(createAgentSpy).toHaveBeenCalledTimes(1);
+    // setAgentIamPolicy must NEVER be called on private agents
+    expect(setIamSpy).not.toHaveBeenCalled();
+  });
 });
 
 

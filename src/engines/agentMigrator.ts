@@ -630,14 +630,15 @@ export class AgentMigrator {
     const sourceAgents = await this.client.listAgents(sourceEnv);
     logger.info(`Found ${sourceAgents.length} total source agents.`);
 
-    // Attach IAM policies for ownership filtering
-    for (const agent of sourceAgents) {
+    // Attach IAM policies for ownership filtering in parallel
+    const iamConcurrency = Math.min(20, Math.max(5, (options.concurrency || 10) * 2));
+    await mapConcurrent(sourceAgents, iamConcurrency, async (agent: Agent) => {
       try {
         agent.iamPolicy = await this.client.getAgentIamPolicy(agent.name, sourceEnv);
       } catch (err: any) {
         logger.debug(`Could not load IAM policy for ${agent.displayName}: ${err.message}`);
       }
-    }
+    });
 
     const userFilter = options.userFilter || [];
     const PUBLIC_1P_SKILL_IDS = new Set([
@@ -796,6 +797,43 @@ export class AgentMigrator {
       }
     }
 
+    // Pre-fetch existing target agents once via the Admin Service Account (which holds discoveryengine.agents.manage),
+    // because regular end-user tokens only hold discoveryengine.agents.create and fail listAgents with HTTP 403.
+    let existingTargetAgents: Agent[] = [];
+    let targetListFetchedViaAdmin = false;
+    const consumedTargetAgentNames = new Set<string>();
+    if (!isDryRun && filteredAgents.length > 0 && typeof this.client.listAgents === 'function') {
+      try {
+        existingTargetAgents = await this.client.listAgents(targetEnv);
+        targetListFetchedViaAdmin = true;
+      } catch (adminListErr: any) {
+        logger.debug(`Admin-level target agent probe unavailable (${adminListErr.message}); will fall back to user-scoped probe.`);
+      }
+    }
+
+    const extractAgentOwnerEmails = (candidate: Agent): string[] => {
+      const owners: string[] = [];
+      if (candidate.owner) owners.push(candidate.owner);
+      if (candidate.iamPolicy?.bindings) {
+        for (const b of candidate.iamPolicy.bindings) {
+          if (b.role === 'roles/discoveryengine.agentOwner') {
+            owners.push(...(b.members || []));
+          }
+        }
+      }
+      return owners
+        .map(m =>
+          m
+            .replace(/^.*\/subject\//i, '')
+            .replace(/^.*_subject_/i, '')
+            .replace(/^principal(set)?:\/\/.*?\//i, '')
+            .replace(/^user:/i, '')
+            .toLowerCase()
+            .trim()
+        )
+        .filter(m => Boolean(m) && !m.includes('gserviceaccount.com'));
+    };
+
     return mapConcurrent(filteredAgents, concurrency, async (agent: Agent) => {
       const startTime = Date.now();
       const originalAgentId = agent.name.split('/').pop() || '';
@@ -841,13 +879,43 @@ export class AgentMigrator {
           effectiveCollectionMapping,
           toolMapping
         );
-        
-        let createdAgent;
+
+        let createdAgent: Agent | undefined;
+        let agentAlreadyExisted = false;
         try {
-          const existingAgents = await this.client.listAgents(targetEnv, userOwner);
-          createdAgent = existingAgents.find(a => a.displayName === agent.displayName);
-          if (createdAgent) {
-            logger.info(`Agent "${result.displayName}" already exists in target engine (ID: ${createdAgent.name.split('/').pop()}). Skipping duplicate creation.`);
+          const candidatePool = targetListFetchedViaAdmin
+            ? existingTargetAgents
+            : await this.client.listAgents(targetEnv, userOwner);
+          const nameCandidates = candidatePool.filter(
+            a => a.displayName === agent.displayName && !consumedTargetAgentNames.has(a.name)
+          );
+
+          const lowerTargetOwner = (targetOwner || '').toLowerCase().trim();
+          const lowerOriginalOwner = (originalOwner || '').toLowerCase().trim();
+
+          for (const cand of nameCandidates) {
+            if (!cand.owner && !cand.iamPolicy && typeof this.client.getAgentIamPolicy === 'function') {
+              try {
+                cand.iamPolicy = await this.client.getAgentIamPolicy(cand.name, targetEnv);
+              } catch (iamProbeErr: any) {
+                logger.debug(`Could not load target IAM policy for candidate "${cand.displayName}": ${iamProbeErr.message}`);
+              }
+            }
+            const candOwners = extractAgentOwnerEmails(cand);
+            const ownerMatches =
+              candOwners.length === 0 ||
+              !lowerTargetOwner ||
+              lowerTargetOwner === 'unknown' ||
+              candOwners.includes(lowerTargetOwner) ||
+              (Boolean(lowerOriginalOwner) && candOwners.includes(lowerOriginalOwner));
+
+            if (ownerMatches) {
+              createdAgent = cand;
+              consumedTargetAgentNames.add(cand.name);
+              agentAlreadyExisted = true;
+              logger.info(`Agent "${result.displayName}" already exists in target engine (ID: ${createdAgent.name.split('/').pop()}). Skipping duplicate creation.`);
+              break;
+            }
           }
         } catch (probeErr: any) {
           logger.debug(`Could not probe target agents before create: ${probeErr.message}`);
@@ -892,9 +960,12 @@ export class AgentMigrator {
 
         const newAgentName = createdAgent.name;
         const newAgentId = newAgentName.split('/').pop() || '';
+        consumedTargetAgentNames.add(newAgentName);
 
         result.targetId = newAgentId;
-        logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
+        if (!agentAlreadyExisted) {
+          logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
+        }
 
         // 1. Replicate sharing configuration if explicitly set; preserve private scope by default to protect employee data privacy
         if (options.preserveSharing !== false && agent.sharingConfig?.scope) {
@@ -914,8 +985,11 @@ export class AgentMigrator {
           logger.info(`Agent "${result.displayName}" has no public sharing scope; preserving private scope.`);
         }
 
-        // 2. Replicate IAM policy ONLY if the agent is shared (Google rejects IAM on private agents)
-        if (agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
+        // 2. Replicate IAM policy ONLY if the agent is shared (Google rejects IAM on private agents with HTTP 400)
+        const isSharedScope =
+          agent.sharingConfig?.scope === 'ALL_USERS' ||
+          agent.sharingConfig?.scope === 'RESTRICTED';
+        if (isSharedScope && agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
           try {
             await this.restoreAgentIamPolicy(newAgentName, agent.iamPolicy, targetEnv, identityMapping);
           } catch (iamErr: any) {
