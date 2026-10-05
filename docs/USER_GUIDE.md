@@ -1,7 +1,7 @@
 # 📘 Gemini Enterprise Admin Migration Platform
 ## Administrator & Operator User Guide
 
-**Document Version:** `v1.6.3 (Enterprise Release)`  
+**Document Version:** `v1.7.0 (Enterprise Release)`  
 **Target Audience:** Cloud Architects, Migration Operators & IT Administrators  
 **Supported Assets:** Research Notebooks, Grounding Sources, Custom Agents, User Skills *(Experimental)*, Chat Sessions, Personalized Memories *(Experimental)*, Studio Artifacts & Projects *(WIP)*  
 **Handover Formats:** Interactive Checklists, Single-ZIP Archives, Office PPTX/DOCX, Offline HTML5 Apps  
@@ -13,8 +13,8 @@
 
 The **Gemini Enterprise Admin Migration Platform** empowers Google Cloud administrators to execute frictionless, zero-data-loss migrations of Gemini Enterprise and Google Cloud Discovery Engine assets between Google Cloud projects, geographic regions, and Identity Providers.
 
-* **Research Notebooks & Granular Grounding Sources**: Deep-clones notebooks and re-indexes all grounding sources (PDFs, URLs, YouTube videos, Google Drive docs, and text files) with individual integrity auditing.
-* **Custom Agents & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.
+* **Research Notebooks & Granular Grounding Sources**: Deep-clones notebooks and re-indexes all grounding sources (PDFs, URLs, YouTube videos, Google Drive docs, and text files) with adaptive source read concurrency (`min(concurrency, 3)`) and transparent per-source integrity auditing (`MANUAL_REUPLOAD_REQUIRED` / `FAILED` reporting with zero fake metadata stubs).
+* **Custom Agents, Draft Filtering & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Supports **Ignore Draft Agents (`excludeDraftAgents`)** to skip unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`) and migrate only **Private (created/deployed)** and **Published/Shared** agents. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.
 * **Human-in-the-Loop (HITL) Connector & Notebook Validation**: Provides interactive Step 2 mapping dropdowns and Step 3 runtime HITL modals so operators can verify, remap, or strip (`__STRIP__`) unmapped agent connectors and selectively filter colleague-shared Admin notebooks.
 * **User-Created Skills in Agent Registry (`Experimental`)**: Migrates custom skills from `agentregistry.googleapis.com` while intelligently ignoring built-in 1P Google templates. *(Experimental — may not work for everyone)*.
 * **Multi-Turn Chat History**: Rehydrates conversational histories turn-by-turn into each user's left-hand Gemini Enterprise History sidebar.
@@ -81,18 +81,20 @@ On the **Migration Studio** (`#studio`) tab, review or adjust the synchronized S
 
 ## 4. Scoping & Asset Selection
 
-Administrators can selectively include or exclude specific asset categories to tailor the migration scope:
+Administrators can selectively include or exclude specific asset categories and tune execution concurrency in Step 3:
 
-| Scope Checkbox | Asset Category | Default State | Operational Effect |
+| Scope Control | Asset Category | Default State | Operational Effect |
 | :--- | :--- | :--- | :--- |
-| **Migrate Notebooks & Sources** | Research Notebooks & Grounding Docs | Enabled (Checked) | Restores notebooks and re-indexes all attached PDFs, URLs, and YouTube videos |
+| **Migrate Notebooks & Sources** | Research Notebooks & Grounding Docs | Enabled (Checked) | Restores notebooks and re-indexes attached PDFs, URLs, and YouTube videos; reports any unextractable binary files honestly as `MANUAL_REUPLOAD_REQUIRED` |
 | **Migrate Custom Agents** | Low-Code & Workflow Agents | Enabled (Checked) | Deep-copies agent instructions, tools, and datastores as native editable drafts |
+| **↳ Ignore Draft Agents (Private & Published Only)** | Custom Agent Sub-Option (`#optExcludeDraftAgents`) | Disabled (Unchecked) | When checked (`--exclude-draft-agents`), skips unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`) and migrates only **Private (created/deployed)** and **Published/Shared** agents |
 | **Migrate User Skills (`Experimental`)** | User-Created Skills in Agent Registry | Enabled (Checked) | Migrates custom skills in `agentregistry.googleapis.com` while ignoring built-in 1P Google templates *(Experimental — may not work for everyone)* |
 | **Migrate Multi-User Chat History** | Chat Conversation History | Enabled (Checked) | Rehydrates chronological chat sessions into the target Gemini sidebar |
 | **Migrate User Memories & Facts (`Experimental`)** | Personalized Facts & Profiles | Enabled (Checked) | Discovers and exports memory facts to local JSON backup and target library *(Experimental — may not work for everyone)* |
 | **Export & Archive User Artifacts** | Studio Outputs & Presentations | Enabled (Checked) | Generates `.pptx` decks, `.docx` study guides, `.html` apps, and `.mp4` videos |
 | **Migrate Projects (`WIP`)** | Gemini Enterprise Workspace Projects | Disabled (`WIP`) | Work in Progress — Gemini Enterprise Project workspace migrations are in development |
-| **Dry Run (Simulate Only)** | Safety Simulation Mode | Disabled (Unchecked) | When checked, performs full discovery and logging without writing to target |
+| **Worker Concurrency (Parallel API Workers)** | Pipeline Throttling (`#optConcurrency`) | `5` (Range `1`–`50`) | Controls parallel API workers; automatically throttles Notebook source reads to `min(concurrency, 3)` (`3–5` recommended for large PDFs/PPTX) to prevent HTTP 504 timeouts |
+| **Dry Run (Simulate Only)** | Safety Simulation Mode | Disabled (Unchecked) | When checked, performs full discovery, payload validation, and source extractability auditing without writing to target |
 
 ---
 
@@ -117,9 +119,9 @@ In enterprise migrations, you may want to migrate a pilot group of VIP users bef
 Once configured, click **🚀 Run Live Migration** (or **Simulate Dry Run**). The migration pipeline executes across 7 discrete stages:
 
 1. **Stage 1: Pre-Flight Infrastructure Checks** — Verifies target engine existence, accessibility, and service usage quotas.
-2. **Stage 2: Notebooks & Granular Sources Restoration** — Syncs research notebooks and restores individual grounding documents.
+2. **Stage 2: Notebooks & Granular Sources Restoration** — Syncs research notebooks and restores individual grounding documents with adaptive read concurrency (`min(concurrency, 3)`), explicitly reporting any timed-out or unextractable binary sources as `FAILED` / `MANUAL_REUPLOAD_REQUIRED`.
 3. **Stage 3: User Skills Discovery & Restoration (`Experimental`)** — Migrates custom skills in `agentregistry.googleapis.com` *(may not work for everyone)*.
-4. **Stage 4: Custom Agents Restoration & Dynamic Connector Rewriting** — Automatically runs `_#####` connector/datastore discovery (`discoverConnectorsAndAutoMap`), rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, expands parent `collectionMapping` rules to child entity DataStores, strips any `__STRIP__` connectors, and deduplicates `dataStoreSpecs` before creating target agents.
+4. **Stage 4: Custom Agents Restoration, Draft Filtering & Dynamic Connector Rewriting** — Filters out unsaved draft placeholders when `excludeDraftAgents` is enabled, automatically runs `_#####` connector/datastore discovery (`discoverConnectorsAndAutoMap`), rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, expands parent `collectionMapping` rules to child entity DataStores, strips any `__STRIP__` connectors, and deduplicates `dataStoreSpecs` before creating target agents.
 5. **Stage 5: Multi-Turn Chat Conversation Rehydration** — Recreates conversational turns chronologically for each user.
 6. **Stage 6: Personalized AI Memories & Facts Export (`Experimental`)** — Backs up and migrates discovered user facts *(may not work for everyone)*.
 7. **Stage 7: Studio Artifacts Discovery, Office Generation & Compression** — Synthesizes PPTX presentations, Word study guides, interactive HTML5 quiz/flashcard apps, and compresses Explainer Videos.

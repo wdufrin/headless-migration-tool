@@ -1,4 +1,37 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.7.0
+
+**Release Date:** October 5, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.7.0** introduces **Step 3 Worker Concurrency Control (`#optConcurrency`) with Adaptive Source Read Throttling**, the **Ignore Draft Agents (`excludeDraftAgents` / `--exclude-draft-agents`)** sub-option to skip unsaved UI draft agents (`"My Agent"` / `"My Workflow"`) while migrating both **Private (created/deployed)** and **Published/Shared** agents, and **Honest Notebook Source Failure Reporting** by removing the `[Restored Source: ...]` metadata stub when a notebook source cannot be migrated or times out during fetch. v1.7.0 includes **375 passing automated tests across 31 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. ⚡ Step 3 Worker Concurrency Control & Adaptive Source Read Throttling (`public/index.html` & `src/engines/notebookMigrator.ts`)
+* **Configurable Parallel Worker Concurrency in Step 3**: Operators can now select **Worker Concurrency (`1`, `2`, `3`, `5`, `10`, or `20` Parallel API Workers)** directly inside Step 3 (*Migration Scope, Sharing & Delegation*).
+* **Per-Notebook Source Fetch Throttling**: Lowering concurrency to `1` or `2` automatically scales down inner per-notebook `getNotebookSource` concurrency (`Math.min(3, Math.max(1, options.concurrency || 10))`), preventing 30-second read timeouts when migrating large notebooks containing dozens of heavy PDFs.
+
+#### 2. 🚫 Ignore Draft Agents Sub-Option (`Private & Published Only`) (`public/index.html`, `src/engines/agentMigrator.ts`, `src/cli.ts`)
+* **Step 3 Sub-Checkbox & CLI Flag**: Added the indented **`🚫 Ignore Draft Agents (Private & Published Only)`** checkbox (`#optExcludeDraftAgents`) directly underneath **🤖 Migrate Agents & Workflows** in Step 3 (synchronized with `#optAgentLifecycle` and `--exclude-draft-agents` on the CLI).
+* **Accurate Draft vs. Private vs. Published Classification**: `AgentMigrator.isSourceAgentPublished` and `AgentMigrator.isSourceAgentDraft` inspect `state`, `sharingConfig.scope`, `lowCodeAgentDefinition.deployedNodes` / `deployedRootAgentId`, `workflowAgentDefinition.deployedAgentFlow`, and `activeRevision` so unsaved/undeployed UI drafts (such as auto-created `"My Agent"` and `"My Workflow"` stubs with `validationErrors`) are skipped while both **Private (author-only created)** and **Published/Shared** agents are migrated.
+
+#### 3. 🛡️ Honest Notebook Source Failure Reporting (Removed Fake `[Restored Source: ...]` Metadata Stub) (`src/engines/notebookMigrator.ts` & `src/services/reporter.ts`)
+* **No Fabricated Source Placeholders**: Removed the `[Restored Source: ...]` text stub from `NotebookMigrator.mapSourceToPayload(source)`. If `getNotebookSource` fails (`_fetchError`) or a source only contains bare metadata without extracted text, Google Drive ID, YouTube URL, Agentspace document, or Web URL, `mapSourceToPayload` returns `null`.
+* **Dry Run & Live Run Parity**: Both Dry Run and Live Run modes now evaluate every source and honestly report `sourcesFailed`, `FAILED` (when `getNotebookSource` errors/times out), and `MANUAL_REUPLOAD_REQUIRED` (when binary content is unavailable across tenants), marking affected users as `🟡 PARTIALLY MIGRATED` in the Markdown reconciliation table.
+
+#### 4. 🧪 Automated Test Suite Stability (375/375 Tests Passing across 31 suites)
+* Added unit, behavioral, and negative/adversarial tests in `tests/notebookMigrator.test.ts` and `tests/agentMigrator.test.ts` covering unmigratable/timed-out notebook sources, Dry Run vs. Live Run source reporting, `concurrency` schema bounds, and Draft vs. Private vs. Published agent filtering.
+
+---
+
 ## Release Notes — Version 1.6.3
 
 **Release Date:** October 2, 2026  
@@ -178,7 +211,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.6.2 &rarr; v1.6.3)
+### 📦 Upgrade Guide (v1.6.3 &rarr; v1.7.0)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -203,7 +236,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.6.3** *(Current)*: Fixed multi-page agent pagination (`nextPageToken`) in Step 3 User Discovery (`GET /api/users/discover`) and IdP Auto-Mapping (`POST /api/idp/auto-map`), batched `:getIamPolicy` lookups in auto-map, sanitized `package-lock.json` resolved URLs to `https://registry.npmjs.org/`, and expanded to 369 passing tests across 31 test suites.
+* **v1.7.0** *(Current)*: Added Step 3 Worker Concurrency selector (`#optConcurrency`) with adaptive per-notebook source read throttling, added Ignore Draft Agents sub-option (`excludeDraftAgents` / `--exclude-draft-agents`) to migrate Private (created) and Published/Shared agents while skipping unsaved UI drafts, removed the fake `[Restored Source: ...]` metadata stub in `NotebookMigrator` in favor of honest `FAILED` / `MANUAL_REUPLOAD_REQUIRED` reporting in both Dry Run and Live Run modes, and expanded to 375 passing tests across 31 test suites.
+* **v1.6.3**: Fixed multi-page agent pagination (`nextPageToken`) in Step 3 User Discovery (`GET /api/users/discover`) and IdP Auto-Mapping (`POST /api/idp/auto-map`), batched `:getIamPolicy` lookups in auto-map, sanitized `package-lock.json` resolved URLs to `https://registry.npmjs.org/`, and expanded to 369 passing tests across 31 test suites.
 * **v1.6.2**: Added comprehensive Step 2 Config & Parity Audit HITL and action items filtering (Dynamic Connector Mapping filters, Parity Checklist status filters, 1-click global audit filter button with unified remaining count badge), targeted user discovery "Delete All" action, and single quote / apostrophe email resilience, with 366 passing tests across 30 test suites.
 * **v1.6.1**: Fixed `retryWithBackoff` infinite retry loop (`attempt++`), added per-request `AbortSignal.timeout` (30s) to `DiscoveryEngineClient` and `AgentRegistryClient`, added 15s SSE keep-alive heartbeats on `/api/migrate/stream`, promoted notebook fetch errors to `WARN`, added large-notebook source progress logging, and expanded to 327 passing tests.
 * **v1.6.0**: Dynamic Connector & DataStore Auto-Mapping (`_#####` instance suffix matching), synchronized parent Connector + child entity DataStore rewriting (`collections/{id}/dataConnector` + `{id}_{entity}`), Step 2 interactive HITL mapping table, runtime Connector & Admin Notebook HITL modals, and 323 passing tests.

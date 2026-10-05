@@ -537,7 +537,7 @@ export async function buildInstallationGuideDocx(outputPath: string): Promise<vo
     'Gemini Enterprise Admin Migration Platform',
     'Installation, Environment Setup & Pre-Requisites Technical Guide',
     {
-      'Document Version': 'v1.6.3 (Enterprise Release)',
+      'Document Version': 'v1.7.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Platform': 'Google Cloud Discovery Engine & Gemini Enterprise',
       'Execution Profile': 'Headless CLI & Local Workstation Web Console (127.0.0.1:8080)',
@@ -954,7 +954,7 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     'Gemini Enterprise Admin Migration Platform',
     'Administrator Operations, Asset Restoration, Parity Audit & User Handover Guide',
     {
-      'Document Version': 'v1.6.3 (Enterprise Release)',
+      'Document Version': 'v1.7.0 (Enterprise Release)',
       'Classification': 'Google Cloud Enterprise / Administrative',
       'Target Audience': 'Cloud Architects, Migration Operators & IT Administrators',
       'Supported Assets': 'Notebooks, Sources, Custom Agents, Skills (Experimental), Chat Sessions, Memories (Experimental), Artifacts & Projects (WIP)',
@@ -968,8 +968,8 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
     'The **Gemini Enterprise Admin Migration Platform** empowers Google Cloud administrators to execute frictionless, zero-data-loss migrations of Gemini Enterprise and Google Cloud Discovery Engine assets between environments.'
   );
 
-  b.addBullet('**Research Notebooks & Granular Grounding Sources**: Deep-clones notebooks and re-indexes all grounding sources (PDFs, URLs, YouTube videos, Google Drive docs, and text files) with individual integrity auditing.');
-  b.addBullet('**Custom Agents & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.');
+  b.addBullet('**Research Notebooks & Granular Grounding Sources**: Deep-clones notebooks and re-indexes all grounding sources (PDFs, URLs, YouTube videos, Google Drive docs, and text files) with adaptive source read concurrency (`min(concurrency, 3)`) and transparent per-source integrity auditing (`MANUAL_REUPLOAD_REQUIRED` / `FAILED` reporting with zero fake metadata stubs).');
+  b.addBullet('**Custom Agents, Draft Filtering & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Supports **Ignore Draft Agents (`excludeDraftAgents`)** to skip unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`) and migrate only **Private (created/deployed)** and **Published/Shared** agents. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.');
   b.addBullet('**Human-in-the-Loop (HITL) Connector & Notebook Validation**: Interactive Step 2 mapping dropdowns and Step 3 runtime HITL modals so operators can verify, remap, or strip (`__STRIP__`) unmapped agent connectors and selectively filter colleague-shared Admin notebooks.');
   b.addBullet('**User-Created Skills in Agent Registry (`Experimental`)**: Migrates custom skills from `agentregistry.googleapis.com` while intelligently ignoring built-in 1P Google templates (*Experimental — may not work for everyone*).');
   b.addBullet('**Multi-Turn Chat History**: Rehydrates conversational histories turn-by-turn into each user\'s left-hand Gemini Enterprise History sidebar.');
@@ -1047,20 +1047,22 @@ export async function buildUserGuideDocx(outputPath: string): Promise<void> {
   // Section 4
   b.addHeading1('4. Scoping & Asset Selection');
   b.addParagraph(
-    'Administrators can selectively include or exclude specific asset categories to tailor the migration scope:'
+    'Administrators can selectively include or exclude specific asset categories and tune execution concurrency in Step 3:'
   );
 
   b.addTable(
-    ['Scope Checkbox', 'Asset Category', 'Default State', 'Operational Effect'],
+    ['Scope Control', 'Asset Category', 'Default State', 'Operational Effect'],
     [
-      ['Migrate Notebooks & Sources', 'Research Notebooks & Grounding Docs', 'Enabled (Checked)', 'Restores notebooks and re-indexes all attached PDFs, URLs, and YouTube videos'],
+      ['Migrate Notebooks & Sources', 'Research Notebooks & Grounding Docs', 'Enabled (Checked)', 'Restores notebooks and re-indexes attached PDFs, URLs, and YouTube videos; reports any unextractable binary files honestly as MANUAL_REUPLOAD_REQUIRED'],
       ['Migrate Custom Agents', 'Low-Code & Workflow Agents', 'Enabled (Checked)', 'Deep-copies agent instructions, tools, and datastores as native editable drafts'],
+      ['↳ Ignore Draft Agents (Private & Published Only)', 'Custom Agent Sub-Option (#optExcludeDraftAgents)', 'Disabled (Unchecked)', 'When checked (--exclude-draft-agents), skips unsaved UI draft placeholders ("My Agent", "My Workflow") and migrates only Private (created/deployed) and Published/Shared agents'],
       ['Migrate User Skills (Experimental)', 'User-Created Skills in Agent Registry', 'Enabled (Checked)', 'Migrates custom skills in agentregistry.googleapis.com while ignoring built-in 1P Google templates (Experimental — may not work for everyone)'],
       ['Migrate Multi-User Chat History', 'Chat Conversation History', 'Enabled (Checked)', 'Rehydrates chronological chat sessions into the target Gemini sidebar'],
       ['Migrate User Memories & Facts (Experimental)', 'Personalized Facts & Profiles', 'Enabled (Checked)', 'Discovers and exports memory facts to local JSON backup and target library (Experimental — may not work for everyone)'],
       ['Export & Archive User Artifacts', 'Studio Outputs & Presentations', 'Enabled (Checked)', 'Generates `.pptx` decks, `.docx` study guides, `.html` apps, and `.mp4` videos'],
       ['Migrate Projects (WIP)', 'Gemini Enterprise Workspace Projects', 'Disabled (WIP)', 'Gemini Enterprise Project workspace migrations (Work in Progress)'],
-      ['Dry Run (Simulate Only)', 'Safety Simulation Mode', 'Disabled (Unchecked)', 'When checked, performs full discovery and logging without writing to target']
+      ['Worker Concurrency (Parallel API Workers)', 'Pipeline Throttling (#optConcurrency)', '5 (Range 1–50)', 'Controls parallel API workers; automatically throttles Notebook source reads to min(concurrency, 3) (3–5 recommended for large PDFs/PPTX) to prevent HTTP 504 timeouts'],
+      ['Dry Run (Simulate Only)', 'Safety Simulation Mode', 'Disabled (Unchecked)', 'When checked, performs full discovery, payload validation, and source extractability auditing without writing to target']
     ],
     [25, 25, 20, 30]
   );

@@ -31,7 +31,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.6.3')
+  .version('1.7.0')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
@@ -42,6 +42,7 @@ program
   .option('--export-memories', 'Export backup snapshot of user memories to disk (Experimental)')
   .option('--export-artifacts', 'Export chat attachments and notebook studio artifacts to disk')
   .option('--agent-types <types...>', 'Filter agent migration by type: LOW_CODE, WORKFLOW, ADK, A2A, OTHER, ALL (default: ALL)')
+  .option('--exclude-draft-agents', 'Ignore undeployed draft agents ("My Agent" / "My Workflow") and only migrate Private (created) and Published/Shared agents')
   .option('--publish-agents', 'Publish migrated agents to the organization gallery/catalog')
   .option('--no-preserve-sharing', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED)')
   .option('--users <users...>', 'Filter migration to specific user email(s) or patterns (e.g. *@company.com)')
@@ -102,6 +103,13 @@ program
       }
       if (options.agentTypes && options.agentTypes.length > 0) {
         baseConfig.options = { ...baseConfig.options, agentTypes: options.agentTypes };
+      }
+      if (options.excludeDraftAgents !== undefined) {
+        baseConfig.options = {
+          ...baseConfig.options,
+          excludeDraftAgents: true,
+          agentStatusFilter: 'PUBLISHED_ONLY'
+        };
       }
       if (options.publishAgents !== undefined) {
         baseConfig.options = { ...baseConfig.options, publishAgents: true };

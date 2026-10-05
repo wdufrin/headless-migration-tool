@@ -26,6 +26,7 @@
     "exportMemories": true,
     "exportArtifacts": true,
     "agentTypes": ["ALL"],
+    "excludeDraftAgents": false,
     "publishAgents": false,
     "dryRun": false,
     "concurrency": 10,

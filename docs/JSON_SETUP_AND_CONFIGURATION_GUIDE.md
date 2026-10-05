@@ -156,8 +156,9 @@ The configuration loader ([loader.ts](../src/config/loader.ts)) reads:
     "migrateAgents": true,
     "migrateSessions": true,
     "migrateMemories": true,
+    "excludeDraftAgents": false,
     "dryRun": false,
-    "concurrency": 10,
+    "concurrency": 5,
     "userFilter": ["*@wdufrin.altostrat.com"],
     "promptForAdminNotebookHitl": false,
     "promptForConnectorHitl": true
@@ -175,10 +176,12 @@ The configuration loader ([loader.ts](../src/config/loader.ts)) reads:
 }
 ```
 
-### Critical Connector & DataStore Mapping Fields (`v1.6.0`):
+### Critical Connector, Agent & Concurrency Options (`v1.6.0` – `v1.7.0`):
 - **`collectionMapping`**: Maps source Connector Collection IDs (e.g., `github_1773757636775`) to target Connector Collection IDs (`github_1780931139999`). The migration engine automatically rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, and automatically expands parent collection mappings to all child entity DataStores (`_issue`, `_pull_request`, `_repository`, etc.) using Regex Pattern Matching (`parseTimestampedResourceId`) so No-Code Agents retain 1 unified connector source instead of splitting into 3 separate DataStore sources.
 - **`datastoreMapping`**: Maps individual source DataStore IDs to target DataStore IDs.
 - **`"__STRIP__"` Sentinel Value**: Setting any `collectionMapping` or `datastoreMapping` target value to `"__STRIP__"` cleanly removes that connector tool or `dataStoreSpec` from migrated Custom Agents.
+- **`options.excludeDraftAgents`** (default `false`): When `true`, skips unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`, `"Untitled Agent"`, or `state: DRAFT` agents with blank instructions/starters/tools) while migrating **Private (created/deployed)** and **Published/Shared** agents.
+- **`options.concurrency`** (default `5` in Web UI / `10` in CLI): Controls parallel worker threads across migration batches. Notebook source reads are automatically capped at `min(concurrency, 3)` to prevent HTTP 504 `DEADLINE_EXCEEDED` read timeouts on large multi-megabyte PDFs and presentations.
 - **`options.promptForConnectorHitl`** (default `true`): Pauses migration and triggers the interactive Human-in-the-Loop (HITL) Connector Review modal (`#connectorHitlModal`) if an agent references an unmapped connector or DataStore.
 - **`options.promptForAdminNotebookHitl`** (default `false`): Pauses migration and triggers the Shared Admin Notebook Review modal (`#adminHitlModal`) when project-level `discoveryengine.notebooks.delete` permissions cause colleague-shared notebooks to appear as owned.
 

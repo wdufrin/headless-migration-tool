@@ -5,6 +5,25 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-10-05
+
+### Added
+- **Step 3 Worker Concurrency Control (`#optConcurrency`) & Adaptive Source Read Throttling (`public/index.html` & `src/engines/notebookMigrator.ts`)**:
+  - Added the **Worker Concurrency (Parallel API Workers)** selector (`#optConcurrency`, `1` to `20` workers, default `10`) to Step 3 (`Migration Scope, Sharing & Delegation` card) in `public/index.html` and wired it directly into `config.options.concurrency`.
+  - Scaled per-notebook `getNotebookSource` concurrency (`Math.min(3, Math.max(1, options.concurrency || 10))`) so lowering concurrency to `1` or `2` also throttles parallel source reads on large PDF-heavy notebooks to avoid 30s read timeouts.
+- **Ignore Draft Agents Sub-Option (`excludeDraftAgents` / `--exclude-draft-agents`) (`public/index.html`, `src/engines/agentMigrator.ts`, `src/cli.ts`)**:
+  - Added the indented **`🚫 Ignore Draft Agents (Private & Published Only)`** sub-checkbox (`#optExcludeDraftAgents`) directly underneath `🤖 Migrate Agents & Workflows` in Step 3 (`public/index.html`), synchronized with `#optAgentLifecycle` (`PUBLISHED_ONLY`) and `--exclude-draft-agents` in `src/cli.ts`.
+  - Enhanced `AgentMigrator.isSourceAgentPublished` and added `AgentMigrator.isSourceAgentDraft` to accurately distinguish unsaved/undeployed UI drafts (`state: 'PRIVATE'` with no `deployedNodes`, `deployedRootAgentId`, `deployedAgentFlow`, `activeRevision`, or `sharingConfig.scope`, e.g., `"My Agent"` / `"My Workflow"`) from created **Private** agents and **Published/Shared** agents.
+
+### Changed
+- **Honest Notebook Source Failure Reporting (Removed Fake `[Restored Source: ...]` Metadata Stub) (`src/engines/notebookMigrator.ts` & `src/services/reporter.ts`)**:
+  - Removed the fabricated `[Restored Source: ...]` text placeholder fallback from `NotebookMigrator.mapSourceToPayload(source)`. When a source fails `getNotebookSource` (`_fetchError` from a timeout/API error) or returns a metadata-only summary without document text, Google Drive ID, YouTube URL, Agentspace document, or Web URL, `mapSourceToPayload` now returns `null`.
+  - Updated `NotebookMigrator.migrateSingleNotebook` to evaluate `mapSourceToPayload` and `_fetchError` in **both** Dry Run and Live Run modes, honestly reporting `sourcesFailed` (`FAILED` or `MANUAL_REUPLOAD_REQUIRED`) and never injecting fake placeholder sources into target notebooks.
+  - Updated `MigrationReporter.generateMarkdownSummary` to mark users with `sourcesFailed > 0` as `🟡 PARTIALLY MIGRATED` in the User Reconciliation table and render `⚠️ MANUAL_REUPLOAD_REQUIRED` / `❌ FAILED` in Section 5 (*Notebook Sources Breakdown & Integrity Audit*).
+- Bumped platform version to `1.7.0` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (375 passing tests across 31 test suites).
+
+---
+
 ## [1.6.3] - 2026-10-02
 
 ### Fixed

@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.6.3-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.7.0-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.6.3-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.7.0-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -14,6 +14,22 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, `collectionMapping`, `datastoreMapping`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.7.0
+
+* **⚡ Step 3 Worker Concurrency Control (`#optConcurrency`) & Adaptive Source Read Throttling (`public/index.html` & `src/engines/notebookMigrator.ts`)**:
+  * Added the **Worker Concurrency (Parallel API Workers)** selector (`1`, `2`, `3`, `5`, `10`, or `20` workers, default `10`) directly into Step 3 (*Migration Scope, Sharing & Delegation*) and wired it into `config.options.concurrency`.
+  * Scales per-notebook `getNotebookSource` concurrency (`Math.min(3, Math.max(1, options.concurrency || 10))`) so lowering concurrency to `1` or `2` also throttles parallel source reads on large PDF-heavy notebooks to avoid 30-second read timeouts.
+* **🚫 Ignore Draft Agents Sub-Option (`excludeDraftAgents` / `--exclude-draft-agents`) (`public/index.html`, `src/engines/agentMigrator.ts`, `src/cli.ts`)**:
+  * Added the indented **`🚫 Ignore Draft Agents (Private & Published Only)`** checkbox (`#optExcludeDraftAgents`) directly underneath **🤖 Migrate Agents & Workflows** in Step 3, synchronized with `#optAgentLifecycle` and `--exclude-draft-agents` on the CLI.
+  * Distinguishes unsaved/undeployed UI drafts (`state: 'PRIVATE'` with no `deployedNodes`, `deployedRootAgentId`, `deployedAgentFlow`, `activeRevision`, or `sharingConfig.scope`, e.g., `"My Agent"` / `"My Workflow"`) from created **Private** agents and **Published/Shared** agents.
+* **🛡️ Honest Notebook Source Failure Reporting (Removed Fake `[Restored Source: ...]` Metadata Stub) (`src/engines/notebookMigrator.ts` & `src/services/reporter.ts`)**:
+  * Removed the fabricated `[Restored Source: ...]` text placeholder fallback from `NotebookMigrator.mapSourceToPayload(source)`. If `getNotebookSource` fails (`_fetchError`) or a source only returns metadata without extracted text, Google Drive ID, YouTube URL, Agentspace document, or Web URL, `mapSourceToPayload` returns `null`.
+  * Both Dry Run and Live Run modes now evaluate every source and honestly report `sourcesFailed`, `FAILED`, and `MANUAL_REUPLOAD_REQUIRED`, marking affected users as `🟡 PARTIALLY MIGRATED` in the Markdown reconciliation table.
+* **🧪 100% Passing Automated Tests (375/375 Tests across 31 suites)**:
+  * Full 375 automated tests passing across 31 test suites with zero failures or skipped assertions.
 
 ---
 
@@ -170,10 +186,12 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ## 📋 Table of Contents
 
+- [What's New in v1.7.0](#-whats-new-in-v170)
+- [What's New in v1.6.3](#-whats-new-in-v163)
+- [What's New in v1.6.2](#-whats-new-in-v162)
+- [What's New in v1.6.1](#-whats-new-in-v161)
+- [What's New in v1.6.0](#-whats-new-in-v160)
 - [What's New in v1.5.3](#-whats-new-in-v153)
-- [What's New in v1.5.1](#-whats-new-in-v151)
-- [What's New in v1.5.0](#-whats-new-in-v150)
-- [What's New in v1.4.1](#-whats-new-in-v141)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
 - [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
@@ -449,6 +467,7 @@ npx tsx src/cli.ts --dry-run --users "*@company.com"
 | `--no-skills` | Skip Agent Registry custom skills migration *(Experimental — may not work for everyone)* | Migrates skills *(Experimental)* |
 | `--export-memories` | Export backup snapshot of user memories to disk (`./exports/memories`) *(Experimental)* | `true` |
 | `--agent-types <types...>` | Filter agent types (`LOW_CODE`, `WORKFLOW`, `ADK`, `A2A`, `ALL`) | `ALL` |
+| `--exclude-draft-agents` | Ignore unsaved draft agents (`"My Agent"`, `"My Workflow"`, etc.) and migrate only Private (created/deployed) and Published/Shared agents | `false` |
 | `--publish-agents` | Automatically publish migrated agents for immediate organization visibility | `true` |
 | `--export-artifacts` | Extract presentations, Canva-style docs, and HTML artifacts to `./exports` | `true` |
 | `--no-preserve-sharing` | Do not replicate sharing configurations (`ALL_USERS` / `RESTRICTED`) | Preserves sharing |
@@ -496,6 +515,8 @@ The local Web Console is structured as a sequential 6-step administrative wizard
    - Prominent `Next: Proceed to Step 3: Migration Studio ➔` wizard transition that automatically syncs confirmed connector and datastore mappings into Step 3.
 3. **Step 3: 🚀 Migration Studio (`#studio`)**:
    - Synchronized Source and Target GCP environment pickers and asset scope selectors (Notebooks, Custom Agents, User Skills `[Experimental]`, Chat Sessions, Memories `[Experimental]`, Studio Artifacts, and Projects `[WIP]`).
+   - **Ignore Draft Agents (`#optExcludeDraftAgents`)**: Sub-option under Custom Agents to skip unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`, etc.) and migrate only **Private (created/deployed)** and **Published/Shared** agents.
+   - **Worker Concurrency Control (`#optConcurrency`)**: Configurable parallel worker threads (`1`–`50`, default `5`, recommended `3`–`5` for large PDF/PPTX notebooks) paired with adaptive source read concurrency (`min(concurrency, 3)`) to prevent HTTP 504 `DEADLINE_EXCEEDED` timeouts.
    - Dynamic asset discovery with user selection table and CSV identity mapping (`first.last@XXXX.com ➔ #####@YYYY.com`).
    - Context-aware Cross-IdP transformation matrix with preset domain rules and synchronized `collectionMapping` / `datastoreMapping` controls.
    - Interactive **Runtime HITL Modals**:
@@ -562,8 +583,9 @@ Designed to run **strictly on the administrator's local machine**:
     "migrateSkills": true,
     "exportMemories": true,
     "exportArtifacts": true,
+    "excludeDraftAgents": false,
     "dryRun": false,
-    "concurrency": 10,
+    "concurrency": 5,
     "userFilter": ["*@company.com"],
     "preserveOwnership": true,
     "promptForAdminNotebookHitl": false,
@@ -631,10 +653,10 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
-The platform includes an extensive automated test suite with **323 automated tests across 26 test suites** covering authentication, cross-project parity audits, dynamic `_#####` connector & child entity DataStore Regex Pattern Matching, HITL connector validation, Agent Registry skills discovery/filtering, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
+The platform includes an extensive automated test suite with **375 automated tests across 31 test suites** covering authentication, cross-project parity audits, dynamic `_#####` connector & child entity DataStore Regex Pattern Matching, HITL connector validation, draft vs private/published agent filtering (`excludeDraftAgents`), honest notebook source failure reporting & adaptive read concurrency, Agent Registry skills discovery/filtering, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
 
 ```bash
-# Run complete unit and integration test suite (323 tests across 26 suites)
+# Run complete unit and integration test suite (375 tests across 31 suites)
 npm test
 
 # Run End-to-End matrix permutations test (DWD/WiF permutations)
