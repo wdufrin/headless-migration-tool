@@ -1,7 +1,7 @@
 # 📘 Gemini Enterprise Admin Migration Platform
 ## Administrator & Operator User Guide
 
-**Document Version:** `v1.7.0 (Enterprise Release)`  
+**Document Version:** `v1.8.0 (Enterprise Release)`  
 **Target Audience:** Cloud Architects, Migration Operators & IT Administrators  
 **Supported Assets:** Research Notebooks, Grounding Sources, Custom Agents, User Skills *(Experimental)*, Chat Sessions, Personalized Memories *(Experimental)*, Studio Artifacts & Projects *(WIP)*  
 **Handover Formats:** Interactive Checklists, Single-ZIP Archives, Office PPTX/DOCX, Offline HTML5 Apps  

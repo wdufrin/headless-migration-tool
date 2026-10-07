@@ -265,10 +265,10 @@ export class DiscoveryEngineClient {
     );
   }
 
-  async getAgent(agentName: string, env: EnvironmentConfig): Promise<Agent> {
+  async getAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<Agent> {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/${agentName}`;
-    return this.request<Agent>(url, 'GET', undefined, env.projectId);
+    return this.request<Agent>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
   }
 
   async createAgent(env: EnvironmentConfig, payload: any, agentId?: string, forUserEmail?: string): Promise<Agent> {
@@ -306,10 +306,223 @@ export class DiscoveryEngineClient {
     return this.request<Agent>(url, 'PATCH', { sharingConfig }, env.projectId, undefined, forUserEmail);
   }
 
-  async publishAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
+  async deployLowCodeAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
+    if (!agentName || !agentName.trim() || !agentName.includes('/agents/')) {
+      throw new Error(`Invalid agent resource name for deployLowCode: "${agentName}"`);
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    const url = `${baseUrl}/v1alpha/${agentName}?updateMask=state`;
-    return this.request<any>(url, 'PATCH', { state: 'ENABLED' }, env.projectId, undefined, forUserEmail);
+    const url = `${baseUrl}/v1alpha/${agentName}:deployLowCode`;
+    return this.request<any>(url, 'POST', { deployMode: 'DEPLOY' }, env.projectId, undefined, forUserEmail);
+  }
+
+  async ensureAgentExecutionConsent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<void> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    let resolvedAgentName = agentName;
+    const projectSegment = agentName.split('/')[1] || '';
+    if (!/^\d+$/.test(projectSegment)) {
+      const fetched = await this.getAgent(agentName, env, forUserEmail);
+      if (fetched?.name) {
+        resolvedAgentName = fetched.name;
+      }
+    }
+    const engineMatch = resolvedAgentName.match(/^(projects\/[^/]+\/locations\/[^/]+\/collections\/[^/]+\/engines\/[^/]+)/);
+    const engineName = engineMatch
+      ? engineMatch[1]
+      : `projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}`;
+
+    let existingUserData: any;
+    try {
+      existingUserData = await this.request<any>(
+        `${baseUrl}/v1alpha/${engineName}:getEngineUserData`,
+        'POST',
+        {},
+        env.projectId,
+        undefined,
+        forUserEmail
+      );
+    } catch (getErr: any) {
+      const initRes = await this.request<any>(
+        `${baseUrl}/v1alpha/${engineName}:initializeEngineUserData`,
+        'POST',
+        {},
+        env.projectId,
+        undefined,
+        forUserEmail
+      );
+      existingUserData = initRes?.engineUserData || initRes;
+    }
+
+    const existingConsents: Array<{ dataConnector: string; consentState: string }> = Array.isArray(
+      existingUserData?.connectorConsents
+    )
+      ? existingUserData.connectorConsents.filter((c: any) => c?.dataConnector !== '_agent_execution_grant_')
+      : [];
+    existingConsents.push({
+      dataConnector: '_agent_execution_grant_',
+      consentState: 'CONSENT_GIVEN'
+    });
+
+    await this.request<any>(
+      `${baseUrl}/v1alpha/${engineName}:updateEngineUserData`,
+      'POST',
+      {
+        engineUserData: {
+          ...(existingUserData?.user ? { user: existingUserData.user } : {}),
+          engine: existingUserData?.engine || engineName,
+          connectorConsents: existingConsents
+        },
+        updateMask: 'connectorConsents'
+      },
+      env.projectId,
+      undefined,
+      forUserEmail
+    );
+  }
+
+  async normalizeWorkflowConnectorProjectNumber(
+    agentName: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<boolean> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const fetched = await this.getAgent(agentName, env, forUserEmail);
+    const resolvedName = fetched?.name || agentName;
+    const numericProj = resolvedName.split('/')[1] || '';
+    if (!/^\d+$/.test(numericProj) || numericProj === env.projectId || !fetched?.workflowAgentDefinition) {
+      return false;
+    }
+    const wfStr = JSON.stringify(fetched.workflowAgentDefinition);
+    const targetPrefix = `projects/${env.projectId}/`;
+    if (!wfStr.includes(targetPrefix)) {
+      return false;
+    }
+    const patchedWf = JSON.parse(wfStr.split(targetPrefix).join(`projects/${numericProj}/`));
+    await this.request<any>(
+      `${baseUrl}/v1alpha/${resolvedName}?updateMask=workflowAgentDefinition`,
+      'PATCH',
+      { workflowAgentDefinition: patchedWf },
+      env.projectId,
+      undefined,
+      forUserEmail
+    );
+    return true;
+  }
+
+  async publishWorkflowAgent(
+    agentName: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string,
+    agent?: Partial<Agent>
+  ): Promise<any> {
+    if (!agentName || !agentName.trim() || !agentName.includes('/agents/')) {
+      throw new Error(`Invalid agent resource name for publish: "${agentName}"`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${agentName}:publish`;
+
+    // If the workflow has a CONNECTOR_EVENT_TRIGGER and targetEnv.projectId is a non-numeric project ID,
+    // Discovery Engine's trigger service requires the numeric project number in dataConnector.name
+    // (otherwise :publish returns 500 "Failed to sync schedules for agent").
+    if (
+      agent?.workflowAgentDefinition &&
+      !/^\d+$/.test(env.projectId) &&
+      JSON.stringify(agent.workflowAgentDefinition).includes('CONNECTOR_EVENT_TRIGGER')
+    ) {
+      await this.normalizeWorkflowConnectorProjectNumber(agentName, env, forUserEmail);
+    }
+
+    try {
+      return await this.request<any>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (msg.includes('Agent execution consent not granted')) {
+        await this.ensureAgentExecutionConsent(agentName, env, forUserEmail);
+        return await this.request<any>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+      }
+      if (msg.includes('Failed to sync schedules for agent')) {
+        const normalized = await this.normalizeWorkflowConnectorProjectNumber(agentName, env, forUserEmail);
+        if (normalized) {
+          return await this.request<any>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+        }
+      }
+      throw err;
+    }
+  }
+
+  async requestAgentReview(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<Agent> {
+    if (!agentName || !agentName.trim() || !agentName.includes('/agents/')) {
+      throw new Error(`Invalid agent resource name for requestAgentReview: "${agentName}"`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${agentName}:requestAgentReview`;
+    return this.request<Agent>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+  }
+
+  async deployManagedAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
+    if (!agentName || !agentName.trim() || !agentName.includes('/agents/')) {
+      throw new Error(`Invalid agent resource name for deploy: "${agentName}"`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${agentName}:deploy`;
+    return this.request<any>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+  }
+
+  async enableAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
+    if (!agentName || !agentName.trim() || !agentName.includes('/agents/')) {
+      throw new Error(`Invalid agent resource name for enableAgent: "${agentName}"`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${agentName}:enableAgent`;
+    return this.request<any>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+  }
+
+  async publishAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string, agent?: Partial<Agent>): Promise<any> {
+    if (!agentName || !agentName.trim() || !agentName.includes('/agents/')) {
+      throw new Error(`Invalid agent resource name for publishAgent: "${agentName}"`);
+    }
+
+    if (agent) {
+      if (agent.lowCodeAgentDefinition) {
+        return this.deployLowCodeAgent(agentName, env, forUserEmail);
+      }
+      if (agent.workflowAgentDefinition || agent.agentDesignerAgentDefinition) {
+        return this.publishWorkflowAgent(agentName, env, forUserEmail, agent);
+      }
+      if (agent.managedAgentDefinition || agent.appAgentDefinition) {
+        return this.deployManagedAgent(agentName, env, forUserEmail);
+      }
+      return this.enableAgent(agentName, env, forUserEmail);
+    }
+
+    // When agent definition is not supplied by caller (e.g. direct route by agentId),
+    // try :deployLowCode first (most common for No-Code agents), then :publish, then :enableAgent
+    // ONLY when the backend reports an agent definition type mismatch.
+    try {
+      return await this.deployLowCodeAgent(agentName, env, forUserEmail);
+    } catch (lowCodeErr: any) {
+      const msg = String(lowCodeErr?.message || '');
+      const isDefinitionMismatch =
+        msg.includes('LowCodeAgentDefinition is not set') ||
+        msg.includes('DeployLowCodeAgent can not be used') ||
+        msg.includes('Agent does not have a low code agent definition') ||
+        msg.includes('Invalid agent definition');
+      if (!isDefinitionMismatch) {
+        throw lowCodeErr;
+      }
+      try {
+        return await this.publishWorkflowAgent(agentName, env, forUserEmail);
+      } catch (workflowErr: any) {
+        const wfMsg = String(workflowErr?.message || '');
+        const isWfMismatch =
+          wfMsg.includes('WorkflowAgentDefinition is not set') ||
+          wfMsg.includes('AgentDesignerAgentDefinition is not set') ||
+          wfMsg.includes('Invalid agent definition');
+        if (!isWfMismatch) {
+          throw workflowErr;
+        }
+        return await this.enableAgent(agentName, env, forUserEmail);
+      }
+    }
   }
 
   async deleteAgent(agentName: string, location: string = 'global', projectId?: string): Promise<any> {
@@ -700,6 +913,44 @@ export class DiscoveryEngineClient {
           'roles/owner',
           'roles/editor'
         ]);
+        const isCustomAdminOrOwnerRole = (lowerRole: string): boolean => {
+          if (!lowerRole.startsWith('projects/') && !lowerRole.startsWith('organizations/')) return false;
+          const roleId = lowerRole.split('/').pop() || lowerRole;
+          if (
+            roleId.includes('restricted') ||
+            roleId.includes('enduser') ||
+            roleId.includes('viewer') ||
+            roleId.includes('reader') ||
+            roleId.endsWith('user')
+          ) {
+            return false;
+          }
+          return (
+            roleId.includes('admin') ||
+            roleId.includes('owner') ||
+            roleId.includes('editor') ||
+            roleId.includes('agentspace')
+          );
+        };
+
+        const adminGroupsByPool = new Map<string, Set<string>>();
+        for (const binding of res.bindings) {
+          const role = String(binding?.role || '').trim();
+          const lowerRole = role.toLowerCase();
+          if (!adminDeleteRoles.has(lowerRole) && !isCustomAdminOrOwnerRole(lowerRole)) continue;
+          for (const member of binding?.members || []) {
+            if (typeof member !== 'string') continue;
+            const poolMatch = member.match(/workforcePools\/([^/]+)\/group\/(.+)$/i);
+            if (poolMatch?.[1] && poolMatch?.[2]) {
+              const pId = poolMatch[1];
+              const gId = poolMatch[2].trim();
+              const set = adminGroupsByPool.get(pId) || new Set<string>();
+              set.add(gId);
+              adminGroupsByPool.set(pId, set);
+            }
+          }
+        }
+
         const groupsByPool = new Map<string, string[]>();
         for (const binding of res.bindings) {
           const role = String(binding?.role || '').trim();
@@ -709,13 +960,14 @@ export class DiscoveryEngineClient {
             lowerRole === 'roles/viewer' ||
             lowerRole === 'roles/editor' ||
             lowerRole === 'roles/owner';
-          if (!isDiscoveryRole || adminDeleteRoles.has(lowerRole)) continue;
+          if (!isDiscoveryRole || adminDeleteRoles.has(lowerRole) || isCustomAdminOrOwnerRole(lowerRole)) continue;
           for (const member of binding?.members || []) {
             if (typeof member !== 'string') continue;
             const poolMatch = member.match(/workforcePools\/([^/]+)\/group\/(.+)$/i);
             if (poolMatch?.[1] && poolMatch?.[2]) {
               const pId = poolMatch[1];
               const gId = poolMatch[2].trim();
+              if (adminGroupsByPool.get(pId)?.has(gId)) continue;
               const list = groupsByPool.get(pId) || [];
               list.push(gId);
               groupsByPool.set(pId, list);
@@ -740,26 +992,38 @@ export class DiscoveryEngineClient {
   private async roleGrantsPermission(role: string, permission: string, projectId: string): Promise<boolean> {
     const normalizedRole = (role || '').trim();
     if (!normalizedRole) return false;
+    const lowerRole = normalizedRole.toLowerCase();
 
     if (
-      normalizedRole === 'roles/owner' ||
-      normalizedRole === 'roles/editor' ||
-      normalizedRole === 'roles/discoveryengine.admin'
+      lowerRole === 'roles/owner' ||
+      lowerRole === 'roles/editor' ||
+      lowerRole === 'roles/discoveryengine.admin' ||
+      lowerRole === 'roles/discoveryengine.agentspaceadmin' ||
+      lowerRole === 'roles/discoveryengine.notebooklmowner' ||
+      lowerRole === 'roles/discoveryengine.notebookowner'
     ) {
       return true;
     }
 
     if (
-      normalizedRole === 'roles/viewer' ||
-      normalizedRole === 'roles/browser' ||
-      normalizedRole === 'roles/discoveryengine.user' ||
-      normalizedRole === 'roles/discoveryengine.viewer'
+      lowerRole === 'roles/viewer' ||
+      lowerRole === 'roles/browser' ||
+      lowerRole === 'roles/discoveryengine.user' ||
+      lowerRole === 'roles/discoveryengine.viewer' ||
+      lowerRole === 'roles/discoveryengine.editor' ||
+      lowerRole === 'roles/discoveryengine.notebooklmuser' ||
+      lowerRole === 'roles/discoveryengine.notebookeditor' ||
+      lowerRole === 'roles/discoveryengine.notebookviewer' ||
+      lowerRole === 'roles/discoveryengine.agentspaceuser' ||
+      lowerRole === 'roles/discoveryengine.agentspaceeditor' ||
+      lowerRole === 'roles/discoveryengine.agentspaceviewer' ||
+      lowerRole === 'roles/discoveryengine.agentspacerestricteduser'
     ) {
       return false;
     }
 
     // Predefined roles for other GCP services do not grant discoveryengine.* permissions
-    if (normalizedRole.startsWith('roles/') && !normalizedRole.startsWith('roles/discoveryengine.')) {
+    if (lowerRole.startsWith('roles/') && !lowerRole.startsWith('roles/discoveryengine.')) {
       return false;
     }
 
@@ -781,7 +1045,17 @@ export class DiscoveryEngineClient {
 
     const cachedPerms = this.rolePermissionsCache.get(normalizedRole);
     if (Array.isArray(cachedPerms)) {
-      return cachedPerms.includes(permission);
+      if (cachedPerms.includes(permission)) return true;
+      // Note: `discoveryengine.notebooks.delete` is a v1alpha data-plane permission that is
+      // omitted from public `iam.roles.get` responses; `discoveryengine.notebooks.setIamPolicy`
+      // is its public 1:1 counterpart in `notebookOwner` / `notebookLmOwner`.
+      if (
+        permission === 'discoveryengine.notebooks.delete' &&
+        cachedPerms.includes('discoveryengine.notebooks.setIamPolicy')
+      ) {
+        return true;
+      }
+      return false;
     }
 
     // Fallback heuristic when iam.roles.get is unavailable (e.g., caller lacks iam.roles.get on custom role)
@@ -836,7 +1110,7 @@ export class DiscoveryEngineClient {
         GcpAuthService.isExternalIdentityDomain(cleanEmail) ||
         this.auth.getLastUsedImpersonationMode?.(cleanEmail) === 'WIF');
 
-    const matchedRoles = new Set<string>();
+    const matchedRoles = new Map<string, string[]>();
     for (const binding of policy.bindings) {
       if (!binding?.role || !Array.isArray(binding.members)) continue;
       for (const rawMember of binding.members) {
@@ -857,16 +1131,20 @@ export class DiscoveryEngineClient {
           isExplicitPrincipalSubject ||
           isWorkforcePoolWildcard
         ) {
-          matchedRoles.add(binding.role);
-          break;
+          const members = matchedRoles.get(binding.role) || [];
+          members.push(String(rawMember).trim());
+          matchedRoles.set(binding.role, members);
         }
       }
     }
 
     const granted: string[] = [];
     for (const perm of permissions) {
-      for (const role of matchedRoles) {
+      for (const [role, members] of matchedRoles.entries()) {
         if (await this.roleGrantsPermission(role, perm, projectId)) {
+          logger.info(
+            `[IAM POLICY MATCH] User "${cleanEmail}" granted "${perm}" on project "${projectId}" via role="${role}" (member: ${members.join(', ')})`
+          );
           granted.push(perm);
           break;
         }

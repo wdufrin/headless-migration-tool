@@ -612,6 +612,363 @@ describe('AgentMigrator Engine', () => {
     // setAgentIamPolicy must NEVER be called on private agents
     expect(setIamSpy).not.toHaveBeenCalled();
   });
+
+  it('should normalize lowCodeAgentDefinition draft nodes/rootAgentId from deployedNodes and strip OUTPUT_ONLY deployment fields in buildAgentPayload', () => {
+    const sourceAgent: Agent = {
+      name: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/lc-agent-1',
+      displayName: 'JIRA Bug Triage No-Code Agent',
+      description: 'Triages JIRA issues using connector data stores',
+      lowCodeAgentDefinition: {
+        // Simulates a source agent where only deployedNodes / deployedRootAgentId are populated
+        deployedRootAgentId: 'node-root-1',
+        deployedNodes: [
+          {
+            id: 'node-root-1',
+            displayName: 'Start',
+            llmAgentNode: {
+              instruction: 'Search JIRA issues.',
+              model: 'gemini-2.5-flash',
+              dataStoreSpecs: {
+                specs: [
+                  {
+                    dataStore: 'projects/fedex-test-project/locations/global/collections/default_collection/dataStores/jira_ds_old_issue'
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        deployedSchedules: [{ name: 'sched-1', cron: '0 9 * * *' }],
+        deployedAgentLinkedResources: { connectorIds: ['jira_ds_old'] },
+        deploymentInfo: { status: 'DEPLOYED' },
+        validationErrors: [{ errorType: 'MISSING_ROOT_AGENT_ID' }],
+        ownerName: 'Alice'
+      } as any
+    };
+
+    const payload = migrator.buildAgentPayload(
+      sourceAgent,
+      sourceEnv,
+      targetEnv,
+      { jira_ds_old_issue: 'jira_ds_new_issue' },
+      {}
+    );
+
+    expect(payload.lowCodeAgentDefinition).toBeDefined();
+    expect(payload.lowCodeAgentDefinition.rootAgentId).toBe('node-root-1');
+    expect(payload.lowCodeAgentDefinition.nodes).toHaveLength(1);
+    expect(
+      payload.lowCodeAgentDefinition.nodes[0].llmAgentNode.dataStoreSpecs.specs[0].dataStore
+    ).toBe('projects/fedex-prod-project/locations/global/collections/default_collection/dataStores/jira_ds_new_issue');
+    expect(payload.lowCodeAgentDefinition.draftSchedules).toEqual([{ name: 'sched-1', cron: '0 9 * * *' }]);
+
+    // OUTPUT_ONLY fields must be stripped before CreateAgent
+    expect(payload.lowCodeAgentDefinition.deployedNodes).toBeUndefined();
+    expect(payload.lowCodeAgentDefinition.deployedRootAgentId).toBeUndefined();
+    expect(payload.lowCodeAgentDefinition.deployedSchedules).toBeUndefined();
+    expect(payload.lowCodeAgentDefinition.deployedAgentLinkedResources).toBeUndefined();
+    expect(payload.lowCodeAgentDefinition.deploymentInfo).toBeUndefined();
+    expect(payload.lowCodeAgentDefinition.validationErrors).toBeUndefined();
+    expect(payload.lowCodeAgentDefinition.ownerName).toBeUndefined();
+  });
+
+  it('should dispatch the exact Discovery Engine RPC (:deployLowCode, :publish, :deploy, :enableAgent) based on agent definition', async () => {
+    const freshClient = new DiscoveryEngineClient(dummyAuth);
+    const requestSpy = vi.spyOn(freshClient as any, 'request').mockResolvedValue({ status: 'OK' });
+
+    const agentResourceName =
+      'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/ag-101';
+
+    // 1. Low-Code (No-Code) Agent -> POST :deployLowCode with { deployMode: 'DEPLOY' }
+    await freshClient.publishAgent(agentResourceName, targetEnv, 'owner@applhome.com', {
+      name: agentResourceName,
+      displayName: 'No-Code Agent',
+      lowCodeAgentDefinition: { rootAgentId: '1', nodes: [{ id: '1' }] }
+    });
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      `https://discoveryengine.googleapis.com/v1alpha/${agentResourceName}:deployLowCode`,
+      'POST',
+      { deployMode: 'DEPLOY' },
+      'fedex-prod-project',
+      undefined,
+      'owner@applhome.com'
+    );
+
+    // 2. Workflow Agent -> POST :publish
+    await freshClient.publishAgent(agentResourceName, targetEnv, 'owner@applhome.com', {
+      name: agentResourceName,
+      displayName: 'Workflow Agent',
+      workflowAgentDefinition: { draftAgentFlow: { steps: [] } }
+    });
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      `https://discoveryengine.googleapis.com/v1alpha/${agentResourceName}:publish`,
+      'POST',
+      {},
+      'fedex-prod-project',
+      undefined,
+      'owner@applhome.com'
+    );
+
+    // 3. Managed Agent -> POST :deploy
+    await freshClient.publishAgent(agentResourceName, targetEnv, undefined, {
+      name: agentResourceName,
+      displayName: 'Managed Agent',
+      managedAgentDefinition: { toolSettings: {} }
+    });
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      `https://discoveryengine.googleapis.com/v1alpha/${agentResourceName}:deploy`,
+      'POST',
+      {},
+      'fedex-prod-project',
+      undefined,
+      undefined
+    );
+
+    // 4. ADK / A2A Agent -> POST :enableAgent
+    await freshClient.publishAgent(agentResourceName, targetEnv, undefined, {
+      name: agentResourceName,
+      displayName: 'ADK Agent',
+      adkAgentDefinition: { provisionedReasoningEngine: { reasoningEngine: 'projects/p/locations/l/reasoningEngines/1' } }
+    });
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      `https://discoveryengine.googleapis.com/v1alpha/${agentResourceName}:enableAgent`,
+      'POST',
+      {},
+      'fedex-prod-project',
+      undefined,
+      undefined
+    );
+  });
+
+  it('should automatically grant _agent_execution_grant_ consent and retry when publishing a scheduled workflow agent', async () => {
+    const freshClient = new DiscoveryEngineClient(dummyAuth);
+    const wfResourceName =
+      'projects/180054373655/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/wf-sched-1';
+
+    const requestSpy = vi
+      .spyOn(freshClient as any, 'request')
+      // 1st call: :publish fails with missing user consent
+      .mockRejectedValueOnce(
+        new Error('Discovery Engine API Request Failed [400]: Agent execution consent not granted for user.')
+      )
+      // 2nd call: :getEngineUserData returns numeric project engineUserData
+      .mockResolvedValueOnce({
+        engine: 'projects/180054373655/locations/global/collections/default_collection/engines/prod_engine_1',
+        connectorConsents: []
+      })
+      // 3rd call: :updateEngineUserData succeeds
+      .mockResolvedValueOnce({
+        engine: 'projects/180054373655/locations/global/collections/default_collection/engines/prod_engine_1'
+      })
+      // 4th call: retry :publish succeeds
+      .mockResolvedValueOnce({
+        activeRevision: `${wfResourceName}/revisions/1`
+      });
+
+    const res = await freshClient.publishWorkflowAgent(wfResourceName, targetEnv, 'owner@applhome.com');
+    expect(res.activeRevision).toBe(`${wfResourceName}/revisions/1`);
+    expect(requestSpy).toHaveBeenCalledTimes(4);
+    expect(requestSpy.mock.calls[2][0]).toContain(':updateEngineUserData');
+    expect(requestSpy.mock.calls[2][2]).toEqual({
+      engineUserData: {
+        engine: 'projects/180054373655/locations/global/collections/default_collection/engines/prod_engine_1',
+        connectorConsents: [
+          {
+            dataConnector: '_agent_execution_grant_',
+            consentState: 'CONSENT_GIVEN'
+          }
+        ]
+      },
+      updateMask: 'connectorConsents'
+    });
+  });
+
+  it('should normalize string projectId to numeric project number in CONNECTOR_EVENT_TRIGGER workflow before publishing', async () => {
+    const freshClient = new DiscoveryEngineClient(dummyAuth);
+    const wfResourceName =
+      'projects/180054373655/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/wf-conn-trig-1';
+    const wfAgent: Agent = {
+      name: wfResourceName,
+      displayName: 'Email Action Analyzer',
+      workflowAgentDefinition: {
+        agentFlow: {
+          nodes: [
+            {
+              id: 'when_an_email_is_received',
+              nodeType: 'CONNECTOR_EVENT_TRIGGER',
+              connectorEventTrigger: {
+                dataConnector: {
+                  name: 'projects/fedex-prod-project/locations/global/collections/gmail_123/dataConnector',
+                  dataSource: 'google_mail'
+                }
+              }
+            }
+          ]
+        }
+      } as any
+    };
+
+    const requestSpy = vi
+      .spyOn(freshClient as any, 'request')
+      // 1st call: getAgent returns numeric project name + string projectId in dataConnector.name
+      .mockResolvedValueOnce(wfAgent)
+      // 2nd call: PATCH ?updateMask=workflowAgentDefinition
+      .mockResolvedValueOnce(wfAgent)
+      // 3rd call: POST :publish
+      .mockResolvedValueOnce({ activeRevision: `${wfResourceName}/revisions/2` });
+
+    const res = await freshClient.publishWorkflowAgent(wfResourceName, targetEnv, 'owner@applhome.com', wfAgent);
+    expect(res.activeRevision).toBe(`${wfResourceName}/revisions/2`);
+    expect(requestSpy).toHaveBeenCalledTimes(3);
+    expect(requestSpy.mock.calls[1][0]).toContain('?updateMask=workflowAgentDefinition');
+    expect(requestSpy.mock.calls[1][1]).toBe('PATCH');
+    expect(
+      requestSpy.mock.calls[1][2].workflowAgentDefinition.agentFlow.nodes[0].connectorEventTrigger.dataConnector.name
+    ).toBe('projects/180054373655/locations/global/collections/gmail_123/dataConnector');
+  });
+
+  it('should reject malformed agent resource names and propagate backend validation/permission errors without swallowing', async () => {
+    const freshClient = new DiscoveryEngineClient(dummyAuth);
+
+    // Negative test 1: empty or malformed agentName
+    await expect(freshClient.publishAgent('', targetEnv)).rejects.toThrow(/Invalid agent resource name/);
+    await expect(freshClient.publishAgent('   ', targetEnv)).rejects.toThrow(/Invalid agent resource name/);
+    await expect(freshClient.publishAgent('projects/p/locations/global', targetEnv)).rejects.toThrow(
+      /Invalid agent resource name/
+    );
+    await expect(freshClient.deployLowCodeAgent('invalid-name', targetEnv)).rejects.toThrow(
+      /Invalid agent resource name/
+    );
+    await expect(freshClient.requestAgentReview('invalid-name', targetEnv)).rejects.toThrow(
+      /Invalid agent resource name/
+    );
+
+    // Negative test 2: when agent definition is omitted and :deployLowCode fails with validation or permission error,
+    // it must NOT swallow the error or fall back to :publish / :enableAgent
+    const agentResourceName =
+      'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/ag-broken';
+    const requestSpy = vi
+      .spyOn(freshClient as any, 'request')
+      .mockRejectedValueOnce(new Error('Discovery Engine API Request Failed [400]: Agent has validation errors.'));
+
+    await expect(freshClient.publishAgent(agentResourceName, targetEnv)).rejects.toThrow(
+      'Discovery Engine API Request Failed [400]: Agent has validation errors.'
+    );
+    expect(requestSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should only publish/deploy agents on target that were published/deployed in source, and keep source drafts in draft', async () => {
+    const draftLowCode: Agent = {
+      name: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/draft-lc',
+      displayName: 'Draft No-Code Agent',
+      state: 'PRIVATE',
+      owner: 'alice@fedex.com',
+      lowCodeAgentDefinition: {
+        rootAgentId: '1',
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Draft only' } }]
+        // No deployedNodes or deployedRootAgentId -> Draft in source
+      }
+    };
+
+    const publishedLowCode: Agent = {
+      name: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/pub-lc',
+      displayName: 'Published No-Code Agent',
+      state: 'ENABLED',
+      sharingConfig: { scope: 'RESTRICTED' },
+      owner: 'alice@fedex.com',
+      lowCodeAgentDefinition: {
+        rootAgentId: '1',
+        nodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Published in source' } }],
+        deployedRootAgentId: '1',
+        deployedNodes: [{ id: '1', displayName: 'Start', llmAgentNode: { instruction: 'Published in source' } }]
+      } as any
+    };
+
+    const draftWorkflow: Agent = {
+      name: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/draft-wf',
+      displayName: 'Draft Workflow Agent',
+      state: 'PRIVATE',
+      owner: 'alice@fedex.com',
+      workflowAgentDefinition: {
+        draftAgentFlow: { steps: [] }
+        // No activeRevision or deployedAgentFlow -> Draft in source
+      }
+    };
+
+    const publishedWorkflow: Agent = {
+      name: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/pub-wf',
+      displayName: 'Published Workflow Agent',
+      state: 'ENABLED',
+      owner: 'alice@fedex.com',
+      workflowAgentDefinition: {
+        draftAgentFlow: { steps: [] },
+        activeRevision: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/pub-wf/revisions/1'
+      } as any
+    };
+
+    dummyClient.listAgents = vi.fn().mockImplementation(async (env: any) => {
+      if (env.projectId === sourceEnv.projectId) {
+        return [draftLowCode, publishedLowCode, draftWorkflow, publishedWorkflow];
+      }
+      return [];
+    });
+    dummyClient.getAgentIamPolicy = vi.fn().mockResolvedValue({
+      bindings: [
+        { role: 'roles/discoveryengine.agentOwner', members: ['user:alice@fedex.com'] },
+        { role: 'roles/discoveryengine.agentUser', members: ['user:bob@fedex.com'] }
+      ]
+    });
+    dummyClient.createAgent = vi.fn().mockImplementation(async (_env: any, payload: any) => ({
+      name: `projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-${payload.displayName.replace(/\s+/g, '-').toLowerCase()}`
+    }));
+
+    const callOrder: string[] = [];
+    const publishSpy = vi.fn().mockImplementation(async (name: string) => {
+      callOrder.push(`publish:${name.split('/').pop()}`);
+      return {};
+    });
+    const reviewSpy = vi.fn().mockImplementation(async (name: string) => {
+      callOrder.push(`review:${name.split('/').pop()}`);
+      return {};
+    });
+    const setIamSpy = vi.fn().mockImplementation(async (name: string) => {
+      callOrder.push(`setIam:${name.split('/').pop()}`);
+      return {};
+    });
+    dummyClient.publishAgent = publishSpy;
+    dummyClient.requestAgentReview = reviewSpy;
+    dummyClient.setAgentIamPolicy = setIamSpy;
+
+    const results = await migrator.migrateAgents(
+      sourceEnv,
+      targetEnv,
+      {
+        dryRun: false,
+        publishAgents: true, // Even with publishAgents: true, source drafts must remain in draft
+        userFilter: ['alice@fedex.com'],
+        concurrency: 1
+      },
+      {},
+      {},
+      { 'alice@fedex.com': 'alice@fedex.com', 'bob@fedex.com': 'bob@fedex.com' }
+    );
+
+    expect(results).toHaveLength(4);
+    expect(publishSpy).toHaveBeenCalledTimes(2);
+    const publishedTargetNames = publishSpy.mock.calls.map(c => c[0]);
+    expect(publishedTargetNames).toEqual([
+      'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-published-no-code-agent',
+      'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-published-workflow-agent'
+    ]);
+    // Verify that for the shared agent, publish (:deployLowCode) happens BEFORE :requestAgentReview and :setIamPolicy
+    expect(callOrder).toEqual([
+      'publish:tgt-published-no-code-agent',
+      'review:tgt-published-no-code-agent',
+      'setIam:tgt-published-no-code-agent',
+      'publish:tgt-published-workflow-agent'
+    ]);
+  });
 });
+
 
 

@@ -462,6 +462,52 @@ export class AgentMigrator {
 
         const parsedDef = JSON.parse(defStr);
 
+        if (key === 'lowCodeAgentDefinition' && parsedDef && typeof parsedDef === 'object') {
+          if (
+            (!Array.isArray(parsedDef.nodes) || parsedDef.nodes.length === 0) &&
+            Array.isArray(parsedDef.deployedNodes) &&
+            parsedDef.deployedNodes.length > 0
+          ) {
+            parsedDef.nodes = JSON.parse(JSON.stringify(parsedDef.deployedNodes));
+          }
+          if (
+            (!Array.isArray(parsedDef.draftSchedules) || parsedDef.draftSchedules.length === 0) &&
+            Array.isArray(parsedDef.deployedSchedules) &&
+            parsedDef.deployedSchedules.length > 0
+          ) {
+            parsedDef.draftSchedules = JSON.parse(JSON.stringify(parsedDef.deployedSchedules));
+          }
+          if (!parsedDef.rootAgentId) {
+            const fallbackRootId =
+              parsedDef.deployedRootAgentId ||
+              (Array.isArray(parsedDef.nodes) && parsedDef.nodes.length > 0 ? parsedDef.nodes[0]?.id : undefined);
+            if (fallbackRootId) {
+              parsedDef.rootAgentId = fallbackRootId;
+            }
+          }
+
+          delete parsedDef.deployedNodes;
+          delete parsedDef.deployedRootAgentId;
+          delete parsedDef.deployedSchedules;
+          delete parsedDef.deployedAgentLinkedResources;
+          delete parsedDef.deployedAgentFiles;
+          delete parsedDef.deploymentInfo;
+          delete parsedDef.validationErrors;
+          delete parsedDef.ownerName;
+          delete parsedDef.owner;
+        }
+
+        if (
+          (key === 'workflowAgentDefinition' || key === 'agentDesignerAgentDefinition') &&
+          parsedDef &&
+          typeof parsedDef === 'object'
+        ) {
+          delete parsedDef.activeRevision;
+          delete parsedDef.revisions;
+          delete parsedDef.ownerName;
+          delete parsedDef.owner;
+        }
+
         // Deduplicate dataConnectors and dataStoreSpecs.specs within LowCode / Workflow nodes
         const parsedNodeArrays = [parsedDef.nodes, parsedDef.deployedNodes].filter(Array.isArray);
         for (const nodes of parsedNodeArrays) {
@@ -596,12 +642,14 @@ export class AgentMigrator {
    *   and no `sharingConfig.scope`.
    */
   isSourceAgentPublished(agent: Agent): boolean {
-    if ((agent as any).state === 'DRAFT') return false;
+    if ((agent as any).state === 'DRAFT' || (agent as any).state === 'DISABLED') return false;
     if (agent.state === 'ENABLED') return true;
     if (agent.sharingConfig?.scope === 'ALL_USERS' || agent.sharingConfig?.scope === 'RESTRICTED') return true;
     if (agent.lowCodeAgentDefinition?.deployedNodes && agent.lowCodeAgentDefinition.deployedNodes.length > 0) return true;
     if ((agent.lowCodeAgentDefinition as any)?.deployedRootAgentId) return true;
     if ((agent.workflowAgentDefinition as any)?.deployedAgentFlow) return true;
+    if ((agent.workflowAgentDefinition as any)?.activeRevision) return true;
+    if ((agent as any).agentDesignerAgentDefinition?.activeRevision) return true;
     if (agent.activeRevision) return true;
     if (agent.adkAgentDefinition || agent.a2aAgentDefinition) return true;
     return false;
@@ -967,44 +1015,19 @@ export class AgentMigrator {
           logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
         }
 
-        // 1. Replicate sharing configuration if explicitly set; preserve private scope by default to protect employee data privacy
-        if (options.preserveSharing !== false && agent.sharingConfig?.scope) {
-          const effectiveSharing = agent.sharingConfig;
-          try {
-            await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, userOwner);
-            logger.info(`Sharing configuration configured for agent "${result.displayName}" (Scope: ${effectiveSharing.scope})`);
-          } catch (shareErr: any) {
-            try {
-              await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, undefined);
-              logger.info(`Sharing configuration configured via Service Account for agent "${result.displayName}"`);
-            } catch (retryErr: any) {
-              logger.warn(`Could not set sharing config on agent "${result.displayName}": ${shareErr.message}`);
-            }
-          }
-        } else if (!agent.sharingConfig?.scope) {
-          logger.info(`Agent "${result.displayName}" has no public sharing scope; preserving private scope.`);
-        }
+        // 1. Publish / Deploy agent on the target instance ONLY if it was already published/deployed
+        // in the source environment. If it was in draft in the source environment, keep it in draft on target.
+        // Note: Deploy/Publish MUST run before RequestAgentReview / SetIamPolicy because Discovery Engine
+        // requires `deployed_root_agent_id` to be populated before an agent can transition out of PRIVATE.
+        const shouldPublishOrDeploy = this.isSourceAgentPublished(agent);
 
-        // 2. Replicate IAM policy ONLY if the agent is shared (Google rejects IAM on private agents with HTTP 400)
-        const isSharedScope =
-          agent.sharingConfig?.scope === 'ALL_USERS' ||
-          agent.sharingConfig?.scope === 'RESTRICTED';
-        if (isSharedScope && agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
+        if (shouldPublishOrDeploy) {
           try {
-            await this.restoreAgentIamPolicy(newAgentName, agent.iamPolicy, targetEnv, identityMapping);
-          } catch (iamErr: any) {
-            logger.warn(`Could not set IAM policy on agent "${result.displayName}" (${iamErr.message}). Agent creation succeeded.`);
-          }
-        }
-
-        // 3. Publish agent if requested or if published in source
-        if (options.publishAgents !== false && (options.publishAgents === true || this.isSourceAgentPublished(agent))) {
-          try {
-            await this.client.publishAgent(newAgentName, targetEnv, userOwner);
+            await this.client.publishAgent(newAgentName, targetEnv, userOwner, agent);
             logger.info(`Published agent "${result.displayName}".`);
           } catch (pubErr: any) {
             try {
-              await this.client.publishAgent(newAgentName, targetEnv, undefined);
+              await this.client.publishAgent(newAgentName, targetEnv, undefined, agent);
               logger.info(`Published agent "${result.displayName}" via Service Account.`);
             } catch (retryPubErr: any) {
               logger.warn(`Notice for agent "${result.displayName}": ${pubErr.message}`);
@@ -1012,6 +1035,50 @@ export class AgentMigrator {
           }
         } else {
           logger.info(`Preserved agent "${result.displayName}" as native editable draft.`);
+        }
+
+        // 2. Replicate sharing state & IAM policy ONLY if the source agent was published and shared.
+        const isSharedScope =
+          agent.sharingConfig?.scope === 'ALL_USERS' ||
+          agent.sharingConfig?.scope === 'RESTRICTED';
+
+        if (shouldPublishOrDeploy && isSharedScope) {
+          if (typeof this.client.requestAgentReview === 'function') {
+            try {
+              const reviewRes = await this.client.requestAgentReview(newAgentName, targetEnv, userOwner);
+              if (reviewRes?.state === 'DISABLED' && typeof this.client.enableAgent === 'function') {
+                await this.client.enableAgent(newAgentName, targetEnv);
+              }
+              logger.info(`Transitioned shared agent "${result.displayName}" to ENABLED (${agent.sharingConfig?.scope}).`);
+            } catch (revErr: any) {
+              logger.debug(`RequestAgentReview note for "${result.displayName}": ${revErr.message}`);
+            }
+          }
+
+          if (options.preserveSharing !== false && agent.sharingConfig?.scope) {
+            const effectiveSharing = agent.sharingConfig;
+            try {
+              await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, userOwner);
+              logger.info(`Sharing configuration configured for agent "${result.displayName}" (Scope: ${effectiveSharing.scope})`);
+            } catch (shareErr: any) {
+              try {
+                await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, undefined);
+                logger.info(`Sharing configuration configured via Service Account for agent "${result.displayName}"`);
+              } catch (retryErr: any) {
+                logger.warn(`Could not set sharing config on agent "${result.displayName}": ${shareErr.message}`);
+              }
+            }
+          }
+
+          if (agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
+            try {
+              await this.restoreAgentIamPolicy(newAgentName, agent.iamPolicy, targetEnv, identityMapping);
+            } catch (iamErr: any) {
+              logger.warn(`Could not set IAM policy on agent "${result.displayName}" (${iamErr.message}). Agent creation succeeded.`);
+            }
+          }
+        } else if (!agent.sharingConfig?.scope) {
+          logger.info(`Agent "${result.displayName}" has no public sharing scope; preserving private scope.`);
         }
 
         const cleanOriginalOwner = (originalOwner || '').replace(/^user:/i, '').replace(/^serviceAccount:/i, '').toLowerCase().trim();

@@ -176,7 +176,7 @@ The configuration loader ([loader.ts](../src/config/loader.ts)) reads:
 }
 ```
 
-### Critical Connector, Agent & Concurrency Options (`v1.6.0` – `v1.7.0`):
+### Critical Connector, Agent & Concurrency Options (`v1.6.0` – `v1.8.0`):
 - **`collectionMapping`**: Maps source Connector Collection IDs (e.g., `github_1773757636775`) to target Connector Collection IDs (`github_1780931139999`). The migration engine automatically rewrites both full `projects/.../collections/{id}` paths and relative `collections/{id}/dataConnector` paths, and automatically expands parent collection mappings to all child entity DataStores (`_issue`, `_pull_request`, `_repository`, etc.) using Regex Pattern Matching (`parseTimestampedResourceId`) so No-Code Agents retain 1 unified connector source instead of splitting into 3 separate DataStore sources.
 - **`datastoreMapping`**: Maps individual source DataStore IDs to target DataStore IDs.
 - **`"__STRIP__"` Sentinel Value**: Setting any `collectionMapping` or `datastoreMapping` target value to `"__STRIP__"` cleanly removes that connector tool or `dataStoreSpec` from migrated Custom Agents.

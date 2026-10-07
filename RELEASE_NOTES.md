@@ -1,4 +1,29 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.8.0
+
+**Release Date:** October 7, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.0** introduces **Source-Faithful Agent Deployment & Publishing** across Low-Code (`:deployLowCode` with `{"deployMode":"DEPLOY"}`), Workflow (`:publish` with automatic `_agent_execution_grant_` consent & numeric project normalization for `CONNECTOR_EVENT_TRIGGER`), Managed (`:deploy`), and ADK/A2A (`:enableAgent`) agents, **Shared Agent Review & IAM Ordering (`:requestAgentReview` before `:setIamPolicy`)**, and **Draft-Preserving Agent Migration** so only agents that were published/deployed in the source environment are published on the target instance while source drafts remain in draft. v1.8.0 includes **383 passing automated tests across 31 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. 🚀 Source-Faithful Agent Deployment & Draft Preservation (`src/services/discoveryEngine.ts` & `src/engines/agentMigrator.ts`)
+* **Strict Source Lifecycle Parity**: `AgentMigrator.migrateAgents` evaluates `isSourceAgentPublished(agent)` so only agents that were published/deployed in the source instance are deployed/published on the target instance; any agent that was in `Draft` in the source stays in `Draft` on the target.
+* **Type-Specific Publish RPC Dispatch**:
+  * **Low-Code (No-Code) Agents**: Dispatches `POST /v1alpha/{agentName}:deployLowCode` with `{"deployMode": "DEPLOY"}` after stripping `OUTPUT_ONLY` deployment fields (`deployedNodes`, `deployedRootAgentId`, `deployedSchedules`, `deploymentInfo`, `validationErrors`, `ownerName`) during `CreateAgent`.
+  * **Workflow Agents**: Dispatches `POST /v1alpha/{agentName}:publish`, automatically granting `_agent_execution_grant_` (`CONSENT_GIVEN`) via `:updateEngineUserData` for scheduled workflows and normalizing `CONNECTOR_EVENT_TRIGGER` `dataConnector.name` references to the numeric project number.
+  * **Shared Agents (`ALL_USERS` / `RESTRICTED`)**: Executes `:deployLowCode` / `:publish` first, then transitions the agent out of `PRIVATE` via `:requestAgentReview` before applying `sharingConfig` and `:setIamPolicy`.
+
+---
+
 ## Release Notes — Version 1.7.0
 
 **Release Date:** October 5, 2026  
@@ -211,7 +236,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.6.3 &rarr; v1.7.0)
+### 📦 Upgrade Guide (v1.7.0 &rarr; v1.8.0)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -236,7 +261,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.7.0** *(Current)*: Added Step 3 Worker Concurrency selector (`#optConcurrency`) with adaptive per-notebook source read throttling, added Ignore Draft Agents sub-option (`excludeDraftAgents` / `--exclude-draft-agents`) to migrate Private (created) and Published/Shared agents while skipping unsaved UI drafts, removed the fake `[Restored Source: ...]` metadata stub in `NotebookMigrator` in favor of honest `FAILED` / `MANUAL_REUPLOAD_REQUIRED` reporting in both Dry Run and Live Run modes, and expanded to 375 passing tests across 31 test suites.
+* **v1.8.0** *(Current)*: Added source-faithful agent deployment & publishing (`:deployLowCode` with `{"deployMode":"DEPLOY"}`, `:publish` with automatic `_agent_execution_grant_` consent & numeric project normalization for `CONNECTOR_EVENT_TRIGGER`, `:requestAgentReview` before `:setIamPolicy` for shared agents, and strict preservation of source `Draft` vs `Published` state), expanding to 383 passing tests across 31 test suites.
+* **v1.7.0**: Added Step 3 Worker Concurrency selector (`#optConcurrency`) with adaptive per-notebook source read throttling, added Ignore Draft Agents sub-option (`excludeDraftAgents` / `--exclude-draft-agents`) to migrate Private (created) and Published/Shared agents while skipping unsaved UI drafts, removed the fake `[Restored Source: ...]` metadata stub in `NotebookMigrator` in favor of honest `FAILED` / `MANUAL_REUPLOAD_REQUIRED` reporting in both Dry Run and Live Run modes, and expanded to 375 passing tests across 31 test suites.
 * **v1.6.3**: Fixed multi-page agent pagination (`nextPageToken`) in Step 3 User Discovery (`GET /api/users/discover`) and IdP Auto-Mapping (`POST /api/idp/auto-map`), batched `:getIamPolicy` lookups in auto-map, sanitized `package-lock.json` resolved URLs to `https://registry.npmjs.org/`, and expanded to 369 passing tests across 31 test suites.
 * **v1.6.2**: Added comprehensive Step 2 Config & Parity Audit HITL and action items filtering (Dynamic Connector Mapping filters, Parity Checklist status filters, 1-click global audit filter button with unified remaining count badge), targeted user discovery "Delete All" action, and single quote / apostrophe email resilience, with 366 passing tests across 30 test suites.
 * **v1.6.1**: Fixed `retryWithBackoff` infinite retry loop (`attempt++`), added per-request `AbortSignal.timeout` (30s) to `DiscoveryEngineClient` and `AgentRegistryClient`, added 15s SSE keep-alive heartbeats on `/api/migrate/stream`, promoted notebook fetch errors to `WARN`, added large-notebook source progress logging, and expanded to 327 passing tests.

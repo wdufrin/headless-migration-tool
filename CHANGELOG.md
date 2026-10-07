@@ -5,6 +5,20 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-10-07
+
+### Added
+- **Source-Faithful Agent Deployment & Publishing (`src/services/discoveryEngine.ts` & `src/engines/agentMigrator.ts`)**:
+  - Updated `AgentMigrator.migrateAgents` to strictly preserve each source agent's lifecycle state on the target instance: only agents that were published/deployed in the source environment (`isSourceAgentPublished(agent) === true`) are published/deployed on the target instance, while agents that were in `Draft` in the source environment remain in `Draft` on the target instance.
+  - Added `DiscoveryEngineClient.deployLowCodeAgent` (`POST /v1alpha/{agentName}:deployLowCode` with `{"deployMode": "DEPLOY"}`), `DiscoveryEngineClient.publishWorkflowAgent` (`POST /v1alpha/{agentName}:publish`), `DiscoveryEngineClient.deployManagedAgent` (`POST /v1alpha/{agentName}:deploy`), and `DiscoveryEngineClient.requestAgentReview` (`POST /v1alpha/{agentName}:requestAgentReview`).
+  - Added `DiscoveryEngineClient.ensureAgentExecutionConsent` to automatically grant `_agent_execution_grant_` (`CONSENT_GIVEN`) via `:updateEngineUserData` when publishing scheduled/event-triggered Workflow agents, and `normalizeWorkflowConnectorProjectNumber` to normalize `CONNECTOR_EVENT_TRIGGER` `dataConnector.name` references to the numeric project number before `:publish`.
+  - Reordered shared agent migration so `:deployLowCode` / `:publish` executes **before** `:requestAgentReview`, `patchAgentSharing`, and `restoreAgentIamPolicy` (`:setIamPolicy`), satisfying Discovery Engine's requirement that `deployed_root_agent_id` is populated and the agent has transitioned out of `PRIVATE` prior to setting IAM bindings.
+- **Low-Code Agent Draft/Deployed Normalization (`src/engines/agentMigrator.ts`)**:
+  - Updated `AgentMigrator.buildAgentPayload` to backfill `lowCodeAgentDefinition.nodes` and `rootAgentId` from `deployedNodes` and `deployedRootAgentId` when missing, and strip `OUTPUT_ONLY` deployment fields (`deployedNodes`, `deployedRootAgentId`, `deployedSchedules`, `deployedAgentLinkedResources`, `deploymentInfo`, `validationErrors`, `ownerName`) before `CreateAgent`.
+- Bumped platform version to `1.8.0` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (383 passing tests across 31 test suites).
+
+---
+
 ## [1.7.0] - 2026-10-05
 
 ### Added

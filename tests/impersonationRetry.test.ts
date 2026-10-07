@@ -331,13 +331,15 @@ describe('DiscoveryEngineClient 403 impersonation retry', () => {
               {
                 role: 'roles/discoveryengine.user',
                 members: [
-                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-employees-group'
+                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-employees-group',
+                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-dual-bound-admin-group'
                 ]
               },
               {
                 role: 'roles/discoveryengine.admin',
                 members: [
-                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-admins-only-group'
+                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-admins-only-group',
+                  'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/group/coned-dual-bound-admin-group'
                 ]
               }
             ]
@@ -359,6 +361,43 @@ describe('DiscoveryEngineClient 403 impersonation retry', () => {
     expect(getAccessTokenSpy).toHaveBeenCalledWith(undefined, undefined, undefined);
     expect(getDiscoveredPoolGroups('coned-pool')).toContain('coned-employees-group');
     expect(getDiscoveredPoolGroups('coned-pool')).not.toContain('coned-admins-only-group');
+    expect(getDiscoveredPoolGroups('coned-pool')).not.toContain('coned-dual-bound-admin-group');
+  });
+
+  it('ConEd preflight case: logs exact matching IAM role and member when project-level discoveryengine.notebooks.delete is detected', async () => {
+    const auth = makeAuth({ withSaKey: true, withWifKeyOnDisk: true });
+    vi.spyOn(auth, 'getAccessToken').mockResolvedValue('admin-sa-token');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        bindings: [
+          {
+            role: 'roles/discoveryengine.admin',
+            members: [
+              'principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/*'
+            ]
+          }
+        ]
+      })
+    } as any);
+
+    const { lines, restore } = captureLogs();
+    const client = new DiscoveryEngineClient(auth);
+    try {
+      const granted = await client.testProjectIamPermissions(
+        'cei-vertex-prd-01',
+        ['discoveryengine.notebooks.delete'],
+        'minglae@coned.com'
+      );
+      expect(granted).toEqual(['discoveryengine.notebooks.delete']);
+      const joined = lines.join('\n');
+      expect(joined).toContain('[IAM POLICY MATCH]');
+      expect(joined).toContain('role="roles/discoveryengine.admin"');
+      expect(joined).toContain('principalSet://iam.googleapis.com/locations/global/workforcePools/coned-pool/*');
+    } finally {
+      restore();
+    }
   });
 });
 
