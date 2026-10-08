@@ -83,7 +83,7 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       excludeDraftAgents: process.env.EXCLUDE_DRAFT_AGENTS === 'true',
       notebookIds: process.env.NOTEBOOK_IDS ? process.env.NOTEBOOK_IDS.split(',').map(s => s.trim()) : [],
       dryRun: process.env.DRY_RUN === 'true',
-      concurrency: Number(process.env.CONCURRENCY) || 10,
+      concurrency: Number(process.env.CONCURRENCY) || 3,
       userFilter: process.env.USER_FILTER ? process.env.USER_FILTER.split(',').map(s => s.trim()) : [],
       preserveOwnership: process.env.PRESERVE_OWNERSHIP !== 'false',
       preserveSharing: process.env.PRESERVE_SHARING !== 'false',

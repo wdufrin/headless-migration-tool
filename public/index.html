@@ -585,12 +585,12 @@
                     <select id="optConcurrency" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
                       <option value="1">1 Worker (Sequential — Avoids Timeouts on Heavy Notebooks)</option>
                       <option value="2">2 Workers (Conservative — Low Rate-Limit Risk)</option>
-                      <option value="3">3 Workers (Moderate — Recommended for Large Tenants)</option>
+                      <option value="3" selected>3 Workers (Default — Recommended for Large Tenants)</option>
                       <option value="5">5 Workers (Balanced)</option>
-                      <option value="10" selected>10 Workers (Default High-Speed)</option>
+                      <option value="10">10 Workers (High-Speed)</option>
                       <option value="20">20 Workers (Aggressive Parallelism)</option>
                     </select>
-                    <p class="text-[10px] text-gray-500 mt-1">Lower to 1–3 if source notebooks have many PDFs/sources or hit 30s read timeouts.</p>
+                    <p class="text-[10px] text-gray-500 mt-1">Default is 3 workers to prevent 429 rate-limit errors and 90s read timeouts on heavy PDFs.</p>
                   </div>
                 </div>
 
@@ -9401,7 +9401,7 @@ ${projectIamBlock}`;
           promptForConnectorHitl: true,
           debugMode: document.getElementById('optDebugMode') ? document.getElementById('optDebugMode').checked : false,
           logLevel: (document.getElementById('optDebugMode') && document.getElementById('optDebugMode').checked) ? 'DEBUG' : 'INFO',
-          concurrency: Math.min(50, Math.max(1, parseInt(document.getElementById('optConcurrency')?.value || '10', 10) || 10)),
+          concurrency: Math.min(50, Math.max(1, parseInt(document.getElementById('optConcurrency')?.value || '3', 10) || 3)),
           preserveOwnership: true
         }
       };
@@ -12487,7 +12487,7 @@ ${projectIamBlock}`;
           promptForConnectorHitl: true,
           userFilter: [srcUser],
           dryRun: isDryRun,
-          concurrency: 5,
+          concurrency: 3,
           preserveOwnership: true
         }
       };

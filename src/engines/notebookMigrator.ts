@@ -804,7 +804,7 @@ export class NotebookMigrator {
     });
     logger.info(`Selected ${filteredNotebooks.length} notebooks matching user filters.`);
 
-    const concurrency = options.concurrency || 10;
+    const concurrency = options.concurrency || 3;
     const isDryRun = options.dryRun === true;
 
     // Partition into immediate (standard users + private Admin notebooks) vs deferred (shared Admin notebooks)
@@ -1017,7 +1017,7 @@ export class NotebookMigrator {
             logger.info(`Fetching detailed content for ${totalSources} sources in Notebook "${result.displayName}" (${notebookId})...`);
           }
           let completedSources = 0;
-          const sourceFetchConcurrency = Math.min(3, Math.max(1, options.concurrency || 10));
+          const sourceFetchConcurrency = Math.min(3, Math.max(1, options.concurrency || 3));
           fullNotebook.sources = await mapConcurrent(
             fullNotebook.sources,
             sourceFetchConcurrency,

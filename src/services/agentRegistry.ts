@@ -35,7 +35,7 @@ export class AgentRegistryClient {
     this.auth = auth;
     const envTimeout = Number(process.env.AGENT_REGISTRY_TIMEOUT_MS);
     this.requestTimeoutMs =
-      options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 30000);
+      options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 90000);
   }
 
   private async request<T>(

@@ -38,7 +38,7 @@ export class DiscoveryEngineClient {
     this.auth = auth;
     const envTimeout = Number(process.env.DISCOVERY_ENGINE_TIMEOUT_MS);
     this.requestTimeoutMs =
-      options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 30000);
+      options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 90000);
     this.maxRetries = options.maxRetries ?? 5;
     this.retryBaseDelayMs = options.retryBaseDelayMs ?? 750;
   }
@@ -214,6 +214,7 @@ export class DiscoveryEngineClient {
         const err: any = new Error(`Discovery Engine API Request Failed [${response.status}]: ${msg}`);
         err.status = response.status;
         err.details = parsedError;
+        err.retryAfter = response.headers?.get?.('retry-after') ?? undefined;
         throw err;
       }
 

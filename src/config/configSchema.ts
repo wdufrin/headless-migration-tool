@@ -40,7 +40,7 @@ export const MigrationOptionsSchema = z.object({
   excludeDraftAgents: z.boolean().default(false),
   notebookIds: z.array(z.string()).default([]),
   dryRun: z.boolean().default(false),
-  concurrency: z.number().int().min(1).max(50).default(10),
+  concurrency: z.number().int().min(1).max(50).default(3),
   userFilter: z.array(z.string()).default([]),
   preserveOwnership: z.boolean().default(true),
   preserveSharing: z.boolean().default(true),

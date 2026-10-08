@@ -46,7 +46,7 @@ program
   .option('--publish-agents', 'Publish migrated agents to the organization gallery/catalog')
   .option('--no-preserve-sharing', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED)')
   .option('--users <users...>', 'Filter migration to specific user email(s) or patterns (e.g. *@company.com)')
-  .option('--concurrency <number>', 'Maximum parallel worker concurrency (default: 10)')
+  .option('--concurrency <number>', 'Maximum parallel worker concurrency (default: 3)')
   .option('--token <token>', 'Explicit Google OAuth Access Token (overrides ADC)')
   .option('--service-account-key <path>', 'Path to Google Cloud Service Account JSON key for Domain-Wide Delegation (DWD)')
   .option('--output-dir <dir>', 'Directory to output migration reports', './reports')

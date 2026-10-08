@@ -387,7 +387,8 @@ describe('NotebookMigrator Engine', () => {
       });
     });
 
-    it('should reject out-of-range or non-integer concurrency values in MigrationOptionsSchema (negative test)', () => {
+    it('should default concurrency to 3 and reject out-of-range or non-integer concurrency values in MigrationOptionsSchema (negative test)', () => {
+      expect(MigrationOptionsSchema.parse({}).concurrency).toBe(3);
       expect(() => MigrationOptionsSchema.parse({ concurrency: 0 })).toThrow();
       expect(() => MigrationOptionsSchema.parse({ concurrency: -3 })).toThrow();
       expect(() => MigrationOptionsSchema.parse({ concurrency: 51 })).toThrow();

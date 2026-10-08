@@ -29,7 +29,7 @@
     "excludeDraftAgents": false,
     "publishAgents": false,
     "dryRun": false,
-    "concurrency": 10,
+    "concurrency": 3,
     "userFilter": ["*@company.com"],
     "preserveOwnership": true,
     "preserveSharing": true,

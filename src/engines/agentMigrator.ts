@@ -679,7 +679,7 @@ export class AgentMigrator {
     logger.info(`Found ${sourceAgents.length} total source agents.`);
 
     // Attach IAM policies for ownership filtering in parallel
-    const iamConcurrency = Math.min(20, Math.max(5, (options.concurrency || 10) * 2));
+    const iamConcurrency = Math.min(20, Math.max(5, (options.concurrency || 3) * 2));
     await mapConcurrent(sourceAgents, iamConcurrency, async (agent: Agent) => {
       try {
         agent.iamPolicy = await this.client.getAgentIamPolicy(agent.name, sourceEnv);
@@ -741,7 +741,7 @@ export class AgentMigrator {
       logger.info(`Selected ${filteredAgents.length} agents matching user & lifecycle filters.`);
     }
 
-    const concurrency = options.concurrency || 10;
+    const concurrency = options.concurrency || 3;
     const isDryRun = options.dryRun === true;
 
     let effectiveDatastoreMapping: Record<string, string> = { ...datastoreMapping };

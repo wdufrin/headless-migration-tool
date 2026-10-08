@@ -228,6 +228,9 @@ describe('Concurrency Utilities', () => {
       getServiceAccountProjectId: () => 'test-proj',
       getAccessToken: async () => 'fake-token'
     };
+    const defaultClient = new DiscoveryEngineClient(mockAuth) as any;
+    expect(defaultClient.requestTimeoutMs).toBe(90000);
+
     const client = new DiscoveryEngineClient(mockAuth, {
       requestTimeoutMs: 25,
       maxRetries: 2,
