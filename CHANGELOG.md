@@ -5,6 +5,18 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-10-21
+
+### Added
+- **Full NotebookLM Source Text Extraction, JSON Backup & `:interactSources` Fallback (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`, `src/types/migration.ts`)**:
+  - Restored full extraction of NotebookLM source content (`tailwindDoc`, `plainText`, `markdownString`, and table/codeBlock structural elements) directly into `merged.content` and the migration JSON report (`details.sources[].content` and `userContent`).
+  - Added `DiscoveryEngineClient.interactNotebookSource` (`POST /v1alpha/projects/{project}/locations/{loc}/notebooks/{notebookId}:interactSources`) as an automatic fallback when `tailwindDoc` is omitted by Google's external API gateway on customer projects, stripping introductory wrapper headings so unformatted document text is cleanly preserved and recreated in target notebooks via `sources:batchCreate`.
+  - Added `DiscoveryEngineClient.getDataStoreDocument` (`GET /v1alpha/{documentName}`) and `NotebookMigrator.rewriteAgentspaceDocumentName` so NotebookLM sources backed by Gemini Enterprise DataStores (`agentspaceMetadata.documentName`) extract text when available or automatically rewrite their project, location, `collectionMapping`, and `datastoreMapping` IDs to the target environment.
+  - Added byte-budget and count chunking (`chunkSourcesForBatchCreate`, max 5 sources / 4 MB per batch) and automatic export of `<Notebook>_sources_backup.json` and `.md` source files into `user_handover_reports/<user>/notebook_sources/`.
+- Bumped platform version to `1.8.1` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (389 passing tests across 31 test suites).
+
+---
+
 ## [1.8.0] - 2026-10-07
 
 ### Added

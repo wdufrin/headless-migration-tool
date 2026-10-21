@@ -1,4 +1,27 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.8.1
+
+**Release Date:** October 21, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.1** introduces **Full NotebookLM Source Text Extraction, JSON Backup & `:interactSources` Fallback**, ensuring customer NotebookLM sources (uploaded PDFs/docs, pasted text, web links, Google Drive docs, YouTube videos, and Gemini Enterprise DataStore documents) are extracted, stored directly in the JSON report and user handover bundle (`<Notebook>_sources_backup.json`), and recreated in target notebooks without any fake placeholder stubs. It also adds **DataStore-Backed Notebook Source Mapping (`getDataStoreDocument` + `datastoreMapping` / `collectionMapping` path rewriting)**. v1.8.1 includes **389 passing automated tests across 31 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. 📄 Full NotebookLM Source Content Extraction & `:interactSources` Fallback (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)
+* **Direct JSON Source Backup (`content` + `userContent`)**: Every migrated source stores its extracted unformatted text (`content`) and replayable `batchCreate` payload (`userContent`) in the migration JSON report (`details.sources[]`) and exports `<Notebook>_sources_backup.json` + `.md` source files under `user_handover_reports/<user>/notebook_sources/`.
+* **Automatic `:interactSources` Extraction Fallback**: When Google's external API gateway omits `tailwindDoc` on non-allowlisted customer projects, `NotebookMigrator` automatically invokes `DiscoveryEngineClient.interactNotebookSource` (`POST .../notebooks/{id}:interactSources` scoped to that `sourceId`) to extract the unformatted document text and recreate the source in the target project.
+* **DataStore-Grounded Notebook Sources (`agentspaceMetadata.documentName`)**: Reads source DataStore document text via `getDataStoreDocument` when available, and automatically rewrites `agentspaceContent.documentName` across projects using `datastoreMapping` and `collectionMapping`.
+
+---
+
 ## Release Notes — Version 1.8.0
 
 **Release Date:** October 7, 2026  
@@ -236,7 +259,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.7.0 &rarr; v1.8.0)
+### 📦 Upgrade Guide (v1.8.0 &rarr; v1.8.1)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -261,7 +284,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.8.0** *(Current)*: Added source-faithful agent deployment & publishing (`:deployLowCode` with `{"deployMode":"DEPLOY"}`, `:publish` with automatic `_agent_execution_grant_` consent & numeric project normalization for `CONNECTOR_EVENT_TRIGGER`, `:requestAgentReview` before `:setIamPolicy` for shared agents, and strict preservation of source `Draft` vs `Published` state), expanding to 383 passing tests across 31 test suites.
+* **v1.8.1** *(Current)*: Restored full NotebookLM source text extraction (`tailwindDoc`, `plainText`, `markdownString`, and table/codeBlock parsing) directly into `details.sources[].content` and `userContent` in the JSON report and `<Notebook>_sources_backup.json` handover bundle, added automatic `:interactSources` fallback extraction (`DiscoveryEngineClient.interactNotebookSource`) when `tailwindDoc` is omitted on customer projects, added DataStore-grounded notebook source text extraction (`getDataStoreDocument`) and `datastoreMapping`/`collectionMapping` path rewriting (`rewriteAgentspaceDocumentName`), and expanded to 389 passing tests across 31 test suites.
+* **v1.8.0**: Added source-faithful agent deployment & publishing (`:deployLowCode` with `{"deployMode":"DEPLOY"}`, `:publish` with automatic `_agent_execution_grant_` consent & numeric project normalization for `CONNECTOR_EVENT_TRIGGER`, `:requestAgentReview` before `:setIamPolicy` for shared agents, and strict preservation of source `Draft` vs `Published` state), expanding to 383 passing tests across 31 test suites.
 * **v1.7.0**: Added Step 3 Worker Concurrency selector (`#optConcurrency`) with adaptive per-notebook source read throttling, added Ignore Draft Agents sub-option (`excludeDraftAgents` / `--exclude-draft-agents`) to migrate Private (created) and Published/Shared agents while skipping unsaved UI drafts, removed the fake `[Restored Source: ...]` metadata stub in `NotebookMigrator` in favor of honest `FAILED` / `MANUAL_REUPLOAD_REQUIRED` reporting in both Dry Run and Live Run modes, and expanded to 375 passing tests across 31 test suites.
 * **v1.6.3**: Fixed multi-page agent pagination (`nextPageToken`) in Step 3 User Discovery (`GET /api/users/discover`) and IdP Auto-Mapping (`POST /api/idp/auto-map`), batched `:getIamPolicy` lookups in auto-map, sanitized `package-lock.json` resolved URLs to `https://registry.npmjs.org/`, and expanded to 369 passing tests across 31 test suites.
 * **v1.6.2**: Added comprehensive Step 2 Config & Parity Audit HITL and action items filtering (Dynamic Connector Mapping filters, Parity Checklist status filters, 1-click global audit filter button with unified remaining count badge), targeted user discovery "Delete All" action, and single quote / apostrophe email resilience, with 366 passing tests across 30 test suites.

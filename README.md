@@ -1,9 +1,9 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.8.1-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.8.0-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.8.1-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
@@ -14,6 +14,17 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
 > * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, `collectionMapping`, `datastoreMapping`, cross-project IAM topologies, and token resolution order.
+
+---
+
+## 🚀 What's New in v1.8.1
+
+* **📄 Full NotebookLM Source Content Extraction, JSON Backup & `:interactSources` Fallback (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`)**:
+  * Extracts unformatted source text from `tailwindDoc`, `plainText`, `markdownString`, and DataStore documents (`getDataStoreDocument`), storing the full `content` and replayable `userContent` payload directly in the migration JSON report (`details.sources[]`) and `user_handover_reports/<user>/notebook_sources/<Notebook>_sources_backup.json`.
+  * Automatically falls back to `POST .../notebooks/{id}:interactSources` scoped to each `sourceId` when `tailwindDoc` is omitted by Google's external API gateway on customer projects, recreating uploaded PDFs/docs in target notebooks via `sources:batchCreate` without fake placeholders.
+  * Automatically rewrites DataStore-grounded notebook sources (`agentspaceMetadata.documentName`) using `datastoreMapping` and `collectionMapping`.
+* **🧪 100% Passing Automated Tests (389/389 Tests across 31 suites)**:
+  * Full 389 automated tests passing across 31 test suites with zero failures or skipped assertions.
 
 ---
 
@@ -197,6 +208,7 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ## 📋 Table of Contents
 
+- [What's New in v1.8.1](#-whats-new-in-v181)
 - [What's New in v1.8.0](#-whats-new-in-v180)
 - [What's New in v1.7.0](#-whats-new-in-v170)
 - [What's New in v1.6.3](#-whats-new-in-v163)
