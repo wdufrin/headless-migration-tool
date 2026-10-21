@@ -261,6 +261,88 @@ describe('NotebookMigrator Engine', () => {
       expect(mapped.textContent.content).toBe('Section 1: Overview.\nSection 2: Security Controls.');
     });
 
+    it('should extract text from markdownString, plainText, and tailwindDoc table/codeBlock elements', () => {
+      const mdSource: NotebookSource = {
+        title: 'Runbook.md',
+        markdownString: '# Runbook\nStep 1: Verify credentials.'
+      };
+      const mappedMd = migrator.mapSourceToPayload(mdSource);
+      expect(mappedMd?.textContent?.content).toBe('# Runbook\nStep 1: Verify credentials.');
+
+      const plainSource: NotebookSource = {
+        title: 'Notes.txt',
+        plainText: { text: 'Raw plain text body' }
+      };
+      const mappedPlain = migrator.mapSourceToPayload(plainSource);
+      expect(mappedPlain?.textContent?.content).toBe('Raw plain text body');
+
+      const tableAndCodeSource: NotebookSource = {
+        title: 'Data_Sheet.pdf',
+        tailwindDoc: {
+          body: {
+            content: [
+              {
+                table: {
+                  tableRows: [
+                    {
+                      tableCells: [
+                        { content: [{ paragraph: { elements: [{ textRun: { content: 'Metric' } }] } }] },
+                        { content: [{ paragraph: { elements: [{ textRun: { content: 'Value' } }] } }] }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                codeBlock: {
+                  content: 'SELECT * FROM ledger;'
+                }
+              }
+            ]
+          }
+        }
+      };
+      const mappedTableCode = migrator.mapSourceToPayload(tableAndCodeSource);
+      expect(mappedTableCode?.textContent?.content).toContain('Metric | Value');
+      expect(mappedTableCode?.textContent?.content).toContain('SELECT * FROM ledger;');
+    });
+
+    it('should call /notes:batchGet and unwrap nested note objects in DiscoveryEngineClient.listNotes', async () => {
+      const env: EnvironmentConfig = {
+        projectId: 'p-notes',
+        appLocation: 'us',
+        collectionId: 'default_collection',
+        appId: 'app-1',
+        assistantId: 'default_assistant'
+      };
+      const reqSpy = vi.spyOn(dummyClient as any, 'request').mockResolvedValueOnce({
+        notes: [
+          {
+            noteId: 'n-1',
+            note: {
+              noteId: 'n-1',
+              title: 'Architecture Summary',
+              content: 'Extracted note content'
+            }
+          }
+        ]
+      });
+
+      const notes = await dummyClient.listNotes('nb-123', env, 'alice@coned.com');
+      expect(reqSpy).toHaveBeenCalledWith(
+        'https://us-discoveryengine.googleapis.com/v1alpha/projects/p-notes/locations/us/notebooks/nb-123/notes:batchGet',
+        'GET',
+        undefined,
+        'p-notes',
+        undefined,
+        'alice@coned.com'
+      );
+      expect(notes).toHaveLength(1);
+      expect(notes[0].title).toBe('Architecture Summary');
+      expect(notes[0].content).toBe('Extracted note content');
+      reqSpy.mockRestore();
+    });
+
     it('should honestly report FAILED and MANUAL_REUPLOAD_REQUIRED sources in both Dry Run and Live Run without creating fake placeholder sources', async () => {
       const sourceEnv: EnvironmentConfig = {
         projectId: 'source-p',
@@ -1089,5 +1171,228 @@ describe('NotebookMigrator Engine', () => {
         fetchSpy.mockRestore();
       }
     });
+
+    it('should store extracted source text and userContent recreation payload directly in result.details.sources JSON', async () => {
+      const sourceEnv: EnvironmentConfig = {
+        projectId: 'source-proj',
+        appLocation: 'global',
+        appId: 'app-1'
+      };
+      const targetEnv: EnvironmentConfig = {
+        projectId: 'target-proj',
+        appLocation: 'global',
+        appId: 'app-2'
+      };
+
+      const nb: Notebook = {
+        name: 'projects/source-proj/locations/global/notebooks/nb-json-1',
+        title: 'Customer Source Backup Notebook',
+        metadata: { userRole: 'PROJECT_ROLE_OWNER', isShared: false }
+      };
+
+      const batchCreateSpy = vi.fn().mockResolvedValue({
+        sources: [
+          { name: 'projects/target-proj/locations/global/notebooks/nb-new-1/sources/new-src-1', sourceId: { id: 'new-src-1' } },
+          { name: 'projects/target-proj/locations/global/notebooks/nb-new-1/sources/new-src-2', sourceId: { id: 'new-src-2' } }
+        ]
+      });
+
+      const mockClient = {
+        listNotebooks: vi.fn().mockImplementation(async (env: EnvironmentConfig) => {
+          return env.projectId === 'source-proj' ? [nb] : [];
+        }),
+        getNotebook: vi.fn().mockResolvedValue({
+          ...nb,
+          sources: [
+            { sourceId: { id: 'src-pdf-1' }, title: 'Architecture_Spec.pdf' },
+            { sourceId: { id: 'src-stripped-2' }, title: 'Stripped_Customer_Doc.pdf' }
+          ]
+        }),
+        getNotebookSource: vi.fn().mockImplementation(async (_nbId: string, srcId: string) => {
+          if (srcId === 'src-pdf-1') {
+            return {
+              sourceId: { id: 'src-pdf-1' },
+              title: 'Architecture_Spec.pdf',
+              tailwindDoc: {
+                body: {
+                  content: [
+                    { paragraph: { elements: [{ textRun: { content: 'Section 1: Zero-Trust Network Topology.\nAll traffic is mTLS encrypted.' } }] } }
+                  ]
+                }
+              }
+            };
+          }
+          // Simulate ESF stripping tailwindDoc on a non-allowlisted customer project
+          return {
+            sourceId: { id: 'src-stripped-2' },
+            title: 'Stripped_Customer_Doc.pdf',
+            metadata: { wordCount: 450, tokenCount: 600 }
+          };
+        }),
+        interactNotebookSource: vi.fn().mockImplementation(async (_nbId: string, srcId: string) => {
+          if (srcId === 'src-stripped-2') {
+            return '**Excerpts from "Stripped_Customer_Doc.pdf"**\n\nCustomer SLA guarantees 99.99% uptime [1] across all regional endpoints [1, 2].';
+          }
+          return '';
+        }),
+        createNotebook: vi.fn().mockResolvedValue({
+          name: 'projects/target-proj/locations/global/notebooks/nb-new-1',
+          title: 'Customer Source Backup Notebook'
+        }),
+        batchCreateNotebookSources: batchCreateSpy,
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      const results = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: false, userFilter: ['alice@customer.com'] }
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('SUCCESS');
+      expect(results[0].details?.sourcesRestored).toBe(2);
+      expect(results[0].details?.sourcesFailed).toBe(0);
+
+      const savedSources = results[0].details?.sources;
+      expect(savedSources).toHaveLength(2);
+
+      // Source 1: Extracted from tailwindDoc and saved in JSON
+      expect(savedSources[0].title).toBe('Architecture_Spec.pdf');
+      expect(savedSources[0].sourceId).toBe('src-pdf-1');
+      expect(savedSources[0].targetSourceId).toBe('new-src-1');
+      expect(savedSources[0].content).toBe('Section 1: Zero-Trust Network Topology.\nAll traffic is mTLS encrypted.');
+      expect(savedSources[0].userContent).toEqual({
+        textContent: {
+          sourceName: 'Architecture_Spec.pdf',
+          content: 'Section 1: Zero-Trust Network Topology.\nAll traffic is mTLS encrypted.'
+        }
+      });
+
+      // Source 2: Extracted via :interactSources fallback (cleaned of Excerpts header & citation markers) and saved in JSON
+      expect(savedSources[1].title).toBe('Stripped_Customer_Doc.pdf');
+      expect(savedSources[1].sourceId).toBe('src-stripped-2');
+      expect(savedSources[1].targetSourceId).toBe('new-src-2');
+      expect(savedSources[1].content).toBe('Customer SLA guarantees 99.99% uptime across all regional endpoints.');
+      expect(savedSources[1].userContent).toEqual({
+        textContent: {
+          sourceName: 'Stripped_Customer_Doc.pdf',
+          content: 'Customer SLA guarantees 99.99% uptime across all regional endpoints.'
+        }
+      });
+
+      // Ensure zero [Restored Source: ...] placeholders were sent to target
+      expect(batchCreateSpy).toHaveBeenCalledTimes(1);
+      const sentPayloads = batchCreateSpy.mock.calls[0][1];
+      expect(JSON.stringify(sentPayloads)).not.toContain('[Restored Source');
+    });
+
+    it('should extract text from source DataStore document when agentspaceMetadata.documentName is present and tailwindDoc is absent', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'src-p', appLocation: 'global', appId: 'app-1' };
+      const targetEnv: EnvironmentConfig = { projectId: 'tgt-p', appLocation: 'global', appId: 'app-2' };
+
+      const nb: Notebook = {
+        name: 'projects/src-p/locations/global/notebooks/nb-as-1',
+        title: 'Agentspace Grounded Notebook',
+        metadata: { userRole: 'PROJECT_ROLE_OWNER', isShared: false }
+      };
+
+      const rawText = 'Enterprise Security Policy: All service accounts must use Workload Identity Federation.';
+      const base64Bytes = Buffer.from(rawText, 'utf8').toString('base64');
+
+      const batchCreateSpy = vi.fn().mockResolvedValue({
+        sources: [{ name: 'projects/tgt-p/locations/global/notebooks/nb-new-as/sources/s-new-1' }]
+      });
+
+      const mockClient = {
+        listNotebooks: vi.fn().mockImplementation(async (env: EnvironmentConfig) => (env.projectId === 'src-p' ? [nb] : [])),
+        getNotebook: vi.fn().mockResolvedValue({
+          ...nb,
+          sources: [{ sourceId: { id: 'src-as-1' }, title: 'Security_Policy.txt' }]
+        }),
+        getNotebookSource: vi.fn().mockResolvedValue({
+          sourceId: { id: 'src-as-1' },
+          title: 'Security_Policy.txt',
+          metadata: {
+            agentspaceMetadata: {
+              documentName: 'projects/src-p/locations/global/collections/default_collection/dataStores/ds-1/branches/0/documents/doc-1'
+            }
+          }
+        }),
+        getDataStoreDocument: vi.fn().mockResolvedValue({
+          name: 'projects/src-p/locations/global/collections/default_collection/dataStores/ds-1/branches/0/documents/doc-1',
+          content: {
+            mimeType: 'text/plain',
+            rawBytes: base64Bytes
+          }
+        }),
+        createNotebook: vi.fn().mockResolvedValue({
+          name: 'projects/tgt-p/locations/global/notebooks/nb-new-as',
+          title: 'Agentspace Grounded Notebook'
+        }),
+        batchCreateNotebookSources: batchCreateSpy,
+        listNotes: vi.fn().mockResolvedValue([]),
+        listArtifacts: vi.fn().mockResolvedValue([])
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+      const results = await testMigrator.migrateNotebooks(sourceEnv, targetEnv, {
+        dryRun: false,
+        userFilter: ['alice@customer.com']
+      });
+
+      expect(results[0].details?.sources[0].content).toBe(rawText);
+      expect(results[0].details?.sources[0].userContent).toEqual({
+        textContent: {
+          sourceName: 'Security_Policy.txt',
+          content: rawText
+        }
+      });
+    });
+
+    it('should split batchCreateNotebookSources calls when source text payloads exceed the byte budget and reject malformed documentName in getDataStoreDocument', async () => {
+      const itemA = {
+        raw: { sourceId: { id: 's1' }, title: 'Book1.pdf' } as NotebookSource,
+        payload: { textContent: { sourceName: 'Book1.pdf', content: 'A'.repeat(2_500_000) } }
+      };
+      const itemB = {
+        raw: { sourceId: { id: 's2' }, title: 'Book2.pdf' } as NotebookSource,
+        payload: { textContent: { sourceName: 'Book2.pdf', content: 'B'.repeat(2_500_000) } }
+      };
+      const itemC = {
+        raw: { sourceId: { id: 's3' }, title: 'Note3.txt' } as NotebookSource,
+        payload: { textContent: { sourceName: 'Note3.txt', content: 'Small text' } }
+      };
+
+      const chunks = migrator.chunkSourcesForBatchCreate([itemA, itemB, itemC], 5, 4 * 1024 * 1024);
+      // itemA (~2.5MB) + itemB (~2.5MB) > 4MB, so itemA and itemB must be placed in separate chunks
+      expect(chunks).toHaveLength(2);
+      expect(chunks[0]).toHaveLength(1);
+      expect(chunks[0][0].raw.title).toBe('Book1.pdf');
+      expect(chunks[1]).toHaveLength(2);
+      expect(chunks[1][0].raw.title).toBe('Book2.pdf');
+      expect(chunks[1][1].raw.title).toBe('Note3.txt');
+
+      // Negative/adversarial test: malformed documentName must be explicitly rejected by getDataStoreDocument
+      await expect(
+        dummyClient.getDataStoreDocument('../malicious/path', {
+          projectId: 'p1',
+          appLocation: 'global',
+          appId: 'a1'
+        })
+      ).rejects.toThrow(/Invalid documentName format/);
+
+      // Negative/adversarial test: interactNotebookSource must reject invalid notebookId or sourceId with path traversal
+      await expect(
+        dummyClient.interactNotebookSource('nb-1', '../bad-source', 'query', {
+          projectId: 'p1',
+          appLocation: 'global',
+          appId: 'a1'
+        })
+      ).rejects.toThrow(/Invalid sourceId/);
+    });
   });
 });
+

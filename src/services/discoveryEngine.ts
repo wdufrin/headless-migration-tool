@@ -609,6 +609,50 @@ export class DiscoveryEngineClient {
     return this.request<NotebookSource>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
   }
 
+  async interactNotebookSource(
+    notebookId: string,
+    sourceId: string,
+    userQuery: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<string> {
+    validateResourceId(notebookId, 'notebookId');
+    validateResourceId(sourceId, 'sourceId');
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}:interactSources`;
+    const payload = {
+      inputSources: [{ sourceId: { id: sourceId } }],
+      freeFormAction: {
+        userQuery
+      }
+    };
+    const res = await this.request<{ response?: { response?: string }; citations?: any[] }>(
+      url,
+      'POST',
+      payload,
+      env.projectId,
+      undefined,
+      forUserEmail
+    );
+    return (res?.response?.response || '').trim();
+  }
+
+  async getDataStoreDocument(
+    documentName: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<any> {
+    const cleanName = documentName.replace(/^\/+/, '');
+    if (!/^projects\/[^/]+\/locations\/[^/]+\//.test(cleanName)) {
+      throw new Error(`Invalid documentName format: "${documentName}"`);
+    }
+    const locMatch = cleanName.match(/^projects\/[^/]+\/locations\/([^/]+)\//);
+    const docLocation = locMatch ? locMatch[1] : env.appLocation;
+    const baseUrl = getSafeDiscoveryEngineUrl(docLocation);
+    const url = `${baseUrl}/v1alpha/${cleanName}`;
+    return this.request<any>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
+  }
+
   async batchCreateNotebookSources(notebookId: string, userContents: any[], env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
@@ -619,16 +663,17 @@ export class DiscoveryEngineClient {
   async listNotes(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote[]> {
     validateResourceId(notebookId, 'notebookId');
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    return this.listAllPages<NotebookNote>(
-      (pageToken) => {
-        const query = new URLSearchParams({ pageSize: '100' });
-        if (pageToken) query.set('pageToken', pageToken);
-        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes?${query.toString()}`;
-      },
-      (res) => res.notes,
-      env.projectId,
-      forUserEmail
-    );
+    const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes:batchGet`;
+    const res = await this.request<{ notes?: any[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
+    return (res?.notes || []).map((entry: any) => {
+      if (entry?.note && typeof entry.note === 'object') {
+        return {
+          ...entry.note,
+          noteId: entry.note.noteId || entry.noteId
+        } as NotebookNote;
+      }
+      return entry as NotebookNote;
+    });
   }
 
   async createNote(notebookId: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote> {

@@ -1247,6 +1247,39 @@ ${data.memories.length > 0 ? `
             fs.writeFileSync(noteMdPath, cleanNoteMarkdown, 'utf8');
           }
         }
+
+        // Save Notebook Sources & Complete Recreation Backup JSON (in notebook_sources/)
+        const nbSources = Array.isArray(nb.details?.sources) ? nb.details.sources : [];
+        if (nbSources.length > 0 || (nb.details?.notes && nb.details.notes.length > 0)) {
+          const nbSourcesFolder = path.join(userFolder, 'notebook_sources');
+          if (!fs.existsSync(nbSourcesFolder)) {
+            fs.mkdirSync(nbSourcesFolder, { recursive: true });
+          }
+
+          const cleanNbName = (nb.displayName || nbId || 'Notebook').replace(/[^a-zA-Z0-9._ -]/g, '_').trim();
+          const backupJsonPayload = {
+            notebookId: nbId,
+            targetNotebookId: nb.targetId,
+            title: nb.displayName,
+            owner: userData.userEmail,
+            exportedAt: new Date().toISOString(),
+            sourcesCount: nbSources.length,
+            sources: nbSources,
+            notes: nb.details?.notes || []
+          };
+          const backupJsonPath = path.join(nbSourcesFolder, `${cleanNbName}_sources_backup.json`);
+          fs.writeFileSync(backupJsonPath, JSON.stringify(backupJsonPayload, null, 2), 'utf8');
+
+          for (const src of nbSources) {
+            const srcText = typeof src.content === 'string' ? src.content.trim() : '';
+            if (srcText) {
+              const srcTitle = src.title || src.sourceId || 'Source';
+              const cleanSrcBase = NotebookLmArtifactFormatter.cleanArtifactFilename(nb.displayName, `Source - ${srcTitle}`, '');
+              const srcMdPath = path.join(nbSourcesFolder, `${cleanSrcBase}.md`);
+              fs.writeFileSync(srcMdPath, `# ${srcTitle}\n\n${srcText}\n`, 'utf8');
+            }
+          }
+        }
       }
 
       logger.info(`Generated Handover Bundle for "${userEmail}" at: ${userFolder} (${nbArtifactCount} rich PPTX/DOCX/HTML NotebookLM artifacts saved)`);

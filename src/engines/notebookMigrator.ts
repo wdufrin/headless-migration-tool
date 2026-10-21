@@ -278,7 +278,7 @@ export class NotebookMigrator {
       }
     }
 
-    // 3. Sections / blocks array
+    // 3. Sections / blocks array (paragraphs, tables, codeBlocks)
     const blockList = doc.body?.content || doc.sections || doc.blocks || (Array.isArray(doc.content) ? doc.content : undefined);
     if (Array.isArray(blockList)) {
       for (const block of blockList) {
@@ -288,6 +288,23 @@ export class NotebookMigrator {
           for (const element of block.paragraph.elements) {
             if (element.textRun?.content) {
               text += element.textRun.content;
+            }
+          }
+        } else if (block?.codeBlock?.content && typeof block.codeBlock.content === 'string') {
+          text += block.codeBlock.content + '\n';
+        } else if (block?.code_block?.content && typeof block.code_block.content === 'string') {
+          text += block.code_block.content + '\n';
+        } else if (block?.table?.tableRows || block?.table?.table_rows) {
+          const rows = block.table.tableRows || block.table.table_rows || [];
+          for (const row of rows) {
+            const cells = row?.tableCells || row?.table_cells || [];
+            const cellTexts: string[] = [];
+            for (const cell of cells) {
+              const cellText = this.extractTextFromTailwindDoc({ content: cell?.content });
+              if (cellText) cellTexts.push(cellText);
+            }
+            if (cellTexts.length > 0) {
+              text += cellTexts.join(' | ') + '\n';
             }
           }
         } else if (typeof block?.text === 'string') {
@@ -385,6 +402,205 @@ export class NotebookMigrator {
   }
 
   /**
+   * Extracts unformatted plain/markdown text from any available field on a NotebookSource
+   * (content, text, markdownString, plainText, or tailwindDoc).
+   */
+  extractSourceText(source: NotebookSource): string {
+    if (!source) return '';
+
+    const rawPlainObj =
+      (typeof source.plainText === 'object' && source.plainText) ||
+      (typeof source.plain_text === 'object' && source.plain_text) ||
+      null;
+    const plainHeaderBody =
+      rawPlainObj && (typeof rawPlainObj.body === 'string' || typeof rawPlainObj.header === 'string')
+        ? [rawPlainObj.header, rawPlainObj.body].filter(Boolean).join('\n\n')
+        : '';
+
+    const plainTextVal =
+      typeof source.plainText === 'string'
+        ? source.plainText
+        : typeof source.plain_text === 'string'
+        ? source.plain_text
+        : plainHeaderBody ||
+          source.plainText?.text ||
+          source.plainText?.content ||
+          source.plain_text?.text ||
+          source.plain_text?.content ||
+          this.extractTextFromTailwindDoc(source.plainText || source.plain_text);
+
+    const extracted =
+      source.content ||
+      source.text ||
+      source.rawText ||
+      source.raw_text ||
+      source.markdown ||
+      source.markdownString ||
+      source.markdown_string ||
+      plainTextVal ||
+      source.userContent?.textContent?.content ||
+      source.documentContent?.content ||
+      this.extractTextFromTailwindDoc(
+        source.tailwindDoc ||
+          source.tailwind_doc ||
+          source.tailwindDocContent ||
+          source.tailwind_doc_content ||
+          (source.chunks ? { chunks: source.chunks } : undefined)
+      );
+
+    return typeof extracted === 'string' ? extracted.trim() : '';
+  }
+
+  /**
+   * Strips leading "Excerpts from ..." headers and inline citation markers (e.g. "[1]", "[1, 2]")
+   * returned by the v1alpha `:interactSources` endpoint using Regex Pattern Matching.
+   * Known limits: only strips numeric bracketed citations like [1] or [1, 2] to avoid
+   * removing markdown links [label](url) or code array indexing.
+   */
+  cleanInteractSourcesResponse(rawResponse: string): string {
+    if (!rawResponse || typeof rawResponse !== 'string') return '';
+    let cleaned = rawResponse.trim();
+    cleaned = cleaned.replace(/^\*\*Excerpts from\s+["']?.*?["']?\*\*\s*\n+/i, '');
+    cleaned = cleaned.replace(/^Excerpts from\s+["']?.*?["']?:?\s*\n+/i, '');
+    cleaned = cleaned.replace(/(\S)[ \t]+\[\d+(?:\s*,\s*\d+)*\](?!\()/g, '$1');
+    return cleaned.trim();
+  }
+
+  /**
+   * Extracts readable text from a Discovery Engine DataStore Document object
+   * (content.rawBytes base64 UTF-8, structData, or jsonData).
+   */
+  extractTextFromDataStoreDocument(doc: any): string {
+    if (!doc || typeof doc !== 'object') return '';
+
+    if (typeof doc.content?.rawBytes === 'string' && doc.content.rawBytes.trim()) {
+      const mimeType = String(doc.content.mimeType || '').toLowerCase();
+      if (!mimeType || mimeType.startsWith('text/') || mimeType.includes('json') || mimeType.includes('xml') || mimeType.includes('markdown') || mimeType.includes('csv') || mimeType.includes('html')) {
+        try {
+          const decoded = Buffer.from(doc.content.rawBytes, 'base64').toString('utf8').trim();
+          if (decoded && !decoded.includes('\uFFFD')) {
+            return decoded;
+          }
+        } catch (decodeErr: any) {
+          logger.debug(`Could not decode DataStore document rawBytes as UTF-8: ${decodeErr.message}`);
+        }
+      }
+    }
+
+    if (typeof doc.jsonData === 'string' && doc.jsonData.trim()) {
+      return doc.jsonData.trim();
+    }
+
+    if (doc.structData && typeof doc.structData === 'object') {
+      const s = doc.structData;
+      const directText = s.content || s.text || s.body || s.description || s.markdown;
+      if (typeof directText === 'string' && directText.trim()) {
+        return directText.trim();
+      }
+      return JSON.stringify(doc.structData, null, 2);
+    }
+
+    return '';
+  }
+
+  /**
+   * Builds a complete MigratedSourceItem entry for the JSON report, preserving the extracted
+   * text content, URL/Drive/YouTube metadata, and the `userContent` recreation payload.
+   */
+  buildMigratedSourceItem(
+    source: NotebookSource,
+    status: MigratedSourceItem['status'],
+    payload?: any,
+    options?: { targetSourceId?: string; error?: string }
+  ): MigratedSourceItem {
+    const sTitle = source.displayName || source.title || 'Source';
+    const sType =
+      source.metadata?.originalSourceContentType ||
+      (source.metadata?.googleDocsMetadata || source.metadata?.google_docs_metadata
+        ? 'GOOGLE_DOCS'
+        : source.metadata?.youtubeMetadata || source.metadata?.youtube_metadata
+        ? 'YOUTUBE'
+        : source.metadata?.webpageMetadata || source.metadata?.webpage_metadata
+        ? 'URL'
+        : 'DOCUMENT');
+    const sourceId = source.name?.split('/').pop() || source.sourceId?.id;
+    const resolvedPayload = payload !== undefined ? payload : this.mapSourceToPayload(source);
+    const extractedContent = resolvedPayload?.textContent?.content || this.extractSourceText(source) || undefined;
+    const webUrl =
+      resolvedPayload?.webContent?.url ||
+      source.metadata?.webpageMetadata?.webpageUrl ||
+      source.metadata?.webpage_metadata?.webpageUrl ||
+      source.webScrapeConfig?.url ||
+      source.url ||
+      undefined;
+    const gDocId =
+      resolvedPayload?.googleDriveContent?.documentId ||
+      source.metadata?.googleDocsMetadata?.documentId ||
+      source.metadata?.google_docs_metadata?.documentId ||
+      undefined;
+    const ytUrl =
+      resolvedPayload?.videoContent?.youtubeUrl ||
+      source.metadata?.youtubeMetadata?.youtubeUrl ||
+      source.metadata?.youtube_metadata?.youtubeUrl ||
+      undefined;
+
+    const item: MigratedSourceItem = {
+      title: sTitle,
+      sourceId,
+      type: sType,
+      status
+    };
+
+    if (options?.targetSourceId) item.targetSourceId = options.targetSourceId;
+    if (extractedContent) item.content = extractedContent;
+    if (webUrl) item.url = webUrl;
+    if (gDocId) item.googleDriveDocumentId = gDocId;
+    if (ytUrl) item.youtubeUrl = ytUrl;
+    if (resolvedPayload) item.userContent = resolvedPayload;
+    if (options?.error) item.error = options.error;
+
+    return item;
+  }
+
+  /**
+   * Groups `{ raw, payload }` items into batches respecting both a maximum item count
+   * and a maximum UTF-8 byte budget so large extracted PDF/book sources do not exceed
+   * HTTP request payload limits during `sources:batchCreate`.
+   */
+  chunkSourcesForBatchCreate(
+    items: Array<{ raw: NotebookSource; payload: any }>,
+    maxCount: number = 5,
+    maxBytes: number = 4 * 1024 * 1024
+  ): Array<Array<{ raw: NotebookSource; payload: any }>> {
+    const chunks: Array<Array<{ raw: NotebookSource; payload: any }>> = [];
+    let currentChunk: Array<{ raw: NotebookSource; payload: any }> = [];
+    let currentBytes = 0;
+
+    for (const item of items) {
+      const serialized = JSON.stringify(item.payload || {});
+      const itemBytes = Buffer.byteLength(serialized, 'utf8');
+
+      if (
+        currentChunk.length > 0 &&
+        (currentChunk.length >= maxCount || currentBytes + itemBytes > maxBytes)
+      ) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentBytes = 0;
+      }
+
+      currentChunk.push(item);
+      currentBytes += itemBytes;
+    }
+
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
+  }
+
+  /**
    * Maps a source from the source environment into a payload accepted by target sources:batchCreate.
    */
   mapSourceToPayload(source: NotebookSource): any {
@@ -417,8 +633,9 @@ export class NotebookMigrator {
       }
     }
 
+    const extractedText = this.extractSourceText(source);
+
     if (asMeta) {
-      const extractedText = source.content || source.text || this.extractTextFromTailwindDoc(source.tailwindDoc);
       if (extractedText) {
         return {
           textContent: {
@@ -445,20 +662,12 @@ export class NotebookMigrator {
       };
     }
 
-    // Fallback: Check for inline text or tailwindDoc text across all possible API response fields
-    const textContent =
-      source.content ||
-      source.text ||
-      source.rawText ||
-      source.markdown ||
-      source.userContent?.textContent?.content ||
-      source.documentContent?.content ||
-      this.extractTextFromTailwindDoc(source.tailwindDoc || source.tailwindDocContent || (source.chunks ? { chunks: source.chunks } : undefined));
-    if (textContent) {
+    // Fallback: Check for inline text, markdownString, plainText, or tailwindDoc text across all possible API response fields
+    if (extractedText) {
       return {
         textContent: {
           sourceName,
-          content: textContent
+          content: extractedText
         }
       };
     }
@@ -1010,7 +1219,7 @@ export class NotebookMigrator {
           });
         }
 
-        // Fetch detailed source data (tailwindDoc, document text) for each source
+        // Fetch detailed source data (tailwindDoc, document text, or fallback extraction) for each source
         if (fullNotebook.sources && fullNotebook.sources.length > 0) {
           const totalSources = fullNotebook.sources.length;
           if (totalSources > 10) {
@@ -1023,12 +1232,60 @@ export class NotebookMigrator {
             sourceFetchConcurrency,
             async (s) => {
               const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
+              const sTitle = s.title || s.displayName || sourceId || 'Source';
               try {
                 if (!sourceId) return s;
                 const fullSource = await this.client.getNotebookSource(notebookId, sourceId, sourceEnv, userImpersonation);
-                return { ...s, ...fullSource };
+                const merged: NotebookSource = { ...s, ...fullSource };
+
+                // 1. Pre-extract unformatted text from tailwindDoc / plainText / markdownString so it is stored directly on merged.content
+                let extractedText = this.extractSourceText(merged);
+
+                // 2. If this is an Agentspace document without extracted text, attempt to read the document from the source DataStore
+                const asDocName =
+                  merged.metadata?.agentspaceMetadata?.documentName ||
+                  merged.metadata?.agentspace_metadata?.documentName;
+                if (!extractedText && asDocName && typeof (this.client as any).getDataStoreDocument === 'function') {
+                  try {
+                    const dsDoc = await this.client.getDataStoreDocument(asDocName, sourceEnv, userImpersonation);
+                    const dsText = this.extractTextFromDataStoreDocument(dsDoc);
+                    if (dsText) {
+                      extractedText = dsText;
+                      logger.info(`Extracted ${dsText.length} chars of text from source DataStore document "${asDocName}" for source "${sTitle}"`);
+                    }
+                  } catch (dsErr: any) {
+                    logger.debug(`Could not fetch DataStore document "${asDocName}" for source "${sTitle}": ${dsErr.message}`);
+                  }
+                }
+
+                if (extractedText) {
+                  merged.content = extractedText;
+                }
+
+                // 3. Fallback: If source still has no migratable payload (e.g. tailwindDoc stripped by ESF on customer project),
+                // extract unformatted text via :interactSources scoped to this sourceId
+                if (this.mapSourceToPayload(merged) === null && typeof (this.client as any).interactNotebookSource === 'function') {
+                  try {
+                    const rawInteractText = await this.client.interactNotebookSource(
+                      notebookId,
+                      sourceId,
+                      'Output the complete, verbatim text content of this source document from start to finish. Do not summarize, do not add introductory headings like "Excerpts from...", and do not omit any paragraphs or sections.',
+                      sourceEnv,
+                      userImpersonation
+                    );
+                    const cleanedInteractText = this.cleanInteractSourcesResponse(rawInteractText);
+                    if (cleanedInteractText) {
+                      merged.content = cleanedInteractText;
+                      logger.info(`Extracted ${cleanedInteractText.length} chars of unformatted text via :interactSources for source "${sTitle}" (${sourceId})`);
+                    }
+                  } catch (interactErr: any) {
+                    logger.warn(`Fallback :interactSources extraction failed for source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${interactErr.message}`);
+                  }
+                }
+
+                return merged;
               } catch (err: any) {
-                logger.warn(`Could not fetch detailed source "${s.title || s.displayName || sourceId}" (${sourceId}) in notebook ${notebookId}: ${err.message}`);
+                logger.warn(`Could not fetch detailed source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${err.message}`);
                 return { ...s, _fetchError: err.message } as NotebookSource;
               } finally {
                 completedSources++;
@@ -1066,39 +1323,38 @@ export class NotebookMigrator {
       let dryRunSourcesRestored = 0;
       let dryRunSourcesFailed = 0;
       const dryRunSources: MigratedSourceItem[] = rawSources.map(s => {
-        const sTitle = s.displayName || s.title || 'Source';
-        const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
-        const sourceId = s.name?.split('/').pop() || s.sourceId?.id;
         const fetchError = (s as any)._fetchError;
         if (fetchError) {
           dryRunSourcesFailed++;
-          return {
-            title: sTitle,
-            sourceId,
-            type: sType,
-            status: 'FAILED',
+          return this.buildMigratedSourceItem(s, 'FAILED', null, {
             error: `Source content fetch failed: ${fetchError}`
-          };
+          });
         }
         const payload = this.mapSourceToPayload(s);
         if (payload === null) {
           dryRunSourcesFailed++;
-          return {
-            title: sTitle,
-            sourceId,
-            type: sType,
-            status: 'MANUAL_REUPLOAD_REQUIRED',
+          return this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
             error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
-          };
+          });
         }
         dryRunSourcesRestored++;
-        return {
-          title: sTitle,
-          sourceId,
-          type: sType,
-          status: 'DRY_RUN'
-        };
+        return this.buildMigratedSourceItem(s, 'DRY_RUN', payload);
       });
+
+      const unmigratableSamples = rawSources
+        .filter(s => !(s as any)._fetchError && this.mapSourceToPayload(s) === null)
+        .slice(0, 3)
+        .map(s => {
+          const sTitle = s.displayName || s.title || 'Source';
+          const topKeys = Object.keys(s).join(',');
+          const metaKeys = s.metadata ? Object.keys(s.metadata).join(',') : 'none';
+          return `"${sTitle}" [keys: ${topKeys} | metadata: ${metaKeys}]`;
+        });
+      if (unmigratableSamples.length > 0) {
+        logger.info(
+          `[DIAGNOSTIC] Notebook "${result.displayName}" (${notebookId}) has ${dryRunSourcesFailed}/${rawSources.length} metadata-only source(s) (no tailwindDoc/plainText/markdownString/URL returned by getNotebookSource). Sample(s): ${unmigratableSamples.join('; ')}`
+        );
+      }
 
       const adminMetadataFlags = nb.metadata?.hasProjectLevelAdminElevation ? {
         hasProjectLevelAdminElevation: true,
@@ -1122,7 +1378,7 @@ export class NotebookMigrator {
         notesCount: notes.length,
         notes: (notes || []).map((n: any) => ({
           title: n.title || 'Studio Note',
-          content: n.content || this.extractTextFromTailwindDoc(n)
+          content: n.content || this.extractTextFromTailwindDoc(n.tailwindDoc || n.tailwindDocContent || n)
         })),
         artifactsCount: artifacts.length,
         artifacts: artifacts.map(a => ({
@@ -1237,7 +1493,6 @@ export class NotebookMigrator {
           for (const s of uniqueRawSources) {
             const oldSourceId = s.name?.split('/').pop() || s.sourceId?.id;
             const sTitle = s.displayName || s.title || 'Source';
-            const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
 
             // Check if source already exists in target notebook
             const existingMatch = existingTargetSources.find(ets => isSameSource(s, ets));
@@ -1246,12 +1501,11 @@ export class NotebookMigrator {
               if (oldSourceId && existingTargetId) {
                 sourceIdMap[oldSourceId] = existingTargetId;
               }
-              sourceDetails.push({
-                title: sTitle,
-                sourceId: oldSourceId,
-                type: sType,
-                status: 'SUCCESS'
-              });
+              sourceDetails.push(
+                this.buildMigratedSourceItem(s, 'SUCCESS', this.mapSourceToPayload(s) || undefined, {
+                  targetSourceId: existingTargetId
+                })
+              );
               sourcesRestored++;
               logger.info(`Source "${sTitle}" already exists in target Notebook ${newNotebookId}. Skipping re-creation.`);
               continue;
@@ -1259,53 +1513,48 @@ export class NotebookMigrator {
 
             const fetchError = (s as any)._fetchError;
             if (fetchError) {
-              sourceDetails.push({
-                title: sTitle,
-                sourceId: oldSourceId,
-                type: sType,
-                status: 'FAILED',
-                error: `Source content fetch failed: ${fetchError}`
-              });
+              sourceDetails.push(
+                this.buildMigratedSourceItem(s, 'FAILED', null, {
+                  error: `Source content fetch failed: ${fetchError}`
+                })
+              );
               sourcesFailed++;
               continue;
             }
 
             const payload = this.mapSourceToPayload(s);
             if (payload === null) {
-              sourceDetails.push({
-                title: sTitle,
-                sourceId: oldSourceId,
-                type: sType,
-                status: 'MANUAL_REUPLOAD_REQUIRED',
-                error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
-              });
+              sourceDetails.push(
+                this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
+                  error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
+                })
+              );
               sourcesFailed++;
             } else {
               itemsToCreate.push({ raw: s, payload });
             }
           }
 
-          const createdSources: any[] = [];
-          const BATCH_SIZE = 5;
-          for (let i = 0; i < itemsToCreate.length; i += BATCH_SIZE) {
-            const chunkItems = itemsToCreate.slice(i, i + BATCH_SIZE);
+          const sourceChunks = this.chunkSourcesForBatchCreate(itemsToCreate, 5, 4 * 1024 * 1024);
+          for (const chunkItems of sourceChunks) {
             const chunkPayloads = chunkItems.map(it => it.payload);
 
             try {
               const createdBatch = await this.client.batchCreateNotebookSources(newNotebookId, chunkPayloads, targetEnv, userOwner);
-              if (createdBatch?.sources) {
-                createdSources.push(...createdBatch.sources);
-              }
-              for (const it of chunkItems) {
+              const batchReturnedSources = Array.isArray(createdBatch?.sources) ? createdBatch.sources : [];
+              for (let idx = 0; idx < chunkItems.length; idx++) {
+                const it = chunkItems[idx];
                 const s = it.raw;
-                const sTitle = s.displayName || s.title || 'Source';
-                const sType = s.metadata?.originalSourceContentType || (s.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : s.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
-                sourceDetails.push({
-                  title: sTitle,
-                  sourceId: s.name?.split('/').pop() || s.sourceId?.id,
-                  type: sType,
-                  status: 'SUCCESS'
-                });
+                const oldSourceId = s.name?.split('/').pop() || s.sourceId?.id;
+                const newSourceId = batchReturnedSources[idx]?.name?.split('/').pop() || batchReturnedSources[idx]?.sourceId?.id;
+                if (oldSourceId && newSourceId) {
+                  sourceIdMap[oldSourceId] = newSourceId;
+                }
+                sourceDetails.push(
+                  this.buildMigratedSourceItem(s, 'SUCCESS', it.payload, {
+                    targetSourceId: newSourceId
+                  })
+                );
                 sourcesRestored++;
               }
             } catch (chunkErr: any) {
@@ -1314,39 +1563,30 @@ export class NotebookMigrator {
                 const singleItem = chunkItems[j];
                 const rawSingle = singleItem.raw;
                 const sTitle = rawSingle.displayName || rawSingle.title || 'Source';
-                const sType = rawSingle.metadata?.originalSourceContentType || (rawSingle.metadata?.googleDocsMetadata ? 'GOOGLE_DOCS' : rawSingle.metadata?.webpageMetadata ? 'URL' : 'DOCUMENT');
+                const oldSourceId = rawSingle.name?.split('/').pop() || rawSingle.sourceId?.id;
                 try {
                   const singleBatch = await this.client.batchCreateNotebookSources(newNotebookId, [singleItem.payload], targetEnv, userOwner);
-                  if (singleBatch?.sources) {
-                    createdSources.push(...singleBatch.sources);
+                  const singleReturned = Array.isArray(singleBatch?.sources) ? singleBatch.sources[0] : undefined;
+                  const newSourceId = singleReturned?.name?.split('/').pop() || singleReturned?.sourceId?.id;
+                  if (oldSourceId && newSourceId) {
+                    sourceIdMap[oldSourceId] = newSourceId;
                   }
-                  sourceDetails.push({
-                    title: sTitle,
-                    sourceId: rawSingle.name?.split('/').pop() || rawSingle.sourceId?.id,
-                    type: sType,
-                    status: 'SUCCESS'
-                  });
+                  sourceDetails.push(
+                    this.buildMigratedSourceItem(rawSingle, 'SUCCESS', singleItem.payload, {
+                      targetSourceId: newSourceId
+                    })
+                  );
                   sourcesRestored++;
                 } catch (singleErr: any) {
                   logger.error(`Failed to migrate Source "${sTitle}" in Notebook ${newNotebookId}: ${singleErr.message}`);
-                  sourceDetails.push({
-                    title: sTitle,
-                    sourceId: rawSingle.name?.split('/').pop() || rawSingle.sourceId?.id,
-                    type: sType,
-                    status: 'FAILED',
-                    error: singleErr.message
-                  });
+                  sourceDetails.push(
+                    this.buildMigratedSourceItem(rawSingle, 'FAILED', singleItem.payload, {
+                      error: singleErr.message
+                    })
+                  );
                   sourcesFailed++;
                 }
               }
-            }
-          }
-
-          for (let i = 0; i < itemsToCreate.length; i++) {
-            const oldSourceId = itemsToCreate[i].raw.name?.split('/').pop() || itemsToCreate[i].raw.sourceId?.id;
-            const newSourceId = createdSources[i]?.name?.split('/').pop() || createdSources[i]?.sourceId?.id;
-            if (oldSourceId && newSourceId) {
-              sourceIdMap[oldSourceId] = newSourceId;
             }
           }
           logger.info(`Restored ${sourcesRestored} sources (${sourcesFailed} failed/manual) to Notebook ${newNotebookId}`);
@@ -1356,10 +1596,10 @@ export class NotebookMigrator {
         if (notes && notes.length > 0) {
           for (const note of notes) {
             const noteTitle = (note.title || 'Note').trim().toLowerCase();
-            const noteContent = (note.content || this.extractTextFromTailwindDoc(note) || '').trim();
+            const noteContent = (note.content || this.extractTextFromTailwindDoc(note.tailwindDoc || note.tailwindDocContent || note) || '').trim();
             const noteAlreadyExists = existingNotes.some(en => {
               const enTitle = (en.title || 'Note').trim().toLowerCase();
-              const enContent = (en.content || this.extractTextFromTailwindDoc(en) || '').trim();
+              const enContent = (en.content || this.extractTextFromTailwindDoc(en.tailwindDoc || en.tailwindDocContent || en) || '').trim();
               return enTitle === noteTitle && (!noteContent || enContent === noteContent);
             });
             if (noteAlreadyExists) {
@@ -1369,7 +1609,7 @@ export class NotebookMigrator {
             try {
               const notePayload = {
                 title: note.title || 'Note',
-                content: note.content || ''
+                content: noteContent
               };
               await this.client.createNote(newNotebookId, notePayload, targetEnv, userOwner);
             } catch (noteErr: any) {
@@ -1440,7 +1680,7 @@ export class NotebookMigrator {
           })),
           notes: (notes || []).map((n: any) => ({
             title: n.title || 'Studio Note',
-            content: n.content || this.extractTextFromTailwindDoc(n)
+            content: n.content || this.extractTextFromTailwindDoc(n.tailwindDoc || n.tailwindDocContent || n)
           }))
         };
 

@@ -144,8 +144,14 @@ export interface MigrationItemResult {
 export interface MigratedSourceItem {
   title: string;
   sourceId?: string;
+  targetSourceId?: string;
   type: string;
   status: 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'DRY_RUN' | 'MANUAL_REUPLOAD_REQUIRED';
+  content?: string;
+  url?: string;
+  googleDriveDocumentId?: string;
+  youtubeUrl?: string;
+  userContent?: any;
   error?: string;
 }
 
