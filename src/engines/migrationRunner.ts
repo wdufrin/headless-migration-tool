@@ -314,7 +314,9 @@ export class MigrationRunner {
           config.target,
           effectiveOptions,
           config.identityMapping,
-          discoveredUsers
+          discoveredUsers,
+          config.datastoreMapping,
+          config.collectionMapping
         );
         allResults.push(...notebookResults);
         checkpointManager.recordBatch(notebookResults);

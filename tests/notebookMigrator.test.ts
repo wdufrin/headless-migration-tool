@@ -307,6 +307,38 @@ describe('NotebookMigrator Engine', () => {
       expect(mappedTableCode?.textContent?.content).toContain('SELECT * FROM ledger;');
     });
 
+    it('should rewrite agentspaceMetadata.documentName using targetEnv, datastoreMapping, and collectionMapping when inline text is unavailable', () => {
+      const asSource: NotebookSource = {
+        title: 'Enterprise Policy Doc',
+        metadata: {
+          agentspaceMetadata: {
+            documentName: 'projects/src-proj-123/locations/global/collections/src_col/dataStores/old_ds_id/branches/0/documents/doc-999'
+          }
+        }
+      };
+
+      const targetEnv: EnvironmentConfig = {
+        projectId: 'tgt-proj-456',
+        appLocation: 'us',
+        collectionId: 'default_collection',
+        appId: 'app-tgt',
+        assistantId: 'default_assistant'
+      };
+
+      const mapped = migrator.mapSourceToPayload(
+        asSource,
+        targetEnv,
+        { old_ds_id: 'new_ds_id' },
+        { src_col: 'tgt_col' }
+      );
+
+      expect(mapped).toEqual({
+        agentspaceContent: {
+          documentName: 'projects/tgt-proj-456/locations/us/collections/tgt_col/dataStores/new_ds_id/branches/0/documents/doc-999'
+        }
+      });
+    });
+
     it('should call /notes:batchGet and unwrap nested note objects in DiscoveryEngineClient.listNotes', async () => {
       const env: EnvironmentConfig = {
         projectId: 'p-notes',

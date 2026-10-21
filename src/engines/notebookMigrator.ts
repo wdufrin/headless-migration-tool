@@ -601,9 +601,39 @@ export class NotebookMigrator {
   }
 
   /**
+   * Rewrites a source Agentspace document resource name (`projects/.../locations/.../collections/.../dataStores/.../branches/.../documents/...`)
+   * to point to the target project, location, collection, and mapped DataStore ID when a target environment is provided.
+   */
+  rewriteAgentspaceDocumentName(
+    documentName: string,
+    targetEnv?: EnvironmentConfig,
+    datastoreMapping: Record<string, string> = {},
+    collectionMapping: Record<string, string> = {}
+  ): string {
+    if (!documentName || !targetEnv?.projectId) return documentName;
+    const clean = documentName.replace(/^\/+/, '');
+    const match = clean.match(
+      /^projects\/([^/]+)\/locations\/([^/]+)\/collections\/([^/]+)\/dataStores\/([^/]+)\/(.+)$/
+    );
+    if (!match) return documentName;
+
+    const [, , , oldColId, oldDsId, restPath] = match;
+    const newColId = collectionMapping[oldColId] || targetEnv.collectionId || oldColId;
+    const newDsId = datastoreMapping[oldDsId] || oldDsId;
+    const newLoc = targetEnv.appLocation || match[2];
+
+    return `projects/${targetEnv.projectId}/locations/${newLoc}/collections/${newColId}/dataStores/${newDsId}/${restPath}`;
+  }
+
+  /**
    * Maps a source from the source environment into a payload accepted by target sources:batchCreate.
    */
-  mapSourceToPayload(source: NotebookSource): any {
+  mapSourceToPayload(
+    source: NotebookSource,
+    targetEnv?: EnvironmentConfig,
+    datastoreMapping: Record<string, string> = {},
+    collectionMapping: Record<string, string> = {}
+  ): any {
     if ((source as any)?._fetchError) {
       return null;
     }
@@ -647,7 +677,12 @@ export class NotebookMigrator {
       if (asMeta.documentName) {
         return {
           agentspaceContent: {
-            documentName: asMeta.documentName
+            documentName: this.rewriteAgentspaceDocumentName(
+              asMeta.documentName,
+              targetEnv,
+              datastoreMapping,
+              collectionMapping
+            )
           }
         };
       }
@@ -685,7 +720,9 @@ export class NotebookMigrator {
     targetEnv: EnvironmentConfig,
     options: MigrationOptions = {},
     identityMapping: Record<string, string> = {},
-    discoveredUsers: string[] = []
+    discoveredUsers: string[] = [],
+    datastoreMapping: Record<string, string> = {},
+    collectionMapping: Record<string, string> = {}
   ): Promise<MigrationItemResult[]> {
     logger.info(`Discovering notebooks in source project: ${sourceEnv.projectId} (${sourceEnv.appLocation})...`);
 
@@ -1027,7 +1064,7 @@ export class NotebookMigrator {
     }
 
     const immediateResults = await mapConcurrent(immediateNotebooks, concurrency, (nb: Notebook) =>
-      this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun)
+      this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun, datastoreMapping, collectionMapping)
     );
 
     if (deferredAdminSharedNotebooks.length === 0) {
@@ -1111,7 +1148,7 @@ export class NotebookMigrator {
       }
 
       const approvedResults = await mapConcurrent(approvedNotebooks, concurrency, (nb: Notebook) =>
-        this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun)
+        this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun, datastoreMapping, collectionMapping)
       );
 
       return [...immediateResults, ...approvedResults, ...rejectedResults];
@@ -1121,7 +1158,7 @@ export class NotebookMigrator {
       `[ADMIN DEFERRAL] Processing ${deferredAdminSharedNotebooks.length} deferred shared Admin notebook(s) at the end of the run (Tip: enable "Prompt for HITL on Admin Notebooks" to manually approve/reject these).`
     );
     const deferredResults = await mapConcurrent(deferredAdminSharedNotebooks, concurrency, (nb: Notebook) =>
-      this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun)
+      this.migrateSingleNotebook(nb, sourceEnv, targetEnv, options, identityMapping, candidateUsers, isDryRun, datastoreMapping, collectionMapping)
     );
     return [...immediateResults, ...deferredResults];
   }
@@ -1136,7 +1173,9 @@ export class NotebookMigrator {
     options: MigrationOptions,
     identityMapping: Record<string, string>,
     candidateUsers: Set<string>,
-    isDryRun: boolean
+    isDryRun: boolean,
+    datastoreMapping: Record<string, string> = {},
+    collectionMapping: Record<string, string> = {}
   ): Promise<MigrationItemResult> {
       const startTime = Date.now();
       const notebookId = nb.name.split('/').pop() || '';
@@ -1264,7 +1303,7 @@ export class NotebookMigrator {
 
                 // 3. Fallback: If source still has no migratable payload (e.g. tailwindDoc stripped by ESF on customer project),
                 // extract unformatted text via :interactSources scoped to this sourceId
-                if (this.mapSourceToPayload(merged) === null && typeof (this.client as any).interactNotebookSource === 'function') {
+                if (this.mapSourceToPayload(merged, targetEnv, datastoreMapping, collectionMapping) === null && typeof (this.client as any).interactNotebookSource === 'function') {
                   try {
                     const rawInteractText = await this.client.interactNotebookSource(
                       notebookId,
@@ -1330,7 +1369,7 @@ export class NotebookMigrator {
             error: `Source content fetch failed: ${fetchError}`
           });
         }
-        const payload = this.mapSourceToPayload(s);
+        const payload = this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping);
         if (payload === null) {
           dryRunSourcesFailed++;
           return this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
@@ -1342,7 +1381,7 @@ export class NotebookMigrator {
       });
 
       const unmigratableSamples = rawSources
-        .filter(s => !(s as any)._fetchError && this.mapSourceToPayload(s) === null)
+        .filter(s => !(s as any)._fetchError && this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping) === null)
         .slice(0, 3)
         .map(s => {
           const sTitle = s.displayName || s.title || 'Source';
@@ -1502,7 +1541,7 @@ export class NotebookMigrator {
                 sourceIdMap[oldSourceId] = existingTargetId;
               }
               sourceDetails.push(
-                this.buildMigratedSourceItem(s, 'SUCCESS', this.mapSourceToPayload(s) || undefined, {
+                this.buildMigratedSourceItem(s, 'SUCCESS', this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping) || undefined, {
                   targetSourceId: existingTargetId
                 })
               );
@@ -1522,7 +1561,7 @@ export class NotebookMigrator {
               continue;
             }
 
-            const payload = this.mapSourceToPayload(s);
+            const payload = this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping);
             if (payload === null) {
               sourceDetails.push(
                 this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
