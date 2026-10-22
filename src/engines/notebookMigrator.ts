@@ -463,7 +463,11 @@ export class NotebookMigrator {
     cleaned = cleaned.replace(/^\*\*Excerpts from\s+["']?.*?["']?\*\*\s*\n+/i, '');
     cleaned = cleaned.replace(/^Excerpts from\s+["']?.*?["']?:?\s*\n+/i, '');
     cleaned = cleaned.replace(/(\S)[ \t]+\[\d+(?:\s*,\s*\d+)*\](?!\()/g, '$1');
-    return cleaned.trim();
+    cleaned = cleaned.trim();
+    if (DiscoveryEngineClient.isBlockedOrRefusalResponse(cleaned)) {
+      return '';
+    }
+    return cleaned;
   }
 
   /**
@@ -725,6 +729,9 @@ export class NotebookMigrator {
     collectionMapping: Record<string, string> = {}
   ): Promise<MigrationItemResult[]> {
     logger.info(`Discovering notebooks in source project: ${sourceEnv.projectId} (${sourceEnv.appLocation})...`);
+    logger.info(
+      `[EXPERIMENTAL] NotebookLM source extraction & migration is experimental. Uploaded file text extraction requires API visibility on the source project (or falls back to grounded extraction without original formatting).`
+    );
 
     // 1. Resolve Candidate Users for Multi-User DWD Notebook Discovery
     const candidateUsers = new Set<string>();
@@ -1301,24 +1308,57 @@ export class NotebookMigrator {
                   merged.content = extractedText;
                 }
 
-                // 3. Fallback: If source still has no migratable payload (e.g. tailwindDoc stripped by ESF on customer project),
-                // extract unformatted text via :interactSources scoped to this sourceId
-                if (this.mapSourceToPayload(merged, targetEnv, datastoreMapping, collectionMapping) === null && typeof (this.client as any).interactNotebookSource === 'function') {
-                  try {
-                    const rawInteractText = await this.client.interactNotebookSource(
-                      notebookId,
-                      sourceId,
-                      'Output the complete, verbatim text content of this source document from start to finish. Do not summarize, do not add introductory headings like "Excerpts from...", and do not omit any paragraphs or sections.',
-                      sourceEnv,
-                      userImpersonation
-                    );
-                    const cleanedInteractText = this.cleanInteractSourcesResponse(rawInteractText);
-                    if (cleanedInteractText) {
-                      merged.content = cleanedInteractText;
-                      logger.info(`Extracted ${cleanedInteractText.length} chars of unformatted text via :interactSources for source "${sTitle}" (${sourceId})`);
+                // 3. Fallback Extraction Cascade (when GetSource does not include tailwindDoc/plainText/markdownString):
+                //    Tier 2: NotebookService.InteractSources (`POST .../notebooks/{id}:interactSources` per-sourceId, unlocked by NLME_API_USER / SPARK_PREVIEW)
+                //    Tier 3: AssistantService.StreamAssist (`POST .../assistants/default_assistant:streamAssist` query_notebook tool)
+                if (this.mapSourceToPayload(merged, targetEnv, datastoreMapping, collectionMapping) === null) {
+                  if (typeof (this.client as any).interactNotebookSource === 'function') {
+                    try {
+                      const rawInteractText = await this.client.interactNotebookSource(
+                        notebookId,
+                        sourceId,
+                        'Output the complete, verbatim text content of this source document from start to finish. Do not summarize, do not add introductory headings like "Excerpts from...", and do not omit any paragraphs or sections.',
+                        sourceEnv,
+                        userImpersonation
+                      );
+                      const cleanedInteractText = this.cleanInteractSourcesResponse(rawInteractText);
+                      if (cleanedInteractText) {
+                        merged.content = cleanedInteractText;
+                        logger.info(`Extracted ${cleanedInteractText.length} chars of unformatted text via :interactSources for source "${sTitle}" (${sourceId})`);
+                      }
+                    } catch (interactErr: any) {
+                      const isMethodNotFound =
+                        interactErr?.status === 404 &&
+                        String(interactErr?.message || '').toLowerCase().includes('method not found');
+                      if (isMethodNotFound) {
+                        logger.debug(`NotebookService.InteractSources not exposed on project "${sourceEnv.projectId}" (404 Method not found); falling back to :streamAssist.`);
+                      } else {
+                        logger.warn(`Fallback :interactSources extraction failed for source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${interactErr.message}`);
+                      }
                     }
-                  } catch (interactErr: any) {
-                    logger.warn(`Fallback :interactSources extraction failed for source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${interactErr.message}`);
+                  }
+
+                  if (!merged.content && sourceEnv.appId && typeof (this.client as any).streamAssistNotebookSource === 'function') {
+                    try {
+                      const rawAssistText = await this.client.streamAssistNotebookSource(
+                        notebookId,
+                        sTitle,
+                        result.displayName,
+                        sourceEnv,
+                        userImpersonation
+                      );
+                      const cleanedAssistText = this.cleanInteractSourcesResponse(rawAssistText);
+                      if (cleanedAssistText) {
+                        merged.content = cleanedAssistText;
+                        logger.info(
+                          `Extracted ${cleanedAssistText.length} chars of unformatted text via :streamAssist (query_notebook) for source "${sTitle}" (${sourceId})`
+                        );
+                      }
+                    } catch (assistErr: any) {
+                      logger.warn(
+                        `Fallback :streamAssist (query_notebook) extraction failed for source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${assistErr.message}`
+                      );
+                    }
                   }
                 }
 
@@ -1340,7 +1380,13 @@ export class NotebookMigrator {
         try {
           notes = await this.client.listNotes(notebookId, sourceEnv, userImpersonation);
         } catch (noteErr: any) {
-          logger.warn(`Could not list notes for Notebook "${result.displayName}" (${notebookId}): ${noteErr.message}`);
+          const isMethodNotFound =
+            noteErr?.status === 404 || String(noteErr?.message || '').includes('Method not found');
+          if (isMethodNotFound) {
+            logger.debug(`NoteService (notes:batchGet) not exposed on project "${sourceEnv.projectId}" (404 Method not found); skipping notes fetch for "${result.displayName}".`);
+          } else {
+            logger.warn(`Could not list notes for Notebook "${result.displayName}" (${notebookId}): ${noteErr.message}`);
+          }
         }
 
         // Fetch artifacts (Studio outputs: Slide Decks, Infographics, Audio Overview, Reports) only when exportArtifacts is enabled
@@ -1351,7 +1397,13 @@ export class NotebookMigrator {
               logger.info(`Found ${artifacts.length} Studio artifacts for Notebook "${result.displayName}"`);
             }
           } catch (artErr: any) {
-            logger.warn(`Could not list Studio artifacts for Notebook "${result.displayName}" (${notebookId}): ${artErr.message}`);
+            const isMethodNotFound =
+              artErr?.status === 404 || String(artErr?.message || '').includes('Method not found');
+            if (isMethodNotFound) {
+              logger.debug(`ArtifactService not exposed on project "${sourceEnv.projectId}" (404 Method not found); skipping Studio artifacts fetch for "${result.displayName}".`);
+            } else {
+              logger.warn(`Could not list Studio artifacts for Notebook "${result.displayName}" (${notebookId}): ${artErr.message}`);
+            }
           }
         }
       } catch (fetchErr: any) {

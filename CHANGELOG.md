@@ -5,6 +5,18 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2] - 2026-10-21
+
+### Added
+- **Public Customer NotebookLM Source Extraction via `AssistantService.StreamAssist` (`query_notebook`) (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)**:
+  - Added `DiscoveryEngineClient.streamAssistNotebookSource` (`POST /v1alpha/projects/{projectNumber}/locations/{location}/collections/{collection}/engines/{appId}/assistants/default_assistant:streamAssist`) as the primary extraction path for public customer projects where `GetSource` strips `tailwindDoc` (`GOOGLE_INTERNAL` visibility) and direct `:interactSources` is unexposed (`NLME_API_USER` allowlist).
+  - Automatically resolves and caches the source project's numeric `projectNumber` via `resolveProjectNumber` (Engine GET with Cloud Resource Manager fallback) and attaches a `documentReference` pointing to `projects/{projectNumber}/locations/{location}/notebooks/{notebookId}` so Discovery Engine invokes `QueryNotebookTool` over internal Stubby and returns grounded source chunks in `groundedContent.textGroundingMetadata.references`.
+  - Automatically deletes temporary `sessionInfo.session` resources created during `:streamAssist` extraction (`DELETE /v1alpha/{session}`) so customer source chat histories remain clean.
+  - Added per-project 404 method caching (`unexposedMethodProjects`) for `NoteService` (`notes:batchGet` / `POST /notes`), `ArtifactService` (`/artifacts`), and `:interactSources` so external customer migrations do not repeatedly call unexposed endpoints.
+- Bumped platform version to `1.8.2` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (391 passing tests across 31 test suites).
+
+---
+
 ## [1.8.1] - 2026-10-21
 
 ### Added

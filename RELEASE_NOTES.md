@@ -1,4 +1,27 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.8.2
+
+**Release Date:** October 21, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.2** introduces **Public Customer NotebookLM Source Extraction via `AssistantService.StreamAssist` (`query_notebook`)**, enabling external customer GCP projects (where `GetSource` strips `tailwindDoc` and direct `:interactSources` returns `404 Method not found`) to extract unformatted source text from uploaded files (`.docx`, `.pdf`, `.txt`), store it in the JSON report (`details.sources[].content` and `userContent`), and recreate the sources in target notebooks via `sources:batchCreate`. It also adds automatic cleanup of temporary `:streamAssist` sessions and per-project 404 caching for unexposed `NoteService` and `ArtifactService` endpoints. v1.8.2 includes **391 passing automated tests across 31 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. 🌐 Public Customer NotebookLM Source Extraction via `:streamAssist` (`query_notebook`) (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)
+* **Primary Public Extraction Path (`streamAssistNotebookSource`)**: Calls the publicly exposed `POST /v1alpha/projects/{projectNumber}/locations/{location}/collections/{collection}/engines/{appId}/assistants/default_assistant:streamAssist` endpoint with a `documentReference` pointing to `projects/{projectNumber}/locations/{location}/notebooks/{notebookId}`, triggering Discovery Engine's internal `QueryNotebookTool` and extracting source grounding chunks (`textGroundingMetadata.references[].content`) and verbatim text.
+* **Automatic Numeric `projectNumber` Resolution (`resolveProjectNumber`)**: Resolves and caches the numeric project number required by `QueryNotebookTool` via the source Engine's canonical `name` field (with Cloud Resource Manager fallback).
+* **Ephemeral Session Cleanup & Per-Project 404 Caching**: Automatically deletes temporary `sessionInfo.session` resources created during `:streamAssist` extraction (`DELETE /v1alpha/{session}`) and caches `404 Method not found` per project for `NoteService` and `ArtifactService`.
+
+---
+
 ## Release Notes — Version 1.8.1
 
 **Release Date:** October 21, 2026  
@@ -259,7 +282,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.8.0 &rarr; v1.8.1)
+### 📦 Upgrade Guide (v1.8.1 &rarr; v1.8.2)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -284,7 +307,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.8.1** *(Current)*: Restored full NotebookLM source text extraction (`tailwindDoc`, `plainText`, `markdownString`, and table/codeBlock parsing) directly into `details.sources[].content` and `userContent` in the JSON report and `<Notebook>_sources_backup.json` handover bundle, added automatic `:interactSources` fallback extraction (`DiscoveryEngineClient.interactNotebookSource`) when `tailwindDoc` is omitted on customer projects, added DataStore-grounded notebook source text extraction (`getDataStoreDocument`) and `datastoreMapping`/`collectionMapping` path rewriting (`rewriteAgentspaceDocumentName`), and expanded to 389 passing tests across 31 test suites.
+* **v1.8.2** *(Current)*: Added public customer NotebookLM source extraction via `AssistantService.StreamAssist` (`query_notebook` tool with automatic numeric `projectNumber` resolution and grounded chunk extraction), automatic cleanup of temporary `:streamAssist` sessions, and per-project 404 caching for unexposed `NoteService` and `ArtifactService` endpoints, expanding to 391 passing tests across 31 test suites.
+* **v1.8.1**: Restored full NotebookLM source text extraction (`tailwindDoc`, `plainText`, `markdownString`, and table/codeBlock parsing) directly into `details.sources[].content` and `userContent` in the JSON report and `<Notebook>_sources_backup.json` handover bundle, added automatic `:interactSources` fallback extraction (`DiscoveryEngineClient.interactNotebookSource`) when `tailwindDoc` is omitted on customer projects, added DataStore-grounded notebook source text extraction (`getDataStoreDocument`) and `datastoreMapping`/`collectionMapping` path rewriting (`rewriteAgentspaceDocumentName`), and expanded to 389 passing tests across 31 test suites.
 * **v1.8.0**: Added source-faithful agent deployment & publishing (`:deployLowCode` with `{"deployMode":"DEPLOY"}`, `:publish` with automatic `_agent_execution_grant_` consent & numeric project normalization for `CONNECTOR_EVENT_TRIGGER`, `:requestAgentReview` before `:setIamPolicy` for shared agents, and strict preservation of source `Draft` vs `Published` state), expanding to 383 passing tests across 31 test suites.
 * **v1.7.0**: Added Step 3 Worker Concurrency selector (`#optConcurrency`) with adaptive per-notebook source read throttling, added Ignore Draft Agents sub-option (`excludeDraftAgents` / `--exclude-draft-agents`) to migrate Private (created) and Published/Shared agents while skipping unsaved UI drafts, removed the fake `[Restored Source: ...]` metadata stub in `NotebookMigrator` in favor of honest `FAILED` / `MANUAL_REUPLOAD_REQUIRED` reporting in both Dry Run and Live Run modes, and expanded to 375 passing tests across 31 test suites.
 * **v1.6.3**: Fixed multi-page agent pagination (`nextPageToken`) in Step 3 User Discovery (`GET /api/users/discover`) and IdP Auto-Mapping (`POST /api/idp/auto-map`), batched `:getIamPolicy` lookups in auto-map, sanitized `package-lock.json` resolved URLs to `https://registry.npmjs.org/`, and expanded to 369 passing tests across 31 test suites.

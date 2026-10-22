@@ -49,8 +49,10 @@ export class DiscoveryEngineClient {
     body?: any,
     userProject?: string,
     customHeaders?: Record<string, string>,
-    forUserEmail?: string
+    forUserEmail?: string,
+    timeoutMsOverride?: number
   ): Promise<T> {
+    const effectiveTimeoutMs = timeoutMsOverride ?? this.requestTimeoutMs;
     const saHomeProject = this.auth.getServiceAccountProjectId();
     // If calling the Service Account's home GCP project (e.g., Target Google Workspace project), prefer DWD
     const initialMode: 'DWD' | 'WIF' | undefined = (forUserEmail && saHomeProject && userProject === saHomeProject)
@@ -79,7 +81,7 @@ export class DiscoveryEngineClient {
           method,
           headers: reqHeaders,
           body: body ? JSON.stringify(body) : undefined,
-          signal: AbortSignal.timeout(this.requestTimeoutMs)
+          signal: AbortSignal.timeout(effectiveTimeoutMs)
         });
       } catch (fetchErr: any) {
         if (
@@ -88,7 +90,7 @@ export class DiscoveryEngineClient {
           String(fetchErr?.message || '').toLowerCase().includes('timeout')
         ) {
           const timeoutErr: any = new Error(
-            `Discovery Engine API Request Timed Out after ${this.requestTimeoutMs}ms: ${method} ${url}`
+            `Discovery Engine API Request Timed Out after ${effectiveTimeoutMs}ms: ${method} ${url}`
           );
           timeoutErr.name = 'TimeoutError';
           timeoutErr.code = 'ETIMEDOUT';
@@ -609,6 +611,39 @@ export class DiscoveryEngineClient {
     return this.request<NotebookSource>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
   }
 
+  private unexposedMethodProjects: Map<string, Set<string>> = new Map();
+
+  private isMethodUnexposedOnProject(projectId: string, methodKey: string): boolean {
+    return this.unexposedMethodProjects.get(projectId)?.has(methodKey) === true;
+  }
+
+  private markMethodUnexposedOnProject(projectId: string, methodKey: string): void {
+    let set = this.unexposedMethodProjects.get(projectId);
+    if (!set) {
+      set = new Set<string>();
+      this.unexposedMethodProjects.set(projectId, set);
+    }
+    set.add(methodKey);
+  }
+
+  private static isMethodNotFoundError(err: any): boolean {
+    return (
+      err?.status === 404 &&
+      String(err?.message || '').toLowerCase().includes('method not found')
+    );
+  }
+
+  static isBlockedOrRefusalResponse(text: string): boolean {
+    if (!text || typeof text !== 'string') return false;
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    return (
+      /^this response was blocked by your organization's content policy\.?$/i.test(trimmed) ||
+      /^i cannot (?:reproduce|output|provide) (?:or output )?the complete,?\s*verbatim text/i.test(trimmed) ||
+      /^i'm sorry,?\s*but i cannot (?:reproduce|output|provide) the verbatim text/i.test(trimmed)
+    );
+  }
+
   async interactNotebookSource(
     notebookId: string,
     sourceId: string,
@@ -618,23 +653,206 @@ export class DiscoveryEngineClient {
   ): Promise<string> {
     validateResourceId(notebookId, 'notebookId');
     validateResourceId(sourceId, 'sourceId');
+    if (this.isMethodUnexposedOnProject(env.projectId, 'interactSources')) {
+      return '';
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}:interactSources`;
+
+    const runInteractQuery = async (queryText: string): Promise<string> => {
+      const payload = {
+        inputSources: [{ sourceId: { id: sourceId } }],
+        freeFormAction: {
+          userQuery: queryText
+        }
+      };
+      const res = await this.request<{ response?: { response?: string }; citations?: any[] }>(
+        url,
+        'POST',
+        payload,
+        env.projectId,
+        undefined,
+        forUserEmail
+      );
+      const rawAnswer = (res?.response?.response || '').trim();
+      const answerText = DiscoveryEngineClient.isBlockedOrRefusalResponse(rawAnswer) ? '' : rawAnswer;
+      const citationChunks: string[] = [];
+      if (Array.isArray(res?.citations)) {
+        for (const c of res.citations) {
+          const chunkText = typeof c?.text === 'string' ? c.text.trim() : '';
+          if (
+            chunkText &&
+            !DiscoveryEngineClient.isBlockedOrRefusalResponse(chunkText) &&
+            !citationChunks.includes(chunkText)
+          ) {
+            citationChunks.push(chunkText);
+          }
+        }
+      }
+      const joinedCitations = citationChunks.join('\n\n').trim();
+      if (joinedCitations.length > answerText.length) {
+        return joinedCitations;
+      }
+      return answerText || joinedCitations;
+    };
+
+    try {
+      const primaryResult = await runInteractQuery(userQuery);
+      if (primaryResult) {
+        return primaryResult;
+      }
+      // If the verbatim prompt triggered a recitation/copyright block, retry with a comprehensive non-verbatim extraction query
+      return await runInteractQuery(
+        'Provide an exhaustive, section-by-section breakdown of all facts, data, figures, tables, definitions, arguments, and details contained in this source document.'
+      );
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'interactSources');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Queries a NotebookLM source via the publicly exposed `AssistantService.StreamAssist` endpoint
+   * (`POST .../assistants/default_assistant:streamAssist`) by attaching a `documentReference`
+   * pointing to `projects/{projectNumber}/locations/{location}/notebooks/{notebookId}`.
+   * Inside Discovery Engine, this invokes `QueryNotebookTool` -> internal Stubby `NotebookService.InteractSources`
+   * and returns both the model's answer and the raw source chunks in `textGroundingMetadata.references`.
+   */
+  async streamAssistNotebookSource(
+    notebookId: string,
+    sourceTitle: string,
+    notebookTitle: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<string> {
+    validateResourceId(notebookId, 'notebookId');
+    if (!env.appId) {
+      throw new Error(`Cannot call streamAssistNotebookSource without env.appId on project "${env.projectId}"`);
+    }
+    const projectNum = await this.resolveProjectNumber(env);
+    if (!/^\d+$/.test(projectNum)) {
+      throw new Error(
+        `Could not resolve numeric project number for "${env.projectId}" (required by StreamAssist QueryNotebookTool)`
+      );
+    }
+
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const collection = env.collectionId || 'default_collection';
+    const assistant = env.assistantId || 'default_assistant';
+    const url = `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/assistants/${assistant}:streamAssist`;
+    const notebookResourceName = `projects/${projectNum}/locations/${env.appLocation}/notebooks/${notebookId}`;
+
     const payload = {
-      inputSources: [{ sourceId: { id: sourceId } }],
-      freeFormAction: {
-        userQuery
+      query: {
+        parts: [
+          {
+            text: `Use query_notebook to retrieve and output the complete, verbatim text content of the source titled "${sourceTitle}" in this notebook.`
+          },
+          {
+            documentReference: {
+              documentName: notebookResourceName,
+              displayTitle: notebookTitle || sourceTitle || 'Notebook'
+            }
+          },
+          {
+            text: `Do not summarize or omit any sections from "${sourceTitle}". Output all text and excerpts from "${sourceTitle}" verbatim.`
+          }
+        ]
       }
     };
-    const res = await this.request<{ response?: { response?: string }; citations?: any[] }>(
+
+    const streamAssistTimeoutMs =
+      this.requestTimeoutMs >= 30_000 ? Math.max(this.requestTimeoutMs, 90_000) : this.requestTimeoutMs;
+
+    const rawRes = await this.request<any>(
       url,
       'POST',
       payload,
       env.projectId,
       undefined,
-      forUserEmail
+      forUserEmail,
+      streamAssistTimeoutMs
     );
-    return (res?.response?.response || '').trim();
+
+    const packets: any[] = Array.isArray(rawRes) ? rawRes : rawRes ? [rawRes] : [];
+    const modelReplyParts: string[] = [];
+    const matchedTitleChunks: string[] = [];
+    const untitledOrNotebookChunks: string[] = [];
+    const normalizedTargetTitle = (sourceTitle || '').trim().toLowerCase();
+    const normalizedNotebookTitle = (notebookTitle || '').trim().toLowerCase();
+    let ephemeralSessionName = '';
+
+    for (const pkt of packets) {
+      const sessName = pkt?.sessionInfo?.session || pkt?.session_info?.session;
+      if (typeof sessName === 'string' && sessName.includes('/sessions/')) {
+        ephemeralSessionName = sessName.replace(/^\/+/, '');
+      }
+      const replies = pkt?.answer?.replies;
+      if (!Array.isArray(replies)) continue;
+      for (const reply of replies) {
+        const grounded = reply?.groundedContent || reply?.grounded_content;
+        const content = grounded?.content;
+        if (content && !content.thought && typeof content.text === 'string' && content.text) {
+          modelReplyParts.push(content.text);
+        }
+
+        const tgm = grounded?.textGroundingMetadata || grounded?.text_grounding_metadata;
+        const refs = tgm?.references;
+        if (Array.isArray(refs)) {
+          for (const ref of refs) {
+            const chunkContent = typeof ref?.content === 'string' ? ref.content.trim() : '';
+            if (!chunkContent || DiscoveryEngineClient.isBlockedOrRefusalResponse(chunkContent)) continue;
+            const docMeta = ref?.documentMetadata || ref?.document_metadata;
+            const refTitle = typeof docMeta?.title === 'string' ? docMeta.title.trim().toLowerCase() : '';
+            if (
+              normalizedTargetTitle &&
+              refTitle &&
+              (refTitle === normalizedTargetTitle ||
+                refTitle.includes(normalizedTargetTitle) ||
+                normalizedTargetTitle.includes(refTitle))
+            ) {
+              if (!matchedTitleChunks.includes(chunkContent)) {
+                matchedTitleChunks.push(chunkContent);
+              }
+            } else if (!refTitle || (normalizedNotebookTitle && refTitle === normalizedNotebookTitle)) {
+              if (!untitledOrNotebookChunks.includes(chunkContent)) {
+                untitledOrNotebookChunks.push(chunkContent);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (ephemeralSessionName && /^projects\/[^/]+\/locations\/[^/]+\//.test(ephemeralSessionName)) {
+      try {
+        await this.request<any>(
+          `${baseUrl}/v1alpha/${ephemeralSessionName}`,
+          'DELETE',
+          undefined,
+          env.projectId,
+          undefined,
+          forUserEmail
+        );
+      } catch (cleanupErr: any) {
+        logger.debug(`Best-effort cleanup of temporary StreamAssist session "${ephemeralSessionName}" skipped: ${cleanupErr.message}`);
+      }
+    }
+
+    const rawCombinedReply = modelReplyParts.join('').trim();
+    const combinedReply = DiscoveryEngineClient.isBlockedOrRefusalResponse(rawCombinedReply) ? '' : rawCombinedReply;
+    const candidateChunks = matchedTitleChunks.length > 0 ? matchedTitleChunks : untitledOrNotebookChunks;
+    const combinedChunks = candidateChunks.join('\n\n').trim();
+
+    if (combinedChunks && combinedChunks.length >= combinedReply.length) {
+      return combinedChunks;
+    }
+    if (combinedReply && combinedChunks && !combinedReply.includes(combinedChunks)) {
+      return `${combinedReply}\n\n${combinedChunks}`.trim();
+    }
+    return combinedReply || combinedChunks;
   }
 
   async getDataStoreDocument(
@@ -662,47 +880,95 @@ export class DiscoveryEngineClient {
 
   async listNotes(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote[]> {
     validateResourceId(notebookId, 'notebookId');
+    if (this.isMethodUnexposedOnProject(env.projectId, 'notes')) {
+      return [];
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes:batchGet`;
-    const res = await this.request<{ notes?: any[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
-    return (res?.notes || []).map((entry: any) => {
-      if (entry?.note && typeof entry.note === 'object') {
-        return {
-          ...entry.note,
-          noteId: entry.note.noteId || entry.noteId
-        } as NotebookNote;
+    try {
+      const res = await this.request<{ notes?: any[] }>(url, 'GET', undefined, env.projectId, undefined, forUserEmail);
+      return (res?.notes || []).map((entry: any) => {
+        if (entry?.note && typeof entry.note === 'object') {
+          return {
+            ...entry.note,
+            noteId: entry.note.noteId || entry.noteId
+          } as NotebookNote;
+        }
+        return entry as NotebookNote;
+      });
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'notes');
+        logger.debug(`NoteService (notes:batchGet) is not publicly exposed on project "${env.projectId}"; skipping notes API calls for this project.`);
+        return [];
       }
-      return entry as NotebookNote;
-    });
+      throw err;
+    }
   }
 
   async createNote(notebookId: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<NotebookNote> {
     validateResourceId(notebookId, 'notebookId');
+    if (this.isMethodUnexposedOnProject(env.projectId, 'notes')) {
+      return {} as NotebookNote;
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/notes`;
-    return this.request<NotebookNote>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
+    try {
+      return await this.request<NotebookNote>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'notes');
+        logger.debug(`NoteService (POST /notes) is not publicly exposed on project "${env.projectId}"; skipping note creation on target project.`);
+        return {} as NotebookNote;
+      }
+      throw err;
+    }
   }
 
   async listArtifacts(notebookId: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any[]> {
     validateResourceId(notebookId, 'notebookId');
+    if (this.isMethodUnexposedOnProject(env.projectId, 'artifacts')) {
+      return [];
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-    return this.listAllPages<any>(
-      (pageToken) => {
-        const query = new URLSearchParams({ pageSize: '100' });
-        if (pageToken) query.set('pageToken', pageToken);
-        return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/artifacts?${query.toString()}`;
-      },
-      (res) => res.artifacts,
-      env.projectId,
-      forUserEmail
-    );
+    try {
+      return await this.listAllPages<any>(
+        (pageToken) => {
+          const query = new URLSearchParams({ pageSize: '100' });
+          if (pageToken) query.set('pageToken', pageToken);
+          return `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/artifacts?${query.toString()}`;
+        },
+        (res) => res.artifacts,
+        env.projectId,
+        forUserEmail
+      );
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'artifacts');
+        logger.debug(`ArtifactService (/artifacts) is not publicly exposed on project "${env.projectId}"; skipping Studio artifacts API calls for this project.`);
+        return [];
+      }
+      throw err;
+    }
   }
 
   async createArtifact(notebookId: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
     validateResourceId(notebookId, 'notebookId');
+    if (this.isMethodUnexposedOnProject(env.projectId, 'artifacts')) {
+      return {};
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/artifacts`;
-    return this.request<any>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
+    try {
+      return await this.request<any>(url, 'POST', payload, env.projectId, undefined, forUserEmail);
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'artifacts');
+        logger.debug(`ArtifactService (POST /artifacts) is not publicly exposed on project "${env.projectId}"; skipping Studio artifact creation on target project.`);
+        return {};
+      }
+      throw err;
+    }
   }
 
   async listEngines(env: { projectId: string; appLocation: string; collectionId?: string }): Promise<AppEngine[]> {
@@ -857,24 +1123,41 @@ export class DiscoveryEngineClient {
       this.projectNumberCache.set(env.projectId, env.projectId);
       return env.projectId;
     }
+    if (env.appId) {
+      try {
+        const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+        const collection = env.collectionId || 'default_collection';
+        const eng = await this.request<any>(
+          `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}`,
+          'GET',
+          undefined,
+          env.projectId
+        );
+        if (eng?.name) {
+          const match = eng.name.match(/^projects\/(\d+)\//);
+          if (match && match[1]) {
+            this.projectNumberCache.set(env.projectId, match[1]);
+            return match[1];
+          }
+        }
+      } catch (err: any) {
+        logger.debug(`Could not resolve numeric project number via engine GET for ${env.projectId}: ${err.message}`);
+      }
+    }
     try {
-      const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
-      const collection = env.collectionId || 'default_collection';
-      const eng = await this.request<any>(
-        `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}`,
+      const crmRes = await this.request<{ projectNumber?: string }>(
+        `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(env.projectId)}`,
         'GET',
         undefined,
         env.projectId
       );
-      if (eng?.name) {
-        const match = eng.name.match(/^projects\/(\d+)\//);
-        if (match && match[1]) {
-          this.projectNumberCache.set(env.projectId, match[1]);
-          return match[1];
-        }
+      if (crmRes?.projectNumber && /^\d+$/.test(String(crmRes.projectNumber))) {
+        const num = String(crmRes.projectNumber);
+        this.projectNumberCache.set(env.projectId, num);
+        return num;
       }
-    } catch (err: any) {
-      logger.debug(`Could not resolve numeric project number for ${env.projectId}: ${err.message}`);
+    } catch (crmErr: any) {
+      logger.debug(`Could not resolve numeric project number via Cloud Resource Manager for ${env.projectId}: ${crmErr.message}`);
     }
     return env.projectId;
   }

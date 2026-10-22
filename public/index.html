@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.8.1</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.8.2</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -481,9 +481,15 @@
               <div id="sec-scope-config" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <!-- Checkbox toggles -->
                 <div class="space-y-2.5">
-                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" id="optNotebooks" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
-                    <span class="font-medium text-white">📓 Migrate Notebooks & Sources</span>
+                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optNotebooks" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
+                    <div>
+                      <span class="font-medium text-white flex items-center gap-1.5 flex-wrap">
+                        <span>📓 Migrate Notebooks & Sources</span>
+                        <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Sources: Experimental</span>
+                      </span>
+                      <span class="block text-[10px] text-gray-400">Migrates user notebooks &amp; sources <span class="text-amber-400/90">(Source content extraction is experimental &amp; strips formatting)</span></span>
+                    </div>
                   </label>
                   <div class="space-y-1.5">
                     <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
@@ -1823,9 +1829,12 @@
                 <div class="pt-2 border-t border-gray-800/80">
                   <label class="block text-gray-400 font-medium mb-2">Assets to Migrate for this User:</label>
                   <div class="grid grid-cols-2 gap-2 text-xs">
-                    <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                    <label class="flex items-center space-x-2 text-gray-300 cursor-pointer" title="Source content extraction is experimental and strips original formatting">
                       <input type="checkbox" id="singleOptNotebooks" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600">
-                      <span>📓 Notebooks & Sources</span>
+                      <span class="flex items-center gap-1 flex-wrap">
+                        <span>📓 Notebooks &amp; Sources</span>
+                        <span class="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase">Exp</span>
+                      </span>
                     </label>
                     <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
                       <input type="checkbox" id="singleOptAgents" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600">

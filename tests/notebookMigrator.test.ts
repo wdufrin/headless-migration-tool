@@ -1425,6 +1425,362 @@ describe('NotebookMigrator Engine', () => {
         })
       ).rejects.toThrow(/Invalid sourceId/);
     });
+
+    it('should fall back to AssistantService.StreamAssist (query_notebook) when :interactSources returns 404 Method not found on customer projects (e.g. cei-vertex-prd-01)', async () => {
+      const sourceEnv: EnvironmentConfig = {
+        projectId: 'cei-vertex-prd-01',
+        appLocation: 'us',
+        appId: 'coned-gemini-app_1700000000'
+      };
+      const targetEnv: EnvironmentConfig = {
+        projectId: 'cei-gemini-prd-01',
+        appLocation: 'us',
+        appId: 'coned-gemini-target_1700000000'
+      };
+
+      const nb: Notebook = {
+        name: 'projects/cei-vertex-prd-01/locations/us/notebooks/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7',
+        title: 'AI Project Prioritization Matrix',
+        metadata: { userRole: 'PROJECT_ROLE_OWNER', isShared: false }
+      };
+
+      const mockAuth = {
+        getAuthType: () => 'WORKFORCE_IDENTITY_FEDERATION' as const,
+        getServiceAccountProjectId: () => 'cei-gemini-prd-01',
+        getLastUsedImpersonationMode: () => 'WIF' as const,
+        getImpersonationMechanismStatus: () => ({ available: true, reason: 'WIF configured' }),
+        getAccessToken: vi.fn().mockResolvedValue('wif-user-token')
+      };
+
+      const streamAssistBodies: any[] = [];
+      const batchCreateBodies: any[] = [];
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+        const url = String(input);
+        const method = init?.method || 'GET';
+
+        // 1. Source listRecentlyViewed
+        if (url.includes('/projects/cei-vertex-prd-01/locations/us/notebooks:listRecentlyViewed')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ notebooks: [nb] })
+          } as any;
+        }
+
+        // 2. Source getNotebook
+        if (url.endsWith('/projects/cei-vertex-prd-01/locations/us/notebooks/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7') && method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ...nb,
+              sources: [
+                {
+                  sourceId: { id: 'ccb1901a-b3b9-4246-a030-1b2207db1dcb' },
+                  title: 'Gemini Workspace Evaluation Criteria 1.docx'
+                }
+              ]
+            })
+          } as any;
+        }
+
+        // 3. Source getNotebookSource (external customer project without GOOGLE_INTERNAL omits tailwindDoc)
+        if (url.includes('/sources/ccb1901a-b3b9-4246-a030-1b2207db1dcb') && method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sourceId: { id: 'ccb1901a-b3b9-4246-a030-1b2207db1dcb' },
+              title: 'Gemini Workspace Evaluation Criteria 1.docx',
+              metadata: { wordCount: 812, sourceAddedTimestamp: '2026-03-10T12:00:00Z', tokenCount: 1120 },
+              settings: {},
+              name: 'projects/cei-vertex-prd-01/locations/us/notebooks/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7/sources/ccb1901a-b3b9-4246-a030-1b2207db1dcb'
+            })
+          } as any;
+        }
+
+        // 4. Direct :interactSources returns 404 Method not found (customer project not yet in NLME_API_USER allowlist)
+        if (url.includes(':interactSources') && method === 'POST') {
+          return {
+            ok: false,
+            status: 404,
+            text: async () => JSON.stringify({ error: { code: 404, message: 'Method not found.', status: 'NOT_FOUND' } })
+          } as any;
+        }
+
+        // 5. Engine GET for resolveProjectNumber -> returns numeric project number 9876543210
+        if (url.includes('/projects/cei-vertex-prd-01/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000') && method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              name: 'projects/9876543210/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000',
+              displayName: 'ConEd Gemini App'
+            })
+          } as any;
+        }
+
+        // 6. AssistantService.StreamAssist (`:streamAssist`) with numeric project number 9876543210
+        if (url.includes('/projects/9876543210/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000/assistants/default_assistant:streamAssist') && method === 'POST') {
+          const parsedBody = JSON.parse(init?.body || '{}');
+          streamAssistBodies.push(parsedBody);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ([
+              {
+                answer: {
+                  state: 'IN_PROGRESS',
+                  replies: [
+                    {
+                      groundedContent: {
+                        content: { role: 'model', text: 'Dereferencing...', thought: true }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                sessionInfo: {
+                  session: 'projects/9876543210/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000/sessions/temp-sess-123'
+                },
+                answer: {
+                  state: 'SUCCEEDED',
+                  replies: [
+                    {
+                      groundedContent: {
+                        content: {
+                          role: 'model',
+                          text: 'Criterion 1: Security & Compliance. Criterion 2: Grounding Accuracy.'
+                        },
+                        textGroundingMetadata: {
+                          references: [
+                            {
+                              content: 'Criterion 1: Security & Compliance — Must enforce VPC-SC and CMEK across all regional endpoints.',
+                              documentMetadata: {
+                                title: 'Gemini Workspace Evaluation Criteria 1.docx',
+                                uri: 'https://notebooklm.cloud.google.com/us/notebook/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7?project=9876543210'
+                              }
+                            },
+                            {
+                              content: 'Criterion 2: Grounding Accuracy — Must cite verbatim passages from enterprise knowledge bases.',
+                              documentMetadata: {
+                                title: 'Gemini Workspace Evaluation Criteria 1.docx',
+                                uri: 'https://notebooklm.cloud.google.com/us/notebook/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7?project=9876543210'
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ])
+          } as any;
+        }
+
+        // 6b. Ephemeral session cleanup (DELETE /v1alpha/projects/9876543210/.../sessions/temp-sess-123)
+        if (url.endsWith('/sessions/temp-sess-123') && method === 'DELETE') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({})
+          } as any;
+        }
+
+        // 7. NoteService (notes:batchGet) returns 404 Method not found
+        if (url.includes('/notes:batchGet')) {
+          return {
+            ok: false,
+            status: 404,
+            text: async () => JSON.stringify({ error: { code: 404, message: 'Method not found.', status: 'NOT_FOUND' } })
+          } as any;
+        }
+
+        // 8. ArtifactService (/artifacts) returns empty
+        if (url.includes('/artifacts')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ artifacts: [] })
+          } as any;
+        }
+
+        // 9. Target listRecentlyViewed
+        if (url.includes('/projects/cei-gemini-prd-01/locations/us/notebooks:listRecentlyViewed')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ notebooks: [] })
+          } as any;
+        }
+
+        // 10. Target createNotebook
+        if (url.endsWith('/projects/cei-gemini-prd-01/locations/us/notebooks') && method === 'POST') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              name: 'projects/cei-gemini-prd-01/locations/us/notebooks/dd32ebea-72d9-4d40-bb5a-5e27c6278042',
+              title: 'AI Project Prioritization Matrix'
+            })
+          } as any;
+        }
+
+        // 11. Target sources:batchCreate
+        if (url.includes('/projects/cei-gemini-prd-01/locations/us/notebooks/dd32ebea-72d9-4d40-bb5a-5e27c6278042/sources:batchCreate') && method === 'POST') {
+          const parsed = JSON.parse(init?.body || '{}');
+          batchCreateBodies.push(parsed);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sources: [
+                {
+                  name: 'projects/cei-gemini-prd-01/locations/us/notebooks/dd32ebea-72d9-4d40-bb5a-5e27c6278042/sources/restored-src-1',
+                  sourceId: { id: 'restored-src-1' }
+                }
+              ]
+            })
+          } as any;
+        }
+
+        throw new Error(`Unexpected fetch in StreamAssist fallback test: ${method} ${url}`);
+      });
+
+      try {
+        const realClient = new DiscoveryEngineClient(mockAuth as any, { maxRetries: 1, retryBaseDelayMs: 1 });
+        const realMigrator = new NotebookMigrator(realClient);
+        const results = await realMigrator.migrateNotebooks(sourceEnv, targetEnv, {
+          dryRun: false,
+          userFilter: ['azzolinig@coned.com']
+        });
+
+        expect(results).toHaveLength(1);
+        expect(results[0].status).toBe('SUCCESS');
+        expect(results[0].details?.sourcesRestored).toBe(1);
+        expect(results[0].details?.sourcesFailed).toBe(0);
+
+        // Verify :interactSources was attempted first (Tier 2), returned 404, and fell back to :streamAssist (Tier 3)
+        const calledUrls = fetchSpy.mock.calls.map(c => `${c[1]?.method || 'GET'} ${String(c[0])}`);
+        expect(calledUrls.some(u => u.includes(':interactSources'))).toBe(true);
+        expect(calledUrls.some(u => u.startsWith('DELETE ') && u.endsWith('/sessions/temp-sess-123'))).toBe(true);
+
+        // Verify StreamAssist request used numeric project number 9876543210 in documentReference.documentName
+        expect(streamAssistBodies).toHaveLength(1);
+        expect(streamAssistBodies[0].query.parts[1]).toEqual({
+          documentReference: {
+            documentName: 'projects/9876543210/locations/us/notebooks/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7',
+            displayTitle: 'AI Project Prioritization Matrix'
+          }
+        });
+
+        // Verify batchCreate received the extracted grounding chunks as textContent
+        expect(batchCreateBodies).toHaveLength(1);
+        const expectedContent =
+          'Criterion 1: Security & Compliance — Must enforce VPC-SC and CMEK across all regional endpoints.\n\n' +
+          'Criterion 2: Grounding Accuracy — Must cite verbatim passages from enterprise knowledge bases.';
+        expect(batchCreateBodies[0]).toEqual({
+          userContents: [
+            {
+              textContent: {
+                sourceName: 'Gemini Workspace Evaluation Criteria 1.docx',
+                content: expectedContent
+              }
+            }
+          ]
+        });
+
+        // Verify JSON report stores both content and userContent
+        expect(results[0].details?.sources[0].status).toBe('SUCCESS');
+        expect(results[0].details?.sources[0].content).toBe(expectedContent);
+        expect(results[0].details?.sources[0].targetSourceId).toBe('restored-src-1');
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('should reject content-policy block strings and copyright refusals in cleanInteractSourcesResponse and interactNotebookSource (negative test)', async () => {
+      expect(
+        migrator.cleanInteractSourcesResponse("This response was blocked by your organization's content policy.")
+      ).toBe('');
+      expect(
+        migrator.cleanInteractSourcesResponse(
+          'I cannot reproduce or output the complete, verbatim text of "Thinking in Systems: A Primer" by Donella H. Meadows.'
+        )
+      ).toBe('');
+
+      const reqSpy = vi
+        .spyOn(dummyClient as any, 'request')
+        .mockResolvedValueOnce({
+          response: { response: "This response was blocked by your organization's content policy." },
+          citations: []
+        })
+        .mockResolvedValueOnce({
+          response: { response: 'Section 1: System Elements and Interconnections.' },
+          citations: [{ text: 'A system is an interconnected set of elements that is coherently organized.' }]
+        });
+
+      const extracted = await dummyClient.interactNotebookSource(
+        'nb-123',
+        'src-456',
+        'Output verbatim text',
+        { projectId: 'p-1', appLocation: 'us', appId: 'app-1' },
+        'user@company.com'
+      );
+
+      expect(reqSpy).toHaveBeenCalledTimes(2);
+      expect(extracted).toBe('A system is an interconnected set of elements that is coherently organized.');
+      reqSpy.mockRestore();
+    });
+
+    it('should explicitly reject invalid arguments in streamAssistNotebookSource (missing appId, non-numeric projectNumber, or invalid notebookId)', async () => {
+      // 1. Path traversal in notebookId
+      await expect(
+        dummyClient.streamAssistNotebookSource('../bad-nb', 'Doc.pdf', 'My Notebook', {
+          projectId: '123456',
+          appLocation: 'us',
+          appId: 'app-1'
+        })
+      ).rejects.toThrow(/Invalid notebookId/);
+
+      // 2. Missing appId on EnvironmentConfig
+      await expect(
+        dummyClient.streamAssistNotebookSource('nb-valid-1', 'Doc.pdf', 'My Notebook', {
+          projectId: '123456',
+          appLocation: 'us',
+          appId: ''
+        })
+      ).rejects.toThrow(/Cannot call streamAssistNotebookSource without env\.appId/);
+
+      // 3. Unresolvable non-numeric projectNumber (DecodeNotebookName in StreamAssist requires numeric project number)
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 403,
+        text: async () => 'Forbidden'
+      } as any);
+      try {
+        const noRetryClient = new DiscoveryEngineClient(
+          {
+            getServiceAccountProjectId: () => 'p-non-numeric',
+            getAccessToken: async () => 'tok',
+            getImpersonationMechanismStatus: () => ({ available: false, reason: 'none' })
+          } as any,
+          { maxRetries: 1, retryBaseDelayMs: 1 }
+        );
+        await expect(
+          noRetryClient.streamAssistNotebookSource('nb-valid-1', 'Doc.pdf', 'My Notebook', {
+            projectId: 'p-non-numeric',
+            appLocation: 'us',
+            appId: 'app-1'
+          })
+        ).rejects.toThrow(/Could not resolve numeric project number/);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
   });
 });
 
