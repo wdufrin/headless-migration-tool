@@ -411,18 +411,42 @@ export class AgentMigrator {
 
         let defStr = JSON.stringify(definition);
 
-        // Universal Project ID / Numeric Number & Location replacement
-        defStr = defStr.replace(/projects\/[0-9a-zA-Z_-]+\/locations\/([0-9a-zA-Z_-]+)\//g, `projects/${targetEnv.projectId}/locations/${targetEnv.appLocation || '$1'}/`);
+        // Rewrite Discovery Engine resource paths (collections, dataStores, engines, authorizations, notebooks)
+        // to targetEnv.projectId & targetEnv.appLocation, while preserving regional locations (e.g., us-central1)
+        // on Vertex AI Reasoning Engines (reasoningEngines) and Cloud Run/Functions endpoints.
+        const discoveryEngineResourceTypes = new Set([
+          'collections',
+          'dataStores',
+          'engines',
+          'authorizations',
+          'notebooks',
+          'assistants'
+        ]);
+        defStr = defStr.replace(
+          /projects\/([0-9a-zA-Z_-]+)\/locations\/([0-9a-zA-Z_-]+)\/([0-9a-zA-Z_-]+)\//g,
+          (_match, _proj, loc, resourceType) => {
+            const newLoc = discoveryEngineResourceTypes.has(resourceType)
+              ? (targetEnv.appLocation || loc)
+              : loc;
+            return `projects/${targetEnv.projectId}/locations/${newLoc}/${resourceType}/`;
+          }
+        );
 
-        // Project / Location / Engine string replacement
+        // Scoped Engine / App ID replacement (resource paths and exact JSON values without corrupting natural-language prompts)
         if (sourceEnv.appId && targetEnv.appId) {
-          defStr = defStr.split(sourceEnv.appId).join(targetEnv.appId);
+          defStr = defStr.split(`/engines/${sourceEnv.appId}`).join(`/engines/${targetEnv.appId}`);
+          defStr = defStr.split(`"${sourceEnv.appId}"`).join(`"${targetEnv.appId}"`);
         }
         if (sourceEnv.projectId && targetEnv.projectId) {
-          defStr = defStr.split(sourceEnv.projectId).join(targetEnv.projectId);
+          defStr = defStr.split(`projects/${sourceEnv.projectId}/`).join(`projects/${targetEnv.projectId}/`);
+          defStr = defStr.split(`"${sourceEnv.projectId}"`).join(`"${targetEnv.projectId}"`);
         }
         if (sourceEnv.appLocation && targetEnv.appLocation) {
-          defStr = defStr.split(`/locations/${sourceEnv.appLocation}/`).join(`/locations/${targetEnv.appLocation}/`);
+          for (const resType of discoveryEngineResourceTypes) {
+            defStr = defStr
+              .split(`/locations/${sourceEnv.appLocation}/${resType}/`)
+              .join(`/locations/${targetEnv.appLocation}/${resType}/`);
+          }
         }
 
         // DataStore remapping inside definitions: target URI paths and structured datastore properties
@@ -451,12 +475,14 @@ export class AgentMigrator {
             }
           });
 
-        // Tool remapping inside definition schemas: target URI paths and structured tool properties
+        // Tool & Reasoning Engine remapping inside definition schemas: target URI paths and structured properties
         Object.entries(toolMapping).forEach(([oldTool, newTool]) => {
           if (newTool) {
             defStr = defStr.split(`/tools/${oldTool}`).join(`/tools/${newTool}`);
+            defStr = defStr.split(`/reasoningEngines/${oldTool}`).join(`/reasoningEngines/${newTool}`);
             defStr = defStr.replace(new RegExp(`"tool":\\s*"${oldTool}"`, 'g'), `"tool": "${newTool}"`);
             defStr = defStr.replace(new RegExp(`"toolId":\\s*"${oldTool}"`, 'g'), `"toolId": "${newTool}"`);
+            defStr = defStr.replace(new RegExp(`"reasoningEngine":\\s*"${oldTool}"`, 'g'), `"reasoningEngine": "${newTool}"`);
           }
         });
 

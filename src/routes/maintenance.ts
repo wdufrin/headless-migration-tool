@@ -900,6 +900,8 @@ maintenanceRouter.post('/maintenance/decommission', async (req, res) => {
       const rootDir = process.cwd();
       const filesToDelete = [
         'sa-dwd-key.json',
+        'sa-dwd-key.json.bak',
+        'dwd-keyless-config.json',
         'workforce-identity-config.json',
         'wif-migration-key.pem',
         'wif-migration-jwks.json',
@@ -925,18 +927,22 @@ maintenanceRouter.post('/maintenance/decommission', async (req, res) => {
       try {
         const rootFiles = fs.readdirSync(rootDir);
         for (const rf of rootFiles) {
-          if ((rf.startsWith('sa-') && rf.endsWith('.json')) ||
-              (rf.startsWith('credentials') && rf.endsWith('.json')) ||
-              (rf.startsWith('wif-') && rf.endsWith('.json'))) {
+          if ((rf.startsWith('sa-') && (rf.endsWith('.json') || rf.endsWith('.json.bak'))) ||
+              (rf.startsWith('credentials') && (rf.endsWith('.json') || rf.endsWith('.json.bak'))) ||
+              (rf.startsWith('wif-') && (rf.endsWith('.json') || rf.endsWith('.pem')))) {
             if (!localFilesDeleted.includes(rf)) {
               try {
                 fs.unlinkSync(path.resolve(rootDir, rf));
                 localFilesDeleted.push(rf);
-              } catch {}
+              } catch (unlinkErr: any) {
+                logger.warn(`Failed to delete pattern-matched secret file ${rf}: ${unlinkErr.message}`);
+              }
             }
           }
         }
-      } catch {}
+      } catch (dirErr: any) {
+        logger.warn(`Failed to scan root directory for secret files: ${dirErr.message}`);
+      }
 
       // Purge output directories
       const dirsToPurge = [
@@ -1272,6 +1278,8 @@ export async function validateRollbackCompleteness(options: {
   // 5. Local Check: Credential & Configuration Files
   const filesToCheck = [
     'sa-dwd-key.json',
+    'sa-dwd-key.json.bak',
+    'dwd-keyless-config.json',
     'workforce-identity-config.json',
     'wif-migration-key.pem',
     'wif-migration-jwks.json',
@@ -1288,15 +1296,17 @@ export async function validateRollbackCompleteness(options: {
   try {
     const rootFiles = fs.readdirSync(rootDir);
     for (const rf of rootFiles) {
-      if ((rf.startsWith('sa-') && rf.endsWith('.json')) ||
-          (rf.startsWith('credentials') && rf.endsWith('.json')) ||
-          (rf.startsWith('wif-') && rf.endsWith('.json'))) {
+      if ((rf.startsWith('sa-') && (rf.endsWith('.json') || rf.endsWith('.json.bak'))) ||
+          (rf.startsWith('credentials') && (rf.endsWith('.json') || rf.endsWith('.json.bak'))) ||
+          (rf.startsWith('wif-') && (rf.endsWith('.json') || rf.endsWith('.pem')))) {
         if (!detectedFiles.includes(rf)) {
           detectedFiles.push(rf);
         }
       }
     }
-  } catch {}
+  } catch (dirErr: any) {
+    logger.warn(`Failed to inspect root directory for leftover credential files: ${dirErr.message}`);
+  }
 
   if (detectedFiles.length === 0) {
     checks.push({

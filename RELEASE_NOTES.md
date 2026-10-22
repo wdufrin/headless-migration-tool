@@ -9,16 +9,16 @@
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.2** introduces **Public Customer NotebookLM Source Extraction via `AssistantService.StreamAssist` (`query_notebook`)**, enabling external customer GCP projects (where `GetSource` strips `tailwindDoc` and direct `:interactSources` returns `404 Method not found`) to extract unformatted source text from uploaded files (`.docx`, `.pdf`, `.txt`), store it in the JSON report (`details.sources[].content` and `userContent`), and recreate the sources in target notebooks via `sources:batchCreate`. It also adds automatic cleanup of temporary `:streamAssist` sessions and per-project 404 caching for unexposed `NoteService` and `ArtifactService` endpoints. v1.8.2 includes **391 passing automated tests across 31 test suites at 100%**.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.2** hardens **NotebookLM External Source Migration, Shared Collaborator Source Preservation, and Honest `MANUAL_REUPLOAD_REQUIRED` Reporting**, ensuring external reference links (**Google Drive files**, **Web URLs**, **YouTube videos**, and **Agentspace DataStore documents**) migrate cleanly across projects while locally uploaded files (`.docx`, `.pdf`, `.txt`, audio) and pasted text—whose body content is restricted by Google's `NOTEBOOKLM_SOURCE_CONTENT` proto visibility on customer projects—are immediately reported as `MANUAL_REUPLOAD_REQUIRED` without firing dead `:interactSources` or `:streamAssist` fallback RPCs. It also adds per-project 404 caching for unexposed `NoteService` and `ArtifactService` endpoints. v1.8.2 includes **395 passing automated tests across 31 test suites at 100%**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 🌐 Public Customer NotebookLM Source Extraction via `:streamAssist` (`query_notebook`) (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)
-* **Primary Public Extraction Path (`streamAssistNotebookSource`)**: Calls the publicly exposed `POST /v1alpha/projects/{projectNumber}/locations/{location}/collections/{collection}/engines/{appId}/assistants/default_assistant:streamAssist` endpoint with a `documentReference` pointing to `projects/{projectNumber}/locations/{location}/notebooks/{notebookId}`, triggering Discovery Engine's internal `QueryNotebookTool` and extracting source grounding chunks (`textGroundingMetadata.references[].content`) and verbatim text.
-* **Automatic Numeric `projectNumber` Resolution (`resolveProjectNumber`)**: Resolves and caches the numeric project number required by `QueryNotebookTool` via the source Engine's canonical `name` field (with Cloud Resource Manager fallback).
-* **Ephemeral Session Cleanup & Per-Project 404 Caching**: Automatically deletes temporary `sessionInfo.session` resources created during `:streamAssist` extraction (`DELETE /v1alpha/{session}`) and caches `404 Method not found` per project for `NoteService` and `ArtifactService`.
+#### 1. 🛡️ Honest NotebookLM Source Migration & API Limitation Handling (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)
+* **External Reference Source Migration**: Automatically re-links Google Drive documents (`googleDocsMetadata.documentId`), Web URLs (`webpageMetadata.webpageUrl`), YouTube videos (`youtubeMetadata.youtubeUrl`), and Agentspace DataStore documents (`agentspaceMetadata.documentName`), including collaborator-contributed external sources in shared notebooks.
+* **No Dead Fallback RPCs on Uploaded/Pasted Sources**: Because Google's external API gateway strips `tailwindDoc` on customer projects and neither `:interactSources` nor `:streamAssist` exposes raw uploaded/pasted source text, `NotebookMigrator` immediately flags local file uploads and pasted text as `MANUAL_REUPLOAD_REQUIRED` without wasting network round-trips.
+* **Per-Project 404 Caching**: Caches `404 Method not found` per project for `NoteService` and `ArtifactService`.
 
 ---
 
@@ -32,15 +32,14 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.2** introdu
 
 ### Executive Summary
 
-Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.1** introduces **Full NotebookLM Source Text Extraction, JSON Backup & `:interactSources` Fallback**, ensuring customer NotebookLM sources (uploaded PDFs/docs, pasted text, web links, Google Drive docs, YouTube videos, and Gemini Enterprise DataStore documents) are extracted, stored directly in the JSON report and user handover bundle (`<Notebook>_sources_backup.json`), and recreated in target notebooks without any fake placeholder stubs. It also adds **DataStore-Backed Notebook Source Mapping (`getDataStoreDocument` + `datastoreMapping` / `collectionMapping` path rewriting)**. v1.8.1 includes **389 passing automated tests across 31 test suites at 100%**.
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.1** introduces **DataStore-Backed Notebook Source Mapping (`getDataStoreDocument` + `datastoreMapping` / `collectionMapping` path rewriting)** and JSON source metadata backup (`<Notebook>_sources_backup.json`). v1.8.1 includes **389 passing automated tests across 31 test suites at 100%**.
 
 ---
 
 ### 🌟 Key Highlights & New Features
 
-#### 1. 📄 Full NotebookLM Source Content Extraction & `:interactSources` Fallback (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)
-* **Direct JSON Source Backup (`content` + `userContent`)**: Every migrated source stores its extracted unformatted text (`content`) and replayable `batchCreate` payload (`userContent`) in the migration JSON report (`details.sources[]`) and exports `<Notebook>_sources_backup.json` + `.md` source files under `user_handover_reports/<user>/notebook_sources/`.
-* **Automatic `:interactSources` Extraction Fallback**: When Google's external API gateway omits `tailwindDoc` on non-allowlisted customer projects, `NotebookMigrator` automatically invokes `DiscoveryEngineClient.interactNotebookSource` (`POST .../notebooks/{id}:interactSources` scoped to that `sourceId`) to extract the unformatted document text and recreate the source in the target project.
+#### 1. 📄 DataStore-Grounded NotebookLM Source Mapping & JSON Backup (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)
+* **Direct JSON Source Backup (`userContent`)**: Stores replayable `batchCreate` payloads (`userContent`) in the migration JSON report (`details.sources[]`) and exports `<Notebook>_sources_backup.json` under `user_handover_reports/<user>/notebook_sources/`.
 * **DataStore-Grounded Notebook Sources (`agentspaceMetadata.documentName`)**: Reads source DataStore document text via `getDataStoreDocument` when available, and automatically rewrites `agentspaceContent.documentName` across projects using `datastoreMapping` and `collectionMapping`.
 
 ---

@@ -207,25 +207,77 @@ export class MigrationRunner {
 
     // Step 2: User Asset Discovery via UserFilters & IdentityMapping
     let discoveredUsers: string[] = [];
+    const rawUserFilters = (config.options?.userFilter || []).map(f => f.replace(/^user:/i, '').trim().toLowerCase()).filter(Boolean);
+    const exactUserFilters = rawUserFilters.filter(f => f.includes('@') && !f.includes('*'));
+    const wildcardFilters = rawUserFilters.filter(f => f.includes('*') && f !== '*' && f !== '*@*');
+    const wildcardRegexes = wildcardFilters.map(w => new RegExp('^' + w.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i'));
+    const matchesUserFilters = (email: string): boolean => {
+      const clean = email.replace(/^user:/i, '').trim().toLowerCase();
+      if (!clean.includes('@') || clean.includes('*')) return false;
+      if (rawUserFilters.length === 0 || rawUserFilters.includes('*') || rawUserFilters.includes('*@*')) return true;
+      if (exactUserFilters.includes(clean)) return true;
+      if (wildcardRegexes.some(rx => rx.test(clean))) return true;
+      return false;
+    };
 
-    if (config.options?.userFilter && config.options.userFilter.length > 0) {
-      const allowed = config.options.userFilter.map(f => f.replace(/^user:/, '').trim().toLowerCase());
-      if (allowed.length > 0 && !allowed.includes('*')) {
-        discoveredUsers = discoveredUsers.filter(u => allowed.includes(u.toLowerCase()));
-        for (const f of allowed) {
-          if (f.includes('@') && !discoveredUsers.map(u => u.toLowerCase()).includes(f)) {
-            discoveredUsers.push(f);
+    for (const f of exactUserFilters) {
+      if (!discoveredUsers.map(u => u.toLowerCase()).includes(f)) {
+        discoveredUsers.push(f);
+      }
+    }
+
+    if (config.identityMapping) {
+      for (const k of Object.keys(config.identityMapping)) {
+        const cleanK = k.replace(/^user:/i, '').trim();
+        if (cleanK.includes('@') && !cleanK.includes('*') && matchesUserFilters(cleanK)) {
+          if (!discoveredUsers.map(u => u.toLowerCase()).includes(cleanK.toLowerCase())) {
+            discoveredUsers.push(cleanK);
           }
         }
-        logger.info(`Targeted user filter applied: Migrating ${discoveredUsers.length} user(s): ${discoveredUsers.join(', ')}`);
       }
-    } else if (config.identityMapping) {
-      for (const k of Object.keys(config.identityMapping)) {
-        const cleanK = k.replace(/^user:/, '').trim();
-        if (cleanK.includes('@') && !discoveredUsers.includes(cleanK)) {
-          discoveredUsers.push(cleanK);
+    }
+
+    // If no explicit users were provided (e.g. headless CLI run or wildcard domain filter like *@company.com),
+    // automatically discover active user emails from source Agents and Notebooks so DWD/WiF impersonation sweeps them.
+    const hasExplicitExactOnly = exactUserFilters.length > 0 && wildcardFilters.length === 0;
+    if (discoveredUsers.length === 0 && !hasExplicitExactOnly) {
+      try {
+        const discoveredSet = new Set<string>();
+        const addCandidateEmail = (val?: string) => {
+          if (!val || typeof val !== 'string') return;
+          const clean = val.replace(/^(user|group|serviceAccount):/i, '').trim().toLowerCase();
+          if (clean.includes('@') && !clean.includes('*') && !clean.endsWith('.gserviceaccount.com') && matchesUserFilters(clean)) {
+            discoveredSet.add(clean);
+          }
+        };
+
+        const srcAgents = await this.client.listAgents(config.source).catch(() => []);
+        for (const ag of srcAgents || []) {
+          addCandidateEmail(ag.owner);
+          addCandidateEmail(ag.creator);
+          for (const b of ag.iamPolicy?.bindings || []) {
+            for (const m of b.members || []) addCandidateEmail(m);
+          }
         }
+
+        const srcNotebooks = await this.client.listNotebooks(config.source).catch(() => []);
+        for (const nb of srcNotebooks || []) {
+          addCandidateEmail(nb.owner);
+          addCandidateEmail(nb.metadata?.ownerEmail);
+          addCandidateEmail(nb.metadata?.creatorEmail);
+        }
+
+        if (discoveredSet.size > 0) {
+          discoveredUsers.push(...Array.from(discoveredSet));
+          logger.info(`Auto-discovered ${discoveredUsers.length} user(s) from source assets: ${discoveredUsers.join(', ')}`);
+        }
+      } catch (discErr: any) {
+        logger.debug(`User auto-discovery from source assets skipped: ${discErr.message}`);
       }
+    }
+
+    if (rawUserFilters.length > 0) {
+      logger.info(`Targeted user filter applied (${rawUserFilters.join(', ')}): Migrating ${discoveredUsers.length} user(s): ${discoveredUsers.join(', ')}`);
     }
 
     // Normalize explicit identityMapping keys (e.g. from CSV or config) for case-insensitive matching
@@ -410,15 +462,16 @@ export class MigrationRunner {
         const sourceSessions = await sessionMigrator.listSourceSessions(discoveredUsers);
 
         let filteredSessions = sourceSessions;
-        if (config.options?.userFilter && config.options.userFilter.length > 0) {
-          const allowedUsers = new Set(config.options.userFilter.map(f => f.replace(/^user:/i, '').trim().toLowerCase()));
-          if (!allowedUsers.has('*')) {
-            filteredSessions = sourceSessions.filter(s => {
-              const u = (s.userPseudoId || '').replace(/^user:/i, '').trim().toLowerCase();
-              return allowedUsers.has(u);
-            });
-            logger.info(`Filtered sessions from ${sourceSessions.length} down to ${filteredSessions.length} matching user filter: ${Array.from(allowedUsers).join(', ')}`);
-          }
+        if (rawUserFilters.length > 0 && !rawUserFilters.includes('*') && !rawUserFilters.includes('*@*')) {
+          filteredSessions = sourceSessions.filter(s => {
+            const u = (s.userPseudoId || '').replace(/^user:/i, '').trim().toLowerCase();
+            if (u.includes('@')) return matchesUserFilters(u);
+            const mapped = config.identityMapping?.[u] || config.identityMapping?.[s.userPseudoId || ''];
+            if (mapped && mapped.includes('@')) return matchesUserFilters(mapped);
+            // Keep opaque session IDs so single-user runs can migrate them and multi-user runs can explicitly record them as SKIPPED
+            return true;
+          });
+          logger.info(`Filtered sessions from ${sourceSessions.length} down to ${filteredSessions.length} matching user filter: ${rawUserFilters.join(', ')}`);
         }
 
         logger.info(`Starting Multi-User Chat History Migration for ${filteredSessions.length} sessions (Sorted Chronologically: Oldest -> Newest)...`);
@@ -431,9 +484,10 @@ export class MigrationRunner {
           return tA - tB;
         });
 
-        const selectedUser = (config.options?.userFilter && config.options.userFilter.length === 1 && !config.options.userFilter[0].includes('*'))
-          ? config.options.userFilter[0].replace(/^user:/i, '').trim()
-          : (discoveredUsers[0] || 'user@example.com');
+        const isSingleUserRun = (exactUserFilters.length === 1 && wildcardFilters.length === 0) || (discoveredUsers.length === 1 && rawUserFilters.length === 0);
+        const singleUserFallback = isSingleUserRun
+          ? (exactUserFilters[0] || discoveredUsers[0] || '')
+          : (config.defaultOwnerFallback || '');
 
         for (const s of chronologicalSessions) {
           const sessId = s.name.split('/').pop() || 'unknown';
@@ -442,16 +496,38 @@ export class MigrationRunner {
             continue;
           }
 
-          const rawOwner = s.userPseudoId || selectedUser;
-          const origOwner = (rawOwner && rawOwner.includes('@')) ? rawOwner : selectedUser;
-          const tgtOwner = IdentityMappingService.lookupTargetIdentity(origOwner, config.identityMapping, selectedUser || origOwner);
+          const rawOwner = (s.userPseudoId || '').replace(/^user:/i, '').trim();
+          const explicitMappedOwner = rawOwner
+            ? (config.identityMapping?.[rawOwner] || config.identityMapping?.[rawOwner.toLowerCase()])
+            : undefined;
+          const origOwner = (rawOwner && rawOwner.includes('@'))
+            ? rawOwner
+            : (explicitMappedOwner || singleUserFallback || rawOwner || 'unknown');
+          const tgtOwner = explicitMappedOwner
+            || (origOwner.includes('@')
+              ? IdentityMappingService.lookupTargetIdentity(origOwner, config.identityMapping, singleUserFallback || origOwner)
+              : singleUserFallback);
+
+          if (!tgtOwner || !tgtOwner.includes('@') || tgtOwner === 'user@example.com') {
+            logger.warn(`Skipping session "${s.displayName || sessId}" (${sessId}) with unmapped opaque owner "${rawOwner || 'unknown'}" in multi-user run to prevent cross-user data bleed.`);
+            allResults.push({
+              id: sessId,
+              displayName: s.displayName || 'Untitled Chat',
+              type: 'SESSION',
+              status: 'SKIPPED',
+              originalOwner: rawOwner || 'unknown',
+              targetOwner: 'unmapped',
+              error: `Skipped: Unmapped opaque user ID "${rawOwner || 'unknown'}"; skipped to prevent cross-user data bleed.`
+            });
+            continue;
+          }
 
           try {
             if (!config.options?.dryRun) {
               await sessionMigrator.migrateSession(s, tgtOwner);
             }
             const sessionItem: MigrationItemResult = {
-              id: s.name.split('/').pop() || 'unknown',
+              id: sessId,
               displayName: s.displayName || 'Untitled Chat',
               type: 'SESSION',
               status: config.options?.dryRun ? 'DRY_RUN' : 'SUCCESS',
@@ -462,7 +538,7 @@ export class MigrationRunner {
             checkpointManager.recordSuccess(sessionItem);
           } catch (sErr: any) {
             allResults.push({
-              id: s.name.split('/').pop() || 'unknown',
+              id: sessId,
               displayName: s.displayName || 'Untitled Chat',
               type: 'SESSION',
               status: 'FAILED',
@@ -499,12 +575,15 @@ export class MigrationRunner {
         // Automatically archive memories to disk backup so they are never lost
         try {
           await memoryMigrator.exportAllMemoriesToDirectory('./exports/memories', discoveredUsers);
-        } catch {}
+        } catch (exportErr: any) {
+          logger.debug(`Memory export backup skipped: ${exportErr.message}`);
+        }
 
-        const callerIdentity = (await this.auth.getCallerIdentity?.()) || (discoveredUsers && discoveredUsers[0]) || '';
-        const defaultOwner = (config.options?.userFilter && config.options.userFilter.length === 1 && !config.options.userFilter[0].includes('*'))
-          ? config.options.userFilter[0].replace(/^user:/i, '').trim()
-          : (callerIdentity || (discoveredUsers && discoveredUsers[0]) || 'user@example.com');
+        const isSingleUserRun = (exactUserFilters.length === 1 && wildcardFilters.length === 0) || (discoveredUsers.length === 1 && rawUserFilters.length === 0);
+        const callerIdentity = isSingleUserRun ? ((await this.auth.getCallerIdentity?.()) || discoveredUsers[0] || '') : '';
+        const singleMemoryFallback = isSingleUserRun
+          ? (exactUserFilters[0] || callerIdentity || discoveredUsers[0] || '')
+          : (config.defaultOwnerFallback || '');
 
         for (const m of sourceMemories) {
           const memId = m.name?.split('/').pop() || 'unknown';
@@ -513,16 +592,38 @@ export class MigrationRunner {
             continue;
           }
 
-          const rawOwner = m.owner || m.userEmail || m.userPseudoId || defaultOwner;
-          const origOwner = (rawOwner && rawOwner.includes('@')) ? rawOwner : defaultOwner;
-          const tgtOwner = IdentityMappingService.lookupTargetIdentity(origOwner, config.identityMapping, defaultOwner || origOwner);
+          const rawOwner = (m.owner || m.userEmail || m.userPseudoId || '').replace(/^user:/i, '').trim();
+          const explicitMappedOwner = rawOwner
+            ? (config.identityMapping?.[rawOwner] || config.identityMapping?.[rawOwner.toLowerCase()])
+            : undefined;
+          const origOwner = (rawOwner && rawOwner.includes('@'))
+            ? rawOwner
+            : (explicitMappedOwner || singleMemoryFallback || rawOwner || 'unknown');
+          const tgtOwner = explicitMappedOwner
+            || (origOwner.includes('@')
+              ? IdentityMappingService.lookupTargetIdentity(origOwner, config.identityMapping, singleMemoryFallback || origOwner)
+              : singleMemoryFallback);
+
+          if (!tgtOwner || !tgtOwner.includes('@') || tgtOwner === 'user@example.com') {
+            logger.warn(`Skipping memory "${memId}" with unmapped opaque owner "${rawOwner || 'unknown'}" in multi-user run to prevent cross-user data bleed.`);
+            allResults.push({
+              id: memId,
+              displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
+              type: 'MEMORY',
+              status: 'SKIPPED',
+              originalOwner: rawOwner || 'unknown',
+              targetOwner: 'unmapped',
+              error: `Skipped: Unmapped opaque user ID "${rawOwner || 'unknown'}"; skipped to prevent cross-user data bleed.`
+            });
+            continue;
+          }
 
           try {
             if (!config.options?.dryRun) {
               await memoryMigrator.migrateMemory(m, tgtOwner);
             }
             const memoryItem: MigrationItemResult = {
-              id: m.name?.split('/').pop() || 'unknown',
+              id: memId,
               displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
               type: 'MEMORY',
               status: config.options?.dryRun ? 'DRY_RUN' : 'SUCCESS',
@@ -542,7 +643,7 @@ export class MigrationRunner {
               : mErr.message;
 
             allResults.push({
-              id: m.name?.split('/').pop() || 'unknown',
+              id: memId,
               displayName: m.fact ? (m.fact.length > 50 ? `${m.fact.substring(0, 47)}...` : m.fact) : 'User Memory',
               type: 'MEMORY',
               status: isGoogleInternal ? 'ARCHIVED' : 'FAILED',

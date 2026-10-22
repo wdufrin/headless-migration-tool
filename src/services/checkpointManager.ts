@@ -71,7 +71,7 @@ export class CheckpointManager {
           : [];
 
       for (const item of items) {
-        if (item.status === 'SUCCESS' || item.status === 'DRY_RUN') {
+        if (item.status === 'SUCCESS') {
           resultMap.set(`${item.type}:${item.id}`, item);
         }
       }
@@ -89,7 +89,9 @@ export class CheckpointManager {
    */
   public seed(items: Map<string, MigrationItemResult>): void {
     for (const [key, val] of items.entries()) {
-      this.completedMap.set(key, val);
+      if (val.status === 'SUCCESS') {
+        this.completedMap.set(key, val);
+      }
     }
   }
 
@@ -102,9 +104,10 @@ export class CheckpointManager {
 
   /**
    * Incrementally records a successful migration result and schedules disk persistence.
+   * DRY_RUN items are never persisted to checkpoints to prevent poisoning subsequent live runs.
    */
   public recordSuccess(item: MigrationItemResult): void {
-    if (item.status === 'SUCCESS' || item.status === 'DRY_RUN') {
+    if (item.status === 'SUCCESS') {
       const key = `${item.type}:${item.id}`;
       this.completedMap.set(key, item);
       this.flushToDisk();
@@ -117,7 +120,7 @@ export class CheckpointManager {
   public recordBatch(items: MigrationItemResult[]): void {
     let added = 0;
     for (const item of items) {
-      if (item.status === 'SUCCESS' || item.status === 'DRY_RUN') {
+      if (item.status === 'SUCCESS') {
         this.completedMap.set(`${item.type}:${item.id}`, item);
         added++;
       }

@@ -730,29 +730,44 @@ export class NotebookMigrator {
   ): Promise<MigrationItemResult[]> {
     logger.info(`Discovering notebooks in source project: ${sourceEnv.projectId} (${sourceEnv.appLocation})...`);
     logger.info(
-      `[EXPERIMENTAL] NotebookLM source extraction & migration is experimental. Uploaded file text extraction requires API visibility on the source project (or falls back to grounded extraction without original formatting).`
+      `[NOTEBOOKLM API LIMITATION] Google's public NotebookLM API only returns external source references (Google Drive files, Web URLs, YouTube videos, and Agentspace DataStore documents). Locally uploaded files (PDF/DOCX/TXT/audio) and pasted text omit body content on customer projects and will be flagged as MANUAL_REUPLOAD_REQUIRED.`
     );
 
     // 1. Resolve Candidate Users for Multi-User DWD Notebook Discovery
     const candidateUsers = new Set<string>();
-    const hasExplicitFilter = options.userFilter && options.userFilter.length > 0 && !options.userFilter.includes('*') && !options.userFilter.includes('*@*');
+    const rawFilters = (options.userFilter || []).map(u => u.replace(/^user:/i, '').trim()).filter(Boolean);
+    const exactUserFilters = rawFilters.filter(u => u.includes('@') && !u.includes('*'));
+    const wildcardFilters = rawFilters.filter(u => u.includes('*') && u !== '*' && u !== '*@*');
+    const matchesWildcards = (email: string): boolean => {
+      if (wildcardFilters.length === 0) return true;
+      const lower = email.toLowerCase();
+      return wildcardFilters.some(pattern => {
+        const regex = new RegExp('^' + pattern.toLowerCase().split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+        return regex.test(lower);
+      });
+    };
 
-    if (hasExplicitFilter) {
-      for (const u of options.userFilter!) {
-        if (u.includes('@')) candidateUsers.add(u.replace(/^user:/i, '').trim());
+    if (exactUserFilters.length > 0 && wildcardFilters.length === 0 && !rawFilters.includes('*') && !rawFilters.includes('*@*')) {
+      for (const u of exactUserFilters) {
+        candidateUsers.add(u);
       }
     } else {
+      for (const u of exactUserFilters) {
+        candidateUsers.add(u);
+      }
       for (const u of discoveredUsers) {
-        if (u.includes('@')) candidateUsers.add(u.replace(/^user:/i, '').trim());
+        const clean = u.replace(/^user:/i, '').trim();
+        if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) candidateUsers.add(clean);
       }
       for (const u of Object.keys(identityMapping)) {
-        if (u.includes('@')) candidateUsers.add(u.replace(/^user:/i, '').trim());
+        const clean = u.replace(/^user:/i, '').trim();
+        if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) candidateUsers.add(clean);
       }
     }
 
     if (candidateUsers.size === 0) {
       const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
-      if (defaultAdmin) candidateUsers.add(defaultAdmin);
+      if (defaultAdmin && matchesWildcards(defaultAdmin)) candidateUsers.add(defaultAdmin);
     }
 
     // 2. Discover Notebooks
@@ -1250,20 +1265,8 @@ export class NotebookMigrator {
           return result;
         }
 
-        // Filter out any sources explicitly owned by a different user
-        if (fullNotebook.sources && fullNotebook.sources.length > 0 && originalOwner && originalOwner.includes('@')) {
-          const cleanOwner = originalOwner.toLowerCase().trim().replace(/^.*\/subject\//i, '').replace(/^user:/i, '');
-          fullNotebook.sources = fullNotebook.sources.filter((s) => {
-            const srcOwner = String(
-              s.metadata?.ownerEmail || s.metadata?.creatorEmail || s.metadata?.owner || s.metadata?.creator || ''
-            )
-              .toLowerCase()
-              .trim()
-              .replace(/^.*\/subject\//i, '')
-              .replace(/^user:/i, '');
-            return !srcOwner || srcOwner === cleanOwner;
-          });
-        }
+        // Retain all sources inside an owned notebook (including collaborator-contributed sources in shared notebooks)
+        // because non-owners skip shared notebooks during discovery and stripping collaborator sources here would drop them permanently.
 
         // Fetch detailed source data (tailwindDoc, document text, or fallback extraction) for each source
         if (fullNotebook.sources && fullNotebook.sources.length > 0) {
@@ -1308,59 +1311,10 @@ export class NotebookMigrator {
                   merged.content = extractedText;
                 }
 
-                // 3. Fallback Extraction Cascade (when GetSource does not include tailwindDoc/plainText/markdownString):
-                //    Tier 2: NotebookService.InteractSources (`POST .../notebooks/{id}:interactSources` per-sourceId, unlocked by NLME_API_USER / SPARK_PREVIEW)
-                //    Tier 3: AssistantService.StreamAssist (`POST .../assistants/default_assistant:streamAssist` query_notebook tool)
-                if (this.mapSourceToPayload(merged, targetEnv, datastoreMapping, collectionMapping) === null) {
-                  if (typeof (this.client as any).interactNotebookSource === 'function') {
-                    try {
-                      const rawInteractText = await this.client.interactNotebookSource(
-                        notebookId,
-                        sourceId,
-                        'Output the complete, verbatim text content of this source document from start to finish. Do not summarize, do not add introductory headings like "Excerpts from...", and do not omit any paragraphs or sections.',
-                        sourceEnv,
-                        userImpersonation
-                      );
-                      const cleanedInteractText = this.cleanInteractSourcesResponse(rawInteractText);
-                      if (cleanedInteractText) {
-                        merged.content = cleanedInteractText;
-                        logger.info(`Extracted ${cleanedInteractText.length} chars of unformatted text via :interactSources for source "${sTitle}" (${sourceId})`);
-                      }
-                    } catch (interactErr: any) {
-                      const isMethodNotFound =
-                        interactErr?.status === 404 &&
-                        String(interactErr?.message || '').toLowerCase().includes('method not found');
-                      if (isMethodNotFound) {
-                        logger.debug(`NotebookService.InteractSources not exposed on project "${sourceEnv.projectId}" (404 Method not found); falling back to :streamAssist.`);
-                      } else {
-                        logger.warn(`Fallback :interactSources extraction failed for source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${interactErr.message}`);
-                      }
-                    }
-                  }
-
-                  if (!merged.content && sourceEnv.appId && typeof (this.client as any).streamAssistNotebookSource === 'function') {
-                    try {
-                      const rawAssistText = await this.client.streamAssistNotebookSource(
-                        notebookId,
-                        sTitle,
-                        result.displayName,
-                        sourceEnv,
-                        userImpersonation
-                      );
-                      const cleanedAssistText = this.cleanInteractSourcesResponse(rawAssistText);
-                      if (cleanedAssistText) {
-                        merged.content = cleanedAssistText;
-                        logger.info(
-                          `Extracted ${cleanedAssistText.length} chars of unformatted text via :streamAssist (query_notebook) for source "${sTitle}" (${sourceId})`
-                        );
-                      }
-                    } catch (assistErr: any) {
-                      logger.warn(
-                        `Fallback :streamAssist (query_notebook) extraction failed for source "${sTitle}" (${sourceId}) in notebook ${notebookId}: ${assistErr.message}`
-                      );
-                    }
-                  }
-                }
+                // Note: On external customer projects, Google's NotebookService.GetSource omits tailwindDoc/plainText/markdownString
+                // (restricted behind internal NOTEBOOKLM_SOURCE_CONTENT proto visibility), and both :interactSources and :streamAssist
+                // cannot extract raw uploaded/pasted source content. Sources without external reference links (Drive, Web, YouTube, DataStore)
+                // return null in mapSourceToPayload and are honestly reported as MANUAL_REUPLOAD_REQUIRED.
 
                 return merged;
               } catch (err: any) {
@@ -1463,9 +1417,9 @@ export class NotebookMigrator {
       result.details = {
         ...adminMetadataFlags,
         sourcesCount: rawSources.length,
-        sourcesRestored: dryRunSourcesRestored,
-        sourcesFailed: dryRunSourcesFailed,
-        sources: dryRunSources,
+        sourcesRestored: isDryRun ? dryRunSourcesRestored : 0,
+        sourcesFailed: isDryRun ? dryRunSourcesFailed : 0,
+        sources: isDryRun ? dryRunSources : [],
         notesCount: notes.length,
         notes: (notes || []).map((n: any) => ({
           title: n.title || 'Studio Note',
@@ -1481,11 +1435,10 @@ export class NotebookMigrator {
         }))
       };
 
-      if (dryRunSourcesFailed > 0) {
-        result.error = `${dryRunSourcesFailed} source(s) failed to restore in target`;
-      }
-
       if (isDryRun) {
+        if (dryRunSourcesFailed > 0) {
+          result.error = `${dryRunSourcesFailed} source(s) failed to restore in target`;
+        }
         logger.info(`[DRY RUN] Would migrate Notebook "${result.displayName}" (ID: ${notebookId}) with ${result.details.sourcesRestored}/${result.details.sourcesCount} migratable sources (${result.details.sourcesFailed} failed/manual), ${result.details.notesCount} notes, and ${result.details.artifactsCount} Studio artifacts for owner ${targetOwner}`);
         result.status = 'DRY_RUN';
         result.durationMs = Date.now() - startTime;

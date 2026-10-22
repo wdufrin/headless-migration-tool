@@ -50,27 +50,41 @@ export class MemoryMigrator {
    */
   private resolveCandidateUsers(candidateUsers: string[] = []): string[] {
     const usersToScan = new Set<string>();
-    const hasExplicitFilter = this.config.options?.userFilter && this.config.options.userFilter.length > 0 && !this.config.options.userFilter.includes('*') && !this.config.options.userFilter.includes('*@*');
+    const rawFilters = (this.config.options?.userFilter || []).map(u => u.replace(/^user:/i, '').trim()).filter(Boolean);
+    const exactUserFilters = rawFilters.filter(u => u.includes('@') && !u.includes('*'));
+    const wildcardFilters = rawFilters.filter(u => u.includes('*') && u !== '*' && u !== '*@*');
+    const matchesWildcards = (email: string): boolean => {
+      if (wildcardFilters.length === 0) return true;
+      const lower = email.toLowerCase();
+      return wildcardFilters.some(pattern => {
+        const regex = new RegExp('^' + pattern.toLowerCase().split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+        return regex.test(lower);
+      });
+    };
+    const hasExplicitExactOnly = exactUserFilters.length > 0 && wildcardFilters.length === 0 && !rawFilters.includes('*') && !rawFilters.includes('*@*');
 
-    if (hasExplicitFilter) {
-      for (const u of this.config.options!.userFilter!) {
-        if (u && u.includes('@')) {
-          usersToScan.add(u.replace(/^user:/i, '').trim());
-        }
+    if (hasExplicitExactOnly) {
+      for (const u of exactUserFilters) {
+        usersToScan.add(u);
       }
     } else {
+      for (const u of exactUserFilters) {
+        usersToScan.add(u);
+      }
       for (const u of candidateUsers) {
-        if (u && u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
+        const clean = u ? u.replace(/^user:/i, '').trim() : '';
+        if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) usersToScan.add(clean);
       }
       if (this.config.identityMapping) {
         for (const k of Object.keys(this.config.identityMapping)) {
-          if (k && k.includes('@')) usersToScan.add(k.replace(/^user:/i, '').trim());
+          const clean = k ? k.replace(/^user:/i, '').trim() : '';
+          if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) usersToScan.add(clean);
         }
       }
     }
     if (usersToScan.size === 0) {
       const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
-      if (defaultAdmin) usersToScan.add(defaultAdmin);
+      if (defaultAdmin && matchesWildcards(defaultAdmin)) usersToScan.add(defaultAdmin);
     }
     return Array.from(usersToScan);
   }
@@ -83,7 +97,8 @@ export class MemoryMigrator {
     const users = this.resolveCandidateUsers(candidateUsers);
     const allMemories: Memory[] = [];
     const seenMemoryNames = new Set<string>();
-    const callerEmail = (await this.auth.getCallerIdentity?.()) || users[0] || (candidateUsers && candidateUsers[0]) || '';
+    const rawCallerEmail = (await this.auth.getCallerIdentity?.()) || '';
+    const callerEmail = (rawCallerEmail && !rawCallerEmail.endsWith('.gserviceaccount.com')) ? rawCallerEmail : '';
 
     // 1. Scan default caller credentials / primary session
     try {
@@ -144,9 +159,9 @@ export class MemoryMigrator {
           }
           if (!owner) return true; // Do not drop unassigned caller memories
           return filters.some(f => {
-            if (f.startsWith('*@')) {
-              const domain = f.replace('*@', '');
-              return owner.endsWith('@' + domain);
+            if (f.includes('*')) {
+              const regex = new RegExp('^' + f.split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+              return regex.test(owner);
             }
             return owner === f || owner === `user:${f}`;
           });
@@ -174,7 +189,10 @@ export class MemoryMigrator {
 
     if (!targetUserId) {
       const srcUser = memory.owner || memory.userEmail || memory.userPseudoId;
-      const defaultUser = this.config.options?.userFilter?.[0]?.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim();
+      const singleUserFilter =
+        this.config.options?.userFilter?.length === 1 && !this.config.options.userFilter[0].includes('*')
+          ? this.config.options.userFilter[0].replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim()
+          : undefined;
       let cleanSrcUser = srcUser ? srcUser.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim() : '';
       try { cleanSrcUser = decodeURIComponent(cleanSrcUser); } catch {}
 
@@ -185,10 +203,10 @@ export class MemoryMigrator {
         targetUserId = this.config.identityMapping[cleanSrcUser];
       } else if (srcUser && this.config.identityMapping?.[srcUser]) {
         targetUserId = this.config.identityMapping[srcUser];
-      } else if (cleanSrcUser && cleanSrcUser.includes('@')) {
+      } else if (cleanSrcUser && cleanSrcUser.includes('@') && !cleanSrcUser.includes('*')) {
         targetUserId = cleanSrcUser;
-      } else if (defaultUser && defaultUser.includes('@')) {
-        targetUserId = defaultUser;
+      } else if (singleUserFilter && singleUserFilter.includes('@')) {
+        targetUserId = singleUserFilter;
       } else {
         targetUserId = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || undefined;
       }

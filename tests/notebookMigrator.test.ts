@@ -1261,12 +1261,6 @@ describe('NotebookMigrator Engine', () => {
             metadata: { wordCount: 450, tokenCount: 600 }
           };
         }),
-        interactNotebookSource: vi.fn().mockImplementation(async (_nbId: string, srcId: string) => {
-          if (srcId === 'src-stripped-2') {
-            return '**Excerpts from "Stripped_Customer_Doc.pdf"**\n\nCustomer SLA guarantees 99.99% uptime [1] across all regional endpoints [1, 2].';
-          }
-          return '';
-        }),
         createNotebook: vi.fn().mockResolvedValue({
           name: 'projects/target-proj/locations/global/notebooks/nb-new-1',
           title: 'Customer Source Backup Notebook'
@@ -1285,39 +1279,36 @@ describe('NotebookMigrator Engine', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].status).toBe('SUCCESS');
-      expect(results[0].details?.sourcesRestored).toBe(2);
-      expect(results[0].details?.sourcesFailed).toBe(0);
+      expect(results[0].details?.sourcesRestored).toBe(1);
+      expect(results[0].details?.sourcesFailed).toBe(1);
 
       const savedSources = results[0].details?.sources;
       expect(savedSources).toHaveLength(2);
 
       // Source 1: Extracted from tailwindDoc and saved in JSON
-      expect(savedSources[0].title).toBe('Architecture_Spec.pdf');
-      expect(savedSources[0].sourceId).toBe('src-pdf-1');
-      expect(savedSources[0].targetSourceId).toBe('new-src-1');
-      expect(savedSources[0].content).toBe('Section 1: Zero-Trust Network Topology.\nAll traffic is mTLS encrypted.');
-      expect(savedSources[0].userContent).toEqual({
+      const restoredSrc = savedSources.find((s: any) => s.sourceId === 'src-pdf-1');
+      expect(restoredSrc).toBeDefined();
+      expect(restoredSrc.title).toBe('Architecture_Spec.pdf');
+      expect(restoredSrc.targetSourceId).toBe('new-src-1');
+      expect(restoredSrc.content).toBe('Section 1: Zero-Trust Network Topology.\nAll traffic is mTLS encrypted.');
+      expect(restoredSrc.userContent).toEqual({
         textContent: {
           sourceName: 'Architecture_Spec.pdf',
           content: 'Section 1: Zero-Trust Network Topology.\nAll traffic is mTLS encrypted.'
         }
       });
 
-      // Source 2: Extracted via :interactSources fallback (cleaned of Excerpts header & citation markers) and saved in JSON
-      expect(savedSources[1].title).toBe('Stripped_Customer_Doc.pdf');
-      expect(savedSources[1].sourceId).toBe('src-stripped-2');
-      expect(savedSources[1].targetSourceId).toBe('new-src-2');
-      expect(savedSources[1].content).toBe('Customer SLA guarantees 99.99% uptime across all regional endpoints.');
-      expect(savedSources[1].userContent).toEqual({
-        textContent: {
-          sourceName: 'Stripped_Customer_Doc.pdf',
-          content: 'Customer SLA guarantees 99.99% uptime across all regional endpoints.'
-        }
-      });
+      // Source 2: Stripped tailwindDoc on customer project without external link -> honestly reported as MANUAL_REUPLOAD_REQUIRED
+      const strippedSrc = savedSources.find((s: any) => s.sourceId === 'src-stripped-2');
+      expect(strippedSrc).toBeDefined();
+      expect(strippedSrc.title).toBe('Stripped_Customer_Doc.pdf');
+      expect(strippedSrc.status).toBe('MANUAL_REUPLOAD_REQUIRED');
+      expect(strippedSrc.error).toContain('Manual re-upload required');
 
       // Ensure zero [Restored Source: ...] placeholders were sent to target
       expect(batchCreateSpy).toHaveBeenCalledTimes(1);
       const sentPayloads = batchCreateSpy.mock.calls[0][1];
+      expect(sentPayloads).toHaveLength(1);
       expect(JSON.stringify(sentPayloads)).not.toContain('[Restored Source');
     });
 
@@ -1426,7 +1417,7 @@ describe('NotebookMigrator Engine', () => {
       ).rejects.toThrow(/Invalid sourceId/);
     });
 
-    it('should fall back to AssistantService.StreamAssist (query_notebook) when :interactSources returns 404 Method not found on customer projects (e.g. cei-vertex-prd-01)', async () => {
+    it('should mark locally uploaded files as MANUAL_REUPLOAD_REQUIRED without firing dead :interactSources or :streamAssist calls when GetSource omits tailwindDoc on customer projects', async () => {
       const sourceEnv: EnvironmentConfig = {
         projectId: 'cei-vertex-prd-01',
         appLocation: 'us',
@@ -1452,7 +1443,6 @@ describe('NotebookMigrator Engine', () => {
         getAccessToken: vi.fn().mockResolvedValue('wif-user-token')
       };
 
-      const streamAssistBodies: any[] = [];
       const batchCreateBodies: any[] = [];
 
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
@@ -1500,97 +1490,7 @@ describe('NotebookMigrator Engine', () => {
           } as any;
         }
 
-        // 4. Direct :interactSources returns 404 Method not found (customer project not yet in NLME_API_USER allowlist)
-        if (url.includes(':interactSources') && method === 'POST') {
-          return {
-            ok: false,
-            status: 404,
-            text: async () => JSON.stringify({ error: { code: 404, message: 'Method not found.', status: 'NOT_FOUND' } })
-          } as any;
-        }
-
-        // 5. Engine GET for resolveProjectNumber -> returns numeric project number 9876543210
-        if (url.includes('/projects/cei-vertex-prd-01/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000') && method === 'GET') {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              name: 'projects/9876543210/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000',
-              displayName: 'ConEd Gemini App'
-            })
-          } as any;
-        }
-
-        // 6. AssistantService.StreamAssist (`:streamAssist`) with numeric project number 9876543210
-        if (url.includes('/projects/9876543210/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000/assistants/default_assistant:streamAssist') && method === 'POST') {
-          const parsedBody = JSON.parse(init?.body || '{}');
-          streamAssistBodies.push(parsedBody);
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ([
-              {
-                answer: {
-                  state: 'IN_PROGRESS',
-                  replies: [
-                    {
-                      groundedContent: {
-                        content: { role: 'model', text: 'Dereferencing...', thought: true }
-                      }
-                    }
-                  ]
-                }
-              },
-              {
-                sessionInfo: {
-                  session: 'projects/9876543210/locations/us/collections/default_collection/engines/coned-gemini-app_1700000000/sessions/temp-sess-123'
-                },
-                answer: {
-                  state: 'SUCCEEDED',
-                  replies: [
-                    {
-                      groundedContent: {
-                        content: {
-                          role: 'model',
-                          text: 'Criterion 1: Security & Compliance. Criterion 2: Grounding Accuracy.'
-                        },
-                        textGroundingMetadata: {
-                          references: [
-                            {
-                              content: 'Criterion 1: Security & Compliance — Must enforce VPC-SC and CMEK across all regional endpoints.',
-                              documentMetadata: {
-                                title: 'Gemini Workspace Evaluation Criteria 1.docx',
-                                uri: 'https://notebooklm.cloud.google.com/us/notebook/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7?project=9876543210'
-                              }
-                            },
-                            {
-                              content: 'Criterion 2: Grounding Accuracy — Must cite verbatim passages from enterprise knowledge bases.',
-                              documentMetadata: {
-                                title: 'Gemini Workspace Evaluation Criteria 1.docx',
-                                uri: 'https://notebooklm.cloud.google.com/us/notebook/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7?project=9876543210'
-                              }
-                            }
-                          ]
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            ])
-          } as any;
-        }
-
-        // 6b. Ephemeral session cleanup (DELETE /v1alpha/projects/9876543210/.../sessions/temp-sess-123)
-        if (url.endsWith('/sessions/temp-sess-123') && method === 'DELETE') {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({})
-          } as any;
-        }
-
-        // 7. NoteService (notes:batchGet) returns 404 Method not found
+        // 4. NoteService (notes:batchGet) returns 404 Method not found
         if (url.includes('/notes:batchGet')) {
           return {
             ok: false,
@@ -1599,7 +1499,7 @@ describe('NotebookMigrator Engine', () => {
           } as any;
         }
 
-        // 8. ArtifactService (/artifacts) returns empty
+        // 5. ArtifactService (/artifacts) returns empty
         if (url.includes('/artifacts')) {
           return {
             ok: true,
@@ -1608,7 +1508,7 @@ describe('NotebookMigrator Engine', () => {
           } as any;
         }
 
-        // 9. Target listRecentlyViewed
+        // 6. Target listRecentlyViewed
         if (url.includes('/projects/cei-gemini-prd-01/locations/us/notebooks:listRecentlyViewed')) {
           return {
             ok: true,
@@ -1617,7 +1517,7 @@ describe('NotebookMigrator Engine', () => {
           } as any;
         }
 
-        // 10. Target createNotebook
+        // 7. Target createNotebook
         if (url.endsWith('/projects/cei-gemini-prd-01/locations/us/notebooks') && method === 'POST') {
           return {
             ok: true,
@@ -1629,25 +1529,7 @@ describe('NotebookMigrator Engine', () => {
           } as any;
         }
 
-        // 11. Target sources:batchCreate
-        if (url.includes('/projects/cei-gemini-prd-01/locations/us/notebooks/dd32ebea-72d9-4d40-bb5a-5e27c6278042/sources:batchCreate') && method === 'POST') {
-          const parsed = JSON.parse(init?.body || '{}');
-          batchCreateBodies.push(parsed);
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              sources: [
-                {
-                  name: 'projects/cei-gemini-prd-01/locations/us/notebooks/dd32ebea-72d9-4d40-bb5a-5e27c6278042/sources/restored-src-1',
-                  sourceId: { id: 'restored-src-1' }
-                }
-              ]
-            })
-          } as any;
-        }
-
-        throw new Error(`Unexpected fetch in StreamAssist fallback test: ${method} ${url}`);
+        throw new Error(`Unexpected fetch in customer stripped source test: ${method} ${url}`);
       });
 
       try {
@@ -1660,43 +1542,18 @@ describe('NotebookMigrator Engine', () => {
 
         expect(results).toHaveLength(1);
         expect(results[0].status).toBe('SUCCESS');
-        expect(results[0].details?.sourcesRestored).toBe(1);
-        expect(results[0].details?.sourcesFailed).toBe(0);
+        expect(results[0].details?.sourcesRestored).toBe(0);
+        expect(results[0].details?.sourcesFailed).toBe(1);
 
-        // Verify :interactSources was attempted first (Tier 2), returned 404, and fell back to :streamAssist (Tier 3)
+        // Verify neither :interactSources nor :streamAssist was called
         const calledUrls = fetchSpy.mock.calls.map(c => `${c[1]?.method || 'GET'} ${String(c[0])}`);
-        expect(calledUrls.some(u => u.includes(':interactSources'))).toBe(true);
-        expect(calledUrls.some(u => u.startsWith('DELETE ') && u.endsWith('/sessions/temp-sess-123'))).toBe(true);
+        expect(calledUrls.some(u => u.includes(':interactSources'))).toBe(false);
+        expect(calledUrls.some(u => u.includes(':streamAssist'))).toBe(false);
+        expect(batchCreateBodies).toHaveLength(0);
 
-        // Verify StreamAssist request used numeric project number 9876543210 in documentReference.documentName
-        expect(streamAssistBodies).toHaveLength(1);
-        expect(streamAssistBodies[0].query.parts[1]).toEqual({
-          documentReference: {
-            documentName: 'projects/9876543210/locations/us/notebooks/5d1c16f7-4ef8-49f3-9eb3-5c91da7221d7',
-            displayTitle: 'AI Project Prioritization Matrix'
-          }
-        });
-
-        // Verify batchCreate received the extracted grounding chunks as textContent
-        expect(batchCreateBodies).toHaveLength(1);
-        const expectedContent =
-          'Criterion 1: Security & Compliance — Must enforce VPC-SC and CMEK across all regional endpoints.\n\n' +
-          'Criterion 2: Grounding Accuracy — Must cite verbatim passages from enterprise knowledge bases.';
-        expect(batchCreateBodies[0]).toEqual({
-          userContents: [
-            {
-              textContent: {
-                sourceName: 'Gemini Workspace Evaluation Criteria 1.docx',
-                content: expectedContent
-              }
-            }
-          ]
-        });
-
-        // Verify JSON report stores both content and userContent
-        expect(results[0].details?.sources[0].status).toBe('SUCCESS');
-        expect(results[0].details?.sources[0].content).toBe(expectedContent);
-        expect(results[0].details?.sources[0].targetSourceId).toBe('restored-src-1');
+        // Verify source is marked MANUAL_REUPLOAD_REQUIRED in the report
+        expect(results[0].details?.sources[0].status).toBe('MANUAL_REUPLOAD_REQUIRED');
+        expect(results[0].details?.sources[0].title).toBe('Gemini Workspace Evaluation Criteria 1.docx');
       } finally {
         fetchSpy.mockRestore();
       }
@@ -1781,6 +1638,88 @@ describe('NotebookMigrator Engine', () => {
         fetchSpy.mockRestore();
       }
     });
+
+    it('should report sourcesRestored=0 on live createNotebook failure, preserve collaborator sources, and filter users by wildcard pattern without literal *@domain impersonation', async () => {
+      const sourceEnv: EnvironmentConfig = { projectId: 'src-p', appLocation: 'global', appId: 'src-app' };
+      const targetEnv: EnvironmentConfig = { projectId: 'tgt-p', appLocation: 'global', appId: 'tgt-app' };
+
+      const impersonatedEmails: string[] = [];
+      const mockSources: NotebookSource[] = [
+        {
+          name: 'projects/src-p/locations/global/notebooks/nb-collab-1/sources/s1',
+          title: 'Owner Note',
+          content: 'Owner text',
+          metadata: { creatorEmail: 'alice@company.com' }
+        },
+        {
+          name: 'projects/src-p/locations/global/notebooks/nb-collab-1/sources/s2',
+          title: 'Collaborator Note',
+          content: 'Collaborator contributed text',
+          metadata: { creatorEmail: 'teammate@company.com' }
+        }
+      ];
+      const mockClient = {
+        listNotebooks: vi.fn().mockImplementation(async (_env: any, userEmail?: string) => {
+          if (_env.projectId === 'tgt-p') return [];
+          if (userEmail) impersonatedEmails.push(userEmail);
+          return [
+            {
+              name: 'projects/src-p/locations/global/notebooks/nb-collab-1',
+              title: 'Shared Team Notebook',
+              owner: userEmail || 'alice@company.com',
+              sources: mockSources
+            }
+          ];
+        }),
+        getNotebook: vi.fn().mockImplementation(async (name: string, _env: any, userEmail?: string) => ({
+          name,
+          title: 'Shared Team Notebook',
+          owner: userEmail,
+          sources: mockSources
+        })),
+        createNotebook: vi.fn()
+          .mockRejectedValueOnce(new Error('Target Quota Exceeded'))
+          .mockResolvedValue({ name: 'projects/tgt-p/locations/global/notebooks/nb-tgt-collab-1', title: 'Shared Team Notebook' }),
+        getNotebookSource: vi.fn().mockImplementation(async (_nbId: string, sourceId: string) => {
+          return mockSources.find(s => s.name?.endsWith(sourceId)) || mockSources[0];
+        }),
+        batchCreateNotebookSources: vi.fn().mockResolvedValue({ sources: [{}, {}] }),
+        uploadNotebookFile: vi.fn(),
+        shareNotebook: vi.fn().mockResolvedValue({})
+      } as unknown as DiscoveryEngineClient;
+
+      const testMigrator = new NotebookMigrator(mockClient);
+
+      // 1. Live failure on createNotebook must report sourcesRestored: 0 (not dryRunSourcesRestored)
+      const failedResults = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: false, userFilter: ['*@company.com'] },
+        { 'alice@company.com': 'alice@target.com', 'bob@external.org': 'bob@target.com' },
+        ['alice@company.com', 'bob@external.org']
+      );
+
+      // Wildcard *@company.com should only match alice@company.com, never literal "*@company.com" or bob@external.org
+      expect(impersonatedEmails).toContain('alice@company.com');
+      expect(impersonatedEmails).not.toContain('*@company.com');
+      expect(impersonatedEmails).not.toContain('bob@external.org');
+      expect(failedResults).toHaveLength(1);
+      expect(failedResults[0].status).toBe('FAILED');
+      expect(failedResults[0].details?.sourcesRestored).toBe(0);
+
+      // 2. Live success must migrate BOTH the owner's source AND the collaborator's source (2 sources)
+      const successResults = await testMigrator.migrateNotebooks(
+        sourceEnv,
+        targetEnv,
+        { dryRun: false, userFilter: ['*@company.com'] },
+        { 'alice@company.com': 'alice@target.com' },
+        ['alice@company.com']
+      );
+      expect(successResults).toHaveLength(1);
+      expect(successResults[0].status).toBe('SUCCESS');
+      expect(successResults[0].details?.sourcesRestored).toBe(2);
+      expect(mockClient.batchCreateNotebookSources).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(mockClient.batchCreateNotebookSources).mock.calls[0][1]).toHaveLength(2);
+    });
   });
 });
-

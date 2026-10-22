@@ -54,7 +54,7 @@ describe('CheckpointManager', () => {
     expect(content.completedItems[0].id).toBe('agent-123');
   });
 
-  it('should load previously completed items from checkpoint file', () => {
+  it('should load previously completed SUCCESS items and exclude DRY_RUN items from checkpoint file', () => {
     const filePath = path.join(testDir, '.checkpoint-prev.json');
     const data = {
       migrationId: 'prev-run',
@@ -67,12 +67,12 @@ describe('CheckpointManager', () => {
     fs.writeFileSync(filePath, JSON.stringify(data), 'utf8');
 
     const loaded = CheckpointManager.load(filePath);
-    expect(loaded.size).toBe(2);
+    expect(loaded.size).toBe(1);
     expect(loaded.has('NOTEBOOK:nb-1')).toBe(true);
-    expect(loaded.has('SKILL:skill-1')).toBe(true);
+    expect(loaded.has('SKILL:skill-1')).toBe(false);
   });
 
-  it('should load completed items from full MigrationReport JSON', () => {
+  it('should load completed SUCCESS items from full MigrationReport JSON and reject FAILED or DRY_RUN items', () => {
     const filePath = path.join(testDir, 'full-report.json');
     const report: Partial<MigrationReport> = {
       migrationId: 'full-run',
@@ -85,9 +85,9 @@ describe('CheckpointManager', () => {
     fs.writeFileSync(filePath, JSON.stringify(report), 'utf8');
 
     const loaded = CheckpointManager.load(filePath);
-    expect(loaded.size).toBe(2);
+    expect(loaded.size).toBe(1);
     expect(loaded.has('SESSION:sess-1')).toBe(true);
     expect(loaded.has('SESSION:sess-2')).toBe(false); // failed items skipped
-    expect(loaded.has('MEMORY:mem-1')).toBe(true);
+    expect(loaded.has('MEMORY:mem-1')).toBe(false); // dry-run items must not poison live resume
   });
 });

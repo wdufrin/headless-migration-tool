@@ -8,23 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.8.2] - 2026-10-21
 
 ### Added
-- **Public Customer NotebookLM Source Extraction via `AssistantService.StreamAssist` (`query_notebook`) (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)**:
-  - Added `DiscoveryEngineClient.streamAssistNotebookSource` (`POST /v1alpha/projects/{projectNumber}/locations/{location}/collections/{collection}/engines/{appId}/assistants/default_assistant:streamAssist`) as the primary extraction path for public customer projects where `GetSource` strips `tailwindDoc` (`GOOGLE_INTERNAL` visibility) and direct `:interactSources` is unexposed (`NLME_API_USER` allowlist).
-  - Automatically resolves and caches the source project's numeric `projectNumber` via `resolveProjectNumber` (Engine GET with Cloud Resource Manager fallback) and attaches a `documentReference` pointing to `projects/{projectNumber}/locations/{location}/notebooks/{notebookId}` so Discovery Engine invokes `QueryNotebookTool` over internal Stubby and returns grounded source chunks in `groundedContent.textGroundingMetadata.references`.
-  - Automatically deletes temporary `sessionInfo.session` resources created during `:streamAssist` extraction (`DELETE /v1alpha/{session}`) so customer source chat histories remain clean.
-  - Added per-project 404 method caching (`unexposedMethodProjects`) for `NoteService` (`notes:batchGet` / `POST /notes`), `ArtifactService` (`/artifacts`), and `:interactSources` so external customer migrations do not repeatedly call unexposed endpoints.
-- Bumped platform version to `1.8.2` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (391 passing tests across 31 test suites).
+- **Honest NotebookLM Source Migration & API Limitation Handling (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)**:
+  - Re-links external reference sources (**Google Drive files**, **Web URLs**, **YouTube videos**, and **Agentspace DataStore documents**) and preserves collaborator-contributed external sources in shared notebooks.
+  - Removed ineffective `:interactSources` and `:streamAssist` fallback calls during NotebookLM source migration; locally uploaded files (`.pdf`, `.docx`, `.txt`, audio) and pasted text that omit `tailwindDoc` on customer projects are immediately flagged as `MANUAL_REUPLOAD_REQUIRED`.
+  - Added per-project 404 method caching (`unexposedMethodProjects`) for `NoteService` (`notes:batchGet` / `POST /notes`) and `ArtifactService` (`/artifacts`) so external customer migrations do not repeatedly call unexposed endpoints.
+- Bumped platform version to `1.8.2` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (395 passing tests across 31 test suites).
 
 ---
 
 ## [1.8.1] - 2026-10-21
 
 ### Added
-- **Full NotebookLM Source Text Extraction, JSON Backup & `:interactSources` Fallback (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`, `src/types/migration.ts`)**:
-  - Restored full extraction of NotebookLM source content (`tailwindDoc`, `plainText`, `markdownString`, and table/codeBlock structural elements) directly into `merged.content` and the migration JSON report (`details.sources[].content` and `userContent`).
-  - Added `DiscoveryEngineClient.interactNotebookSource` (`POST /v1alpha/projects/{project}/locations/{loc}/notebooks/{notebookId}:interactSources`) as an automatic fallback when `tailwindDoc` is omitted by Google's external API gateway on customer projects, stripping introductory wrapper headings so unformatted document text is cleanly preserved and recreated in target notebooks via `sources:batchCreate`.
+- **DataStore-Grounded NotebookLM Source Mapping & JSON Backup (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`, `src/types/migration.ts`)**:
   - Added `DiscoveryEngineClient.getDataStoreDocument` (`GET /v1alpha/{documentName}`) and `NotebookMigrator.rewriteAgentspaceDocumentName` so NotebookLM sources backed by Gemini Enterprise DataStores (`agentspaceMetadata.documentName`) extract text when available or automatically rewrite their project, location, `collectionMapping`, and `datastoreMapping` IDs to the target environment.
-  - Added byte-budget and count chunking (`chunkSourcesForBatchCreate`, max 5 sources / 4 MB per batch) and automatic export of `<Notebook>_sources_backup.json` and `.md` source files into `user_handover_reports/<user>/notebook_sources/`.
+  - Added byte-budget and count chunking (`chunkSourcesForBatchCreate`, max 5 sources / 4 MB per batch) and automatic export of `<Notebook>_sources_backup.json` into `user_handover_reports/<user>/notebook_sources/`.
 - Bumped platform version to `1.8.1` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (389 passing tests across 31 test suites).
 
 ---

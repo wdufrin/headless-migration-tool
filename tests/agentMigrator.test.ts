@@ -3,6 +3,7 @@ import { AgentMigrator } from '../src/engines/agentMigrator.js';
 import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
 import { GcpAuthService } from '../src/services/gcpAuth.js';
 import { Agent } from '../src/types/index.js';
+import { EnvironmentConfig } from '../src/types/migration.js';
 
 describe('AgentMigrator Engine', () => {
   const dummyAuth = new GcpAuthService({ staticToken: 'test-token' });
@@ -823,7 +824,7 @@ describe('AgentMigrator Engine', () => {
     expect(requestSpy.mock.calls[1][0]).toContain('?updateMask=workflowAgentDefinition');
     expect(requestSpy.mock.calls[1][1]).toBe('PATCH');
     expect(
-      requestSpy.mock.calls[1][2].workflowAgentDefinition.agentFlow.nodes[0].connectorEventTrigger.dataConnector.name
+      (requestSpy.mock.calls[1][2] as any).workflowAgentDefinition.agentFlow.nodes[0].connectorEventTrigger.dataConnector.name
     ).toBe('projects/180054373655/locations/global/collections/gmail_123/dataConnector');
   });
 
@@ -968,7 +969,48 @@ describe('AgentMigrator Engine', () => {
       'publish:tgt-published-workflow-agent'
     ]);
   });
+
+  it('should preserve regional Vertex AI reasoningEngines locations and avoid corrupting natural-language instructions matching appId', () => {
+    const regionalSourceEnv: EnvironmentConfig = {
+      projectId: 'src-proj',
+      appLocation: 'us',
+      appId: 'search'
+    };
+    const globalTargetEnv: EnvironmentConfig = {
+      projectId: 'tgt-proj',
+      appLocation: 'global',
+      appId: 'enterprise-prod'
+    };
+
+    const adkAgent: Agent = {
+      name: 'projects/src-proj/locations/us/collections/default_collection/engines/search/assistants/default_assistant/agents/adk-1',
+      displayName: 'ADK Regional Agent',
+      adkAgentDefinition: {
+        provisionedReasoningEngine: {
+          reasoningEngine: 'projects/src-proj/locations/us-central1/reasoningEngines/987654321'
+        },
+        toolSettings: {
+          toolDescription: 'Please search the knowledge base and use projects/src-proj/locations/us/collections/default_collection/engines/search/assistants/default_assistant'
+        }
+      }
+    };
+
+    const payload = migrator.buildAgentPayload(
+      adkAgent,
+      regionalSourceEnv,
+      globalTargetEnv,
+      {},
+      {},
+      { '987654321': '111222333' }
+    );
+
+    // Regional reasoningEngine location (us-central1) MUST be preserved, not overwritten with 'global'
+    expect(payload.adkAgentDefinition.provisionedReasoningEngine.reasoningEngine).toBe(
+      'projects/tgt-proj/locations/us-central1/reasoningEngines/111222333'
+    );
+    // Natural-language word "search" in toolDescription must NOT be replaced with "enterprise-prod", while the resource URI IS rewritten
+    expect(payload.adkAgentDefinition.toolSettings.toolDescription).toBe(
+      'Please search the knowledge base and use projects/tgt-proj/locations/global/collections/default_collection/engines/enterprise-prod/assistants/default_assistant'
+    );
+  });
 });
-
-
-

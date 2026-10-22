@@ -45,6 +45,10 @@ describe('MigrationRunner Orchestrator', () => {
       prefixReplacements: {},
       allowOverwrite: false,
       skipIds: [],
+      promptForAdminNotebookHitl: false,
+      approvedAdminNotebookIds: [],
+      promptForConnectorHitl: false,
+      debugMode: false,
       logLevel: 'INFO'
     },
     datastoreMapping: {
@@ -186,6 +190,76 @@ describe('MigrationRunner Orchestrator', () => {
 
     if (fs.existsSync(testOutputDir)) {
       fs.rmSync(testOutputDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should skip sessions with unmapped opaque userPseudoId in multi-user runs instead of assigning them to discoveredUsers[0]', async () => {
+    const runner = new MigrationRunner({
+      authService: dummyAuth,
+      outputDir: testOutputDir
+    });
+
+    (runner as any).client.getEngine = vi.fn().mockResolvedValue({ name: 'engines/prod_engine_1' });
+    (runner as any).client.listDataStores = vi.fn().mockResolvedValue([]);
+    (runner as any).notebookMigrator.migrateNotebooks = vi.fn().mockResolvedValue([]);
+    (runner as any).skillMigrator.migrateSkills = vi.fn().mockResolvedValue([]);
+    (runner as any).agentMigrator.migrateAgents = vi.fn().mockResolvedValue([]);
+    (runner as any).client.listMemories = vi.fn().mockResolvedValue([]);
+
+    // Mock globalfetch / SessionMigrator so listSourceSessions returns 1 mapped email session and 1 unmapped opaque ID session
+    const { SessionMigrator } = await import('../src/engines/sessionMigrator.js');
+    const listSpy = vi.spyOn(SessionMigrator.prototype, 'listSourceSessions').mockResolvedValue([
+      {
+        name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/sessions/sess-alice',
+        displayName: 'Alice Valid Session',
+        userPseudoId: 'alice@fedex.com',
+        turns: []
+      },
+      {
+        name: 'projects/123/locations/global/collections/default_collection/engines/test_engine_1/sessions/sess-opaque',
+        displayName: 'Opaque Unmapped Session',
+        userPseudoId: '10928374655',
+        turns: []
+      }
+    ]);
+    const migrateSpy = vi.spyOn(SessionMigrator.prototype, 'migrateSession').mockResolvedValue({
+      name: 'projects/456/locations/global/collections/default_collection/engines/prod_engine_1/sessions/sess-alice-tgt'
+    });
+
+    try {
+      const multiUserConfig: ValidatedMigrationConfig = {
+        ...sampleConfig,
+        identityMapping: {
+          'alice@fedex.com': 'alice@target.com',
+          'bob@fedex.com': 'bob@target.com'
+        },
+        options: {
+          ...sampleConfig.options,
+          dryRun: false,
+          migrateNotebooks: false,
+          migrateAgents: false,
+          migrateSkills: false,
+          migrateSessions: true,
+          migrateMemories: false,
+          userFilter: ['*@fedex.com']
+        }
+      };
+
+      const report = await runner.run(multiUserConfig);
+      const aliceSession = report.results.find(r => r.id === 'sess-alice');
+      const opaqueSession = report.results.find(r => r.id === 'sess-opaque');
+
+      expect(aliceSession?.status).toBe('SUCCESS');
+      expect(aliceSession?.targetOwner).toBe('alice@target.com');
+      expect(opaqueSession?.status).toBe('SKIPPED');
+      expect(opaqueSession?.error).toContain('Unmapped opaque user ID');
+      expect(migrateSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      listSpy.mockRestore();
+      migrateSpy.mockRestore();
+      if (fs.existsSync(testOutputDir)) {
+        fs.rmSync(testOutputDir, { recursive: true, force: true });
+      }
     }
   });
 });

@@ -211,6 +211,17 @@ wizardRouter.post('/idp/parse-csv', async (req, res) => {
       csvKeys
     );
 
+    const duplicateTargetCollisions = parseResult.collisions.filter(c => c.type === 'DUPLICATE_TARGET');
+    if (duplicateTargetCollisions.length > 0 && req.body?.allowTargetCollisions !== true) {
+      return res.status(409).json({
+        error: 'DuplicateTargetCollision',
+        message: `Detected ${duplicateTargetCollisions.length} duplicate target identity collision(s) where multiple source users map to the same target account. Please resolve the collisions in your CSV or pass allowTargetCollisions: true to explicitly merge these accounts.`,
+        collisions: duplicateTargetCollisions,
+        parseResult,
+        auditReport
+      });
+    }
+
     return res.status(200).json({
       parseResult,
       mergedMappings,
@@ -1356,6 +1367,20 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
       targetProjectId
     } = req.body || {};
 
+    const rootDir = path.resolve(process.cwd());
+    const isWithinWorkspace = (candidatePath: string): boolean => {
+      const resolved = path.resolve(rootDir, candidatePath);
+      return resolved === rootDir || resolved.startsWith(rootDir + path.sep);
+    };
+
+    if (typeof wifConfigPath === 'string' && wifConfigPath.trim() && !isWithinWorkspace(wifConfigPath)) {
+      return res.status(400).json({
+        success: false,
+        error: 'InvalidFilePath',
+        message: 'wifConfigPath must resolve within the project workspace directory.'
+      });
+    }
+
     let resolvedConfig = wifConfig;
     if (!resolvedConfig && fs.existsSync(wifConfigPath)) {
       try {
@@ -1374,6 +1399,14 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
         success: false,
         error: 'ConfigNotFound',
         message: 'No Workforce Identity Federation config found. Please generate or save workforce-identity-config.json first.'
+      });
+    }
+
+    if (typeof resolvedConfig.credential_source?.file === 'string' && !isWithinWorkspace(resolvedConfig.credential_source.file)) {
+      return res.status(400).json({
+        success: false,
+        error: 'InvalidFilePath',
+        message: 'credential_source.file must resolve within the project workspace directory.'
       });
     }
 
@@ -1422,7 +1455,7 @@ wizardRouter.post('/wizard/test-wif', async (req, res) => {
         }
       } catch (stsErr: any) {
         const subTokenFile = resolvedConfig.credential_source?.file;
-        const fileExists = subTokenFile ? fs.existsSync(subTokenFile) : false;
+        const fileExists = (typeof subTokenFile === 'string' && isWithinWorkspace(subTokenFile)) ? fs.existsSync(subTokenFile) : false;
         const fileContent = fileExists ? fs.readFileSync(subTokenFile, 'utf-8').trim() : '';
         const isDummyToken = !fileContent || fileContent.includes('mock-idp-subject-token') || fileContent.length < 50;
 

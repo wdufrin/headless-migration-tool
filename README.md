@@ -19,20 +19,20 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ## 🚀 What's New in v1.8.2
 
-* **🌐 Public Customer NotebookLM Source Extraction via `:streamAssist` (`query_notebook`) (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)**:
-  * Primary public extraction path (`streamAssistNotebookSource`) calls `POST /v1alpha/projects/{projectNumber}/locations/{location}/collections/{collection}/engines/{appId}/assistants/default_assistant:streamAssist` with a `documentReference` (`projects/{projectNumber}/locations/{location}/notebooks/{notebookId}`), invoking Discovery Engine's internal `QueryNotebookTool` to extract unformatted source text and grounding chunks on external customer projects where `GetSource` omits `tailwindDoc` and `:interactSources` returns `404 Method not found`.
-  * Automatically resolves and caches the numeric `projectNumber` required by `QueryNotebookTool`, cleans up temporary `sessionInfo.session` resources after extraction, and caches per-project `404 Method not found` responses for `NoteService` and `ArtifactService`.
-* **🧪 100% Passing Automated Tests (391/391 Tests across 31 suites)**:
-  * Full 391 automated tests passing across 31 test suites with zero failures or skipped assertions.
+* **🛡️ Honest NotebookLM Source Handling & Per-Project 404 Caching (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)**:
+  * Re-links external reference sources (**Google Drive files**, **Web URLs**, **YouTube videos**, and **Agentspace DataStore documents**) across projects, and preserves collaborator-contributed external sources inside shared notebooks.
+  * Because Google's external `NotebookService.GetSource` endpoint restricts `tailwindDoc` (`NOTEBOOKLM_SOURCE_CONTENT` visibility) and neither `:interactSources` nor `:streamAssist` can extract raw uploaded/pasted source content on customer projects, locally uploaded files (`.pdf`, `.docx`, `.txt`, audio) and pasted text are immediately flagged as `MANUAL_REUPLOAD_REQUIRED` without firing dead fallback RPCs.
+  * Caches per-project `404 Method not found` responses for `NoteService` and `ArtifactService` so customer migrations do not repeatedly invoke unexposed endpoints.
+* **🧪 100% Passing Automated Tests (395/395 Tests across 31 suites)**:
+  * Full 395 automated tests passing across 31 test suites with zero failures or skipped assertions.
 
 ---
 
 ## 🚀 What's New in v1.8.1
 
-* **📄 Full NotebookLM Source Content Extraction, JSON Backup & `:interactSources` Fallback (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`)**:
-  * Extracts unformatted source text from `tailwindDoc`, `plainText`, `markdownString`, and DataStore documents (`getDataStoreDocument`), storing the full `content` and replayable `userContent` payload directly in the migration JSON report (`details.sources[]`) and `user_handover_reports/<user>/notebook_sources/<Notebook>_sources_backup.json`.
-  * Automatically falls back to `POST .../notebooks/{id}:interactSources` scoped to each `sourceId` when `tailwindDoc` is omitted by Google's external API gateway on customer projects, recreating uploaded PDFs/docs in target notebooks via `sources:batchCreate` without fake placeholders.
-  * Automatically rewrites DataStore-grounded notebook sources (`agentspaceMetadata.documentName`) using `datastoreMapping` and `collectionMapping`.
+* **📄 DataStore-Grounded NotebookLM Source Mapping & JSON Backup (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`)**:
+  * Extracts text from DataStore-backed notebook sources (`getDataStoreDocument`) and automatically rewrites `agentspaceMetadata.documentName` across projects using `datastoreMapping` and `collectionMapping`.
+  * Stores replayable `userContent` payloads directly in the migration JSON report (`details.sources[]`) and `user_handover_reports/<user>/notebook_sources/<Notebook>_sources_backup.json`.
 * **🧪 100% Passing Automated Tests (389/389 Tests across 31 suites)**:
   * Full 389 automated tests passing across 31 test suites with zero failures or skipped assertions.
 

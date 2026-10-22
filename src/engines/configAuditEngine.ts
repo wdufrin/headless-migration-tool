@@ -817,17 +817,23 @@ export class ConfigAuditEngine {
     // -------------------------------------------------------------
     // 3. Identity Provider (IdP) & Domain Rules
     // -------------------------------------------------------------
-    let sourceIdpConfig: any = { idpType: 'GOOGLE_CLOUD_IDENTITY' };
-    let targetIdpConfig: any = { idpType: 'GOOGLE_CLOUD_IDENTITY' };
+    let sourceIdpConfig: any = { type: 'GOOGLE_CLOUD_IDENTITY', idpType: 'GOOGLE_CLOUD_IDENTITY' };
+    let targetIdpConfig: any = { type: 'GOOGLE_CLOUD_IDENTITY', idpType: 'GOOGLE_CLOUD_IDENTITY' };
 
     try {
       sourceIdpConfig = await this.client.detectEngineIdpConfig(src);
-    } catch {}
+    } catch (err: any) {
+      logger.debug(`Could not detect source engine IdP config: ${err?.message || err}`);
+    }
     try {
       targetIdpConfig = await this.client.detectEngineIdpConfig(tgt);
-    } catch {}
+    } catch (err: any) {
+      logger.debug(`Could not detect target engine IdP config: ${err?.message || err}`);
+    }
 
-    const idpMatch = sourceIdpConfig.idpType === targetIdpConfig.idpType;
+    const srcIdpType = sourceIdpConfig?.type || sourceIdpConfig?.idpType || 'GOOGLE_CLOUD_IDENTITY';
+    const tgtIdpType = targetIdpConfig?.type || targetIdpConfig?.idpType || 'GOOGLE_CLOUD_IDENTITY';
+    const idpMatch = srcIdpType === tgtIdpType;
     const domainRules = config.idpMapping?.domainRules || [];
 
     if (idpMatch) {
@@ -836,9 +842,9 @@ export class ConfigAuditEngine {
         category: 'IDP',
         name: 'Identity Provider Type Parity',
         status: 'MATCH',
-        sourceValue: sourceIdpConfig.idpType,
-        targetValue: targetIdpConfig.idpType,
-        details: `Both environments utilize identical authentication mode: ${sourceIdpConfig.idpType}.`
+        sourceValue: srcIdpType,
+        targetValue: tgtIdpType,
+        details: `Both environments utilize identical authentication mode: ${srcIdpType}.`
       });
     } else {
       const hasDomainRules = domainRules.length > 0;
@@ -847,11 +853,11 @@ export class ConfigAuditEngine {
         category: 'IDP',
         name: 'Identity Provider Type Parity',
         status: hasDomainRules ? 'DIFF' : 'WARNING',
-        sourceValue: sourceIdpConfig.idpType,
-        targetValue: targetIdpConfig.idpType,
+        sourceValue: srcIdpType,
+        targetValue: tgtIdpType,
         details: hasDomainRules
-          ? `Cross-IdP migration detected (${sourceIdpConfig.idpType} -> ${targetIdpConfig.idpType}). Active domain translation rules configured (${domainRules.length} rules).`
-          : `Cross-IdP migration detected (${sourceIdpConfig.idpType} -> ${targetIdpConfig.idpType}) WITHOUT explicit domain mapping rules. Unmapped user accounts will fall back to default owner.`
+          ? `Cross-IdP migration detected (${srcIdpType} -> ${tgtIdpType}). Active domain translation rules configured (${domainRules.length} rules).`
+          : `Cross-IdP migration detected (${srcIdpType} -> ${tgtIdpType}) WITHOUT explicit domain mapping rules. Unmapped user accounts will fall back to default owner.`
       });
       if (!hasDomainRules) {
         remediationPlan.push({

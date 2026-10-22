@@ -88,10 +88,15 @@ echo -e "${CYAN}================================================================
 if [[ -n "${ARCHIVE_BUCKET}" ]]; then
   echo -e "\n${BOLD}[1/4] Archiving export assets to GCS: ${ARCHIVE_BUCKET}...${NC}"
   if command -v gcloud &> /dev/null; then
-    gcloud storage cp -r "${PROJECT_ROOT}/exports/" "${ARCHIVE_BUCKET}/migration-backup-$(date +%Y%m%d-%H%M%S)/" || true
-    echo -e "${GREEN}✓ Export bundles safely uploaded to ${ARCHIVE_BUCKET}.${NC}"
+    if gcloud storage cp -r "${PROJECT_ROOT}/exports/" "${ARCHIVE_BUCKET}/migration-backup-$(date +%Y%m%d-%H%M%S)/"; then
+      echo -e "${GREEN}✓ Export bundles safely uploaded to ${ARCHIVE_BUCKET}.${NC}"
+    else
+      echo -e "${RED}✗ ERROR: GCS upload to ${ARCHIVE_BUCKET} failed. Aborting cleanup to prevent local export data loss.${NC}" >&2
+      exit 1
+    fi
   else
-    echo -e "${YELLOW}⚠️ gcloud CLI not found. Skipping GCS upload.${NC}"
+    echo -e "${RED}✗ ERROR: gcloud CLI not found, cannot archive exports to ${ARCHIVE_BUCKET}. Aborting cleanup to prevent data loss.${NC}" >&2
+    exit 1
   fi
 else
   echo -e "\n${BOLD}[1/4] Skipping GCS export archival (no --archive-gcs specified).${NC}"

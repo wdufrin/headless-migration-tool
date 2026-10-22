@@ -231,26 +231,42 @@ export class SessionMigrator {
   public async listSourceSessions(candidateUsers: string[] = []): Promise<ChatSession[]> {
     const env = this.config.source;
     const usersToScan = new Set<string>();
-    const hasExplicitFilter = this.config.options?.userFilter && this.config.options.userFilter.length > 0 && !this.config.options.userFilter.includes('*') && !this.config.options.userFilter.includes('*@*');
+    const rawFilters = (this.config.options?.userFilter || []).map(u => u.replace(/^user:/i, '').trim()).filter(Boolean);
+    const exactUserFilters = rawFilters.filter(u => u.includes('@') && !u.includes('*'));
+    const wildcardFilters = rawFilters.filter(u => u.includes('*') && u !== '*' && u !== '*@*');
+    const matchesWildcards = (email: string): boolean => {
+      if (wildcardFilters.length === 0) return true;
+      const lower = email.toLowerCase();
+      return wildcardFilters.some(pattern => {
+        const regex = new RegExp('^' + pattern.toLowerCase().split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+        return regex.test(lower);
+      });
+    };
+    const hasExplicitExactOnly = exactUserFilters.length > 0 && wildcardFilters.length === 0 && !rawFilters.includes('*') && !rawFilters.includes('*@*');
 
-    if (hasExplicitFilter) {
-      for (const u of this.config.options!.userFilter!) {
-        if (u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
+    if (hasExplicitExactOnly) {
+      for (const u of exactUserFilters) {
+        usersToScan.add(u);
       }
     } else {
+      for (const u of exactUserFilters) {
+        usersToScan.add(u);
+      }
       for (const u of candidateUsers) {
-        if (u.includes('@')) usersToScan.add(u.replace(/^user:/i, '').trim());
+        const clean = u.replace(/^user:/i, '').trim();
+        if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) usersToScan.add(clean);
       }
       if (this.config.identityMapping) {
         for (const k of Object.keys(this.config.identityMapping)) {
-          if (k.includes('@')) usersToScan.add(k.replace(/^user:/i, '').trim());
+          const clean = k.replace(/^user:/i, '').trim();
+          if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) usersToScan.add(clean);
         }
       }
     }
 
-    if (usersToScan.size === 0 && !hasExplicitFilter) {
+    if (usersToScan.size === 0 && !hasExplicitExactOnly) {
       const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
-      if (defaultAdmin) usersToScan.add(defaultAdmin);
+      if (defaultAdmin && matchesWildcards(defaultAdmin)) usersToScan.add(defaultAdmin);
     }
 
     const allSessions: ChatSession[] = [];
@@ -345,7 +361,10 @@ export class SessionMigrator {
     let targetUserId = targetUserOverride;
     if (!targetUserId) {
       const srcUser = session.userPseudoId;
-      const defaultUser = this.config.options?.userFilter?.[0]?.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim();
+      const singleUserFilter =
+        this.config.options?.userFilter?.length === 1 && !this.config.options.userFilter[0].includes('*')
+          ? this.config.options.userFilter[0].replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim()
+          : undefined;
       let cleanSrcUser = srcUser ? srcUser.replace(/^.*\/subject\//i, '').replace(/^user:/i, '').trim() : '';
       try { cleanSrcUser = decodeURIComponent(cleanSrcUser); } catch {}
 
@@ -356,12 +375,14 @@ export class SessionMigrator {
         targetUserId = this.config.identityMapping[cleanSrcUser];
       } else if (srcUser && this.config.identityMapping?.[srcUser]) {
         targetUserId = this.config.identityMapping[srcUser];
-      } else if (cleanSrcUser && cleanSrcUser.includes('@')) {
+      } else if (cleanSrcUser && cleanSrcUser.includes('@') && !cleanSrcUser.includes('*')) {
         targetUserId = cleanSrcUser;
-      } else if (defaultUser && defaultUser.includes('@')) {
-        targetUserId = defaultUser;
+      } else if (singleUserFilter && singleUserFilter.includes('@')) {
+        targetUserId = singleUserFilter;
       } else {
-        targetUserId = process.env.DEFAULT_USER_EMAIL || process.env.ADMIN_EMAIL || 'admin';
+        throw new Error(
+          `Cannot migrate session "${session.displayName || session.name}": owner "${srcUser || 'unknown'}" is an unmapped opaque ID and cannot be safely assigned in a multi-user run.`
+        );
       }
     }
 
