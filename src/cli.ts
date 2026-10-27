@@ -43,8 +43,9 @@ program
   .option('--export-artifacts', 'Export chat attachments and notebook studio artifacts to disk')
   .option('--agent-types <types...>', 'Filter agent migration by type: LOW_CODE, WORKFLOW, ADK, A2A, OTHER, ALL (default: ALL)')
   .option('--exclude-draft-agents', 'Ignore undeployed draft agents ("My Agent" / "My Workflow") and only migrate Private (created) and Published/Shared agents')
-  .option('--publish-agents', 'Publish migrated agents to the organization gallery/catalog')
-  .option('--no-preserve-sharing', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED)')
+  .option('--publish-agents', 'Publish/deploy migrated agents & workflows on target if published in source (default: true)')
+  .option('--no-publish-agents', 'Do not publish/deploy migrated agents & workflows on target (keep in draft state)')
+  .option('--no-preserve-sharing', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED) and IAM policies')
   .option('--users <users...>', 'Filter migration to specific user email(s) or patterns (e.g. *@company.com)')
   .option('--concurrency <number>', 'Maximum parallel worker concurrency (default: 3)')
   .option('--token <token>', 'Explicit Google OAuth Access Token (overrides ADC)')
@@ -112,7 +113,7 @@ program
         };
       }
       if (options.publishAgents !== undefined) {
-        baseConfig.options = { ...baseConfig.options, publishAgents: true };
+        baseConfig.options = { ...baseConfig.options, publishAgents: Boolean(options.publishAgents) };
       }
       if (options.preserveSharing === false) {
         baseConfig.options = { ...baseConfig.options, preserveSharing: false };

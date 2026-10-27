@@ -165,6 +165,8 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       return resp;
     };
 
+    const enginesToScan: string[] = [];
+
     if (token) {
       // 0. Discover users directly from Google Cloud Project IAM Policy
       if (projectId) {
@@ -220,7 +222,6 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
       }
 
       // Determine which engine(s) to scan
-      const enginesToScan: string[] = [];
       if (appId && appId !== 'custom' && appId !== 'all' && scope !== 'all') {
         enginesToScan.push(appId);
       } else if (projectId) {
@@ -445,14 +446,103 @@ discoveryRouter.get(['/users', '/users/discover'], async (req, res) => {
     }
 
     const users = Array.from(userMap.values());
+    let capabilities = undefined;
+    if (req.query.includeCapabilities === 'true' && projectId) {
+      try {
+        const capClient = new DiscoveryEngineClient(authService);
+        const targetEngineId =
+          appId && appId !== 'all' && appId !== 'custom'
+            ? appId
+            : enginesToScan[0] || '';
+        const sampleUserEmail =
+          (req.query.sampleUserEmail as string) ||
+          (users.length > 0 ? users[0].email : undefined);
+        capabilities = await capClient.probeProjectCapabilities(
+          {
+            projectId,
+            appLocation: location,
+            collectionId,
+            appId: targetEngineId
+          },
+          { sampleUserEmail }
+        );
+      } catch (capErr: any) {
+        logger.debug(`Capability probe during user discovery skipped: ${capErr.message}`);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       totalUsers: users.length,
       users,
-      warnings
+      warnings,
+      ...(capabilities ? { capabilities } : {})
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'UserDiscoveryFailed', message: err.message });
+  }
+});
+
+// Project Capability Probe Endpoint (Validates which endpoints/fields are publicly exposed vs allowlist-gated on a project)
+discoveryRouter.get('/capabilities/probe', async (req, res) => {
+  try {
+    const projectId = ((req.query.projectId as string) || process.env.SOURCE_PROJECT_ID || '').trim();
+    const location = ((req.query.location as string) || 'global').trim();
+    const collectionId = ((req.query.collectionId as string) || 'default_collection').trim();
+    let appId = ((req.query.appId as string) || '').trim();
+    const sampleUserEmail = ((req.query.sampleUserEmail as string) || '').trim() || undefined;
+    const sampleNotebookId = ((req.query.sampleNotebookId as string) || '').trim() || undefined;
+
+    if (!projectId) {
+      return res.status(400).json({
+        error: 'MissingProjectId',
+        message: 'projectId query parameter is required to probe project capabilities.'
+      });
+    }
+
+    const saKeyPath =
+      process.env.SERVICE_ACCOUNT_KEY_PATH ||
+      (fs.existsSync('./sa-dwd-key.json') ? './sa-dwd-key.json' : undefined);
+
+    const authService = new GcpAuthService({
+      staticToken: req.accessToken,
+      serviceAccountKeyPath: saKeyPath
+    });
+    const client = new DiscoveryEngineClient(authService);
+
+    if (!appId || appId === 'all' || appId === 'custom') {
+      try {
+        const listed = await client.listEngines({ projectId, appLocation: location, collectionId });
+        if (listed.length > 0) {
+          appId = listed[0].name?.split('/').pop() || listed[0].id || '';
+        } else {
+          appId = '';
+        }
+      } catch {
+        appId = '';
+      }
+    }
+
+    const capabilities = await client.probeProjectCapabilities(
+      {
+        projectId,
+        appLocation: location,
+        collectionId,
+        appId
+      },
+      { sampleUserEmail, sampleNotebookId }
+    );
+
+    return res.status(200).json({
+      success: true,
+      capabilities
+    });
+  } catch (err: any) {
+    logger.warn(`Project capability probe failed for ${req.query.projectId}: ${err.message}`);
+    return res.status(500).json({
+      error: 'CapabilityProbeFailed',
+      message: err.message
+    });
   }
 });
 

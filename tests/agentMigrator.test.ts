@@ -1013,4 +1013,93 @@ describe('AgentMigrator Engine', () => {
       'Please search the knowledge base and use projects/tgt-proj/locations/global/collections/default_collection/engines/enterprise-prod/assistants/default_assistant'
     );
   });
+
+  it('should respect publishAgents: false and preserveSharing: false options on source-published and shared agents', async () => {
+    const sharedPublishedAgent: Agent = {
+      name: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/shared-pub-1',
+      displayName: 'Shared Published Workflow',
+      state: 'ENABLED',
+      sharingConfig: { scope: 'ALL_USERS' },
+      owner: 'alice@fedex.com',
+      workflowAgentDefinition: {
+        draftAgentFlow: { steps: [] },
+        activeRevision: 'projects/fedex-test-project/locations/global/collections/default_collection/engines/test_engine_1/assistants/default_assistant/agents/shared-pub-1/revisions/1'
+      } as any
+    };
+
+    dummyClient.listAgents = vi.fn().mockImplementation(async (env: any) => {
+      if (env.projectId === sourceEnv.projectId) return [sharedPublishedAgent];
+      return [];
+    });
+    dummyClient.getAgentIamPolicy = vi.fn().mockResolvedValue({
+      bindings: [
+        { role: 'roles/discoveryengine.agentOwner', members: ['user:alice@fedex.com'] },
+        { role: 'roles/discoveryengine.agentUser', members: ['user:bob@fedex.com'] }
+      ]
+    });
+    dummyClient.createAgent = vi.fn().mockResolvedValue({
+      name: 'projects/fedex-prod-project/locations/global/collections/default_collection/engines/prod_engine_1/assistants/default_assistant/agents/tgt-shared-pub-1'
+    });
+
+    const publishSpy = vi.fn().mockResolvedValue({});
+    const reviewSpy = vi.fn().mockResolvedValue({});
+    const patchSharingSpy = vi.fn().mockResolvedValue({});
+    const setIamSpy = vi.fn().mockResolvedValue({});
+    dummyClient.publishAgent = publishSpy;
+    dummyClient.requestAgentReview = reviewSpy;
+    dummyClient.patchAgentSharing = patchSharingSpy;
+    dummyClient.setAgentIamPolicy = setIamSpy;
+
+    // Case 1: publishAgents: false -> neither publish nor re-share should run
+    await migrator.migrateAgents(
+      sourceEnv,
+      targetEnv,
+      {
+        dryRun: false,
+        publishAgents: false,
+        preserveSharing: true,
+        userFilter: ['alice@fedex.com'],
+        concurrency: 1
+      },
+      {},
+      {},
+      { 'alice@fedex.com': 'alice@fedex.com', 'bob@fedex.com': 'bob@fedex.com' }
+    );
+
+    expect(publishSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).not.toHaveBeenCalled();
+    expect(patchSharingSpy).not.toHaveBeenCalled();
+    expect(setIamSpy).not.toHaveBeenCalled();
+
+    // Case 2: publishAgents: true, preserveSharing: false -> publish runs, but re-sharing (review, patchSharing, setIam) does NOT run
+    await migrator.migrateAgents(
+      sourceEnv,
+      targetEnv,
+      {
+        dryRun: false,
+        publishAgents: true,
+        preserveSharing: false,
+        userFilter: ['alice@fedex.com'],
+        concurrency: 1
+      },
+      {},
+      {},
+      { 'alice@fedex.com': 'alice@fedex.com', 'bob@fedex.com': 'bob@fedex.com' }
+    );
+
+    expect(publishSpy).toHaveBeenCalledTimes(1);
+    expect(reviewSpy).not.toHaveBeenCalled();
+    expect(patchSharingSpy).not.toHaveBeenCalled();
+    expect(setIamSpy).not.toHaveBeenCalled();
+  });
+
+  it('should default publishAgents and preserveSharing to true and reject non-boolean values in MigrationOptionsSchema (negative test)', async () => {
+    const { MigrationOptionsSchema } = await import('../src/config/configSchema.js');
+    const defaults = MigrationOptionsSchema.parse({});
+    expect(defaults.publishAgents).toBe(true);
+    expect(defaults.preserveSharing).toBe(true);
+    expect(() => MigrationOptionsSchema.parse({ publishAgents: 'yes' as any })).toThrow(/Expected boolean/);
+    expect(() => MigrationOptionsSchema.parse({ preserveSharing: 123 as any })).toThrow(/Expected boolean/);
+  });
 });
+

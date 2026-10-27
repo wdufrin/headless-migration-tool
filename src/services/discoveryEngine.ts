@@ -15,6 +15,7 @@
  */
 
 import { EnvironmentConfig } from '../types/migration.js';
+export type { EnvironmentConfig };
 import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, ConnectorCollection, AppEngine, IamPolicy, Memory } from '../types/index.js';
 import { getSafeDiscoveryEngineUrl, validateResourceId } from '../security/validator.js';
 import { GcpAuthService } from './gcpAuth.js';
@@ -26,6 +27,35 @@ export interface DiscoveryEngineClientOptions {
   requestTimeoutMs?: number;
   maxRetries?: number;
   retryBaseDelayMs?: number;
+}
+
+export type CapabilityStatus = 'SUPPORTED' | 'RESTRICTED' | 'EXTERNAL_LINKS_ONLY' | 'UNKNOWN' | 'ERROR';
+
+export interface CapabilityCheckResult {
+  status: CapabilityStatus;
+  visibilityFlag?: string;
+  flag?: string;
+  reason?: string;
+  httpStatus?: number;
+}
+
+export interface ProjectCapabilities {
+  projectId: string;
+  appLocation: string;
+  appId?: string;
+  probedAt: string;
+  agents: CapabilityCheckResult;
+  sessions: CapabilityCheckResult;
+  skills: CapabilityCheckResult;
+  memories: CapabilityCheckResult;
+  engineUserData: CapabilityCheckResult;
+  notebooks: {
+    containersAndLinks: CapabilityCheckResult;
+    uploadedFileContent: CapabilityCheckResult;
+    notes: CapabilityCheckResult;
+    artifacts: CapabilityCheckResult;
+    sharingRoster: CapabilityCheckResult;
+  };
 }
 
 export class DiscoveryEngineClient {
@@ -319,6 +349,12 @@ export class DiscoveryEngineClient {
   }
 
   async ensureAgentExecutionConsent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<void> {
+    if (this.isMethodUnexposedOnProject(env.projectId, 'engineUserData')) {
+      throw new Error(
+        `UserService (:getEngineUserData / :updateEngineUserData) is restricted (TRUSTED_TESTER, GOOGLE_INTERNAL) on project "${env.projectId}". ` +
+          `Workflow Agent was created in DRAFT state; the user must open the agent once in the Gemini Enterprise UI to grant execution consent.`
+      );
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     let resolvedAgentName = agentName;
     const projectSegment = agentName.split('/')[1] || '';
@@ -344,6 +380,13 @@ export class DiscoveryEngineClient {
         forUserEmail
       );
     } catch (getErr: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(getErr)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'engineUserData');
+        throw new Error(
+          `UserService (:getEngineUserData / :updateEngineUserData) is restricted (TRUSTED_TESTER, GOOGLE_INTERNAL) on project "${env.projectId}". ` +
+            `Workflow Agent was created in DRAFT state; the user must open the agent once in the Gemini Enterprise UI to grant execution consent.`
+        );
+      }
       const initRes = await this.request<any>(
         `${baseUrl}/v1alpha/${engineName}:initializeEngineUserData`,
         'POST',
@@ -626,10 +669,15 @@ export class DiscoveryEngineClient {
     set.add(methodKey);
   }
 
-  private static isMethodNotFoundError(err: any): boolean {
+  public static isMethodNotFoundError(err: any): boolean {
+    const msg = String(err?.message || '').toLowerCase();
+    if (err?.status === 501) return true;
     return (
       err?.status === 404 &&
-      String(err?.message || '').toLowerCase().includes('method not found')
+      (msg.includes('method not found') ||
+        msg.includes('unimplemented') ||
+        msg.includes('was not found on this server') ||
+        msg.includes('<title>error 404 (not found)'))
     );
   }
 
@@ -1163,19 +1211,32 @@ export class DiscoveryEngineClient {
   }
 
   async listMemories(env: EnvironmentConfig, forUserEmail?: string): Promise<Memory[]> {
+    if (this.isMethodUnexposedOnProject(env.projectId, 'memories')) {
+      return [];
+    }
     const projectNum = await this.resolveProjectNumber(env);
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
-    const memories = await this.listAllPages<Memory>(
-      (pageToken) => {
-        const query = new URLSearchParams({ pageSize: '100' });
-        if (pageToken) query.set('pageToken', pageToken);
-        return `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/memories?${query.toString()}`;
-      },
-      (res) => res.memories,
-      env.projectId,
-      forUserEmail
-    );
+    let memories: Memory[] = [];
+    try {
+      memories = await this.listAllPages<Memory>(
+        (pageToken) => {
+          const query = new URLSearchParams({ pageSize: '100' });
+          if (pageToken) query.set('pageToken', pageToken);
+          return `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/memories?${query.toString()}`;
+        },
+        (res) => res.memories,
+        env.projectId,
+        forUserEmail
+      );
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'memories');
+        logger.debug(`KnowledgeGraphService (memories) is not publicly exposed on project "${env.projectId}" (GOOGLE_INTERNAL); skipping memories calls.`);
+        return [];
+      }
+      throw err;
+    }
 
     if (forUserEmail) {
       for (const m of memories) {
@@ -1189,31 +1250,55 @@ export class DiscoveryEngineClient {
   }
 
   async generateMemories(env: EnvironmentConfig, text: string, forUserEmail?: string): Promise<any> {
+    if (this.isMethodUnexposedOnProject(env.projectId, 'memories')) {
+      return {};
+    }
     const projectNum = await this.resolveProjectNumber(env);
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const collection = env.collectionId || 'default_collection';
     const url = `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}:generateMemories`;
-    return this.request<any>(
-      url,
-      'POST',
-      { text },
-      env.projectId,
-      undefined,
-      forUserEmail
-    );
+    try {
+      return await this.request<any>(
+        url,
+        'POST',
+        { text },
+        env.projectId,
+        undefined,
+        forUserEmail
+      );
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'memories');
+        logger.debug(`KnowledgeGraphService (:generateMemories) is not publicly exposed on project "${env.projectId}" (GOOGLE_INTERNAL); skipping memory generation.`);
+        return {};
+      }
+      throw err;
+    }
   }
 
   async deleteMemory(memoryName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
+    if (this.isMethodUnexposedOnProject(env.projectId, 'memories')) {
+      return {};
+    }
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = memoryName.startsWith('http') ? memoryName : `${baseUrl}/v1alpha/${memoryName}`;
-    return this.request<any>(
-      url,
-      'DELETE',
-      undefined,
-      env.projectId,
-      undefined,
-      forUserEmail
-    );
+    try {
+      return await this.request<any>(
+        url,
+        'DELETE',
+        undefined,
+        env.projectId,
+        undefined,
+        forUserEmail
+      );
+    } catch (err: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+        this.markMethodUnexposedOnProject(env.projectId, 'memories');
+        logger.debug(`KnowledgeGraphService (DELETE /memories) is not publicly exposed on project "${env.projectId}" (GOOGLE_INTERNAL); skipping memory deletion.`);
+        return {};
+      }
+      throw err;
+    }
   }
 
   private projectIamPolicyCache: Map<string, IamPolicy | null> = new Map();
@@ -1520,6 +1605,372 @@ export class DiscoveryEngineClient {
       }
       throw err;
     }
+  }
+
+  /**
+   * Probes the live Discovery Engine & Agent Registry endpoints on `env.projectId`
+   * to determine which migration capabilities are publicly exposed vs restricted by
+   * Google API visibility flags (`GOOGLE_INTERNAL`, `TRUSTED_TESTER`, `NLME_API_USER`,
+   * `NLME_ARTIFACT_API_USER`) before presenting migration options to the user.
+   */
+  async probeProjectCapabilities(
+    env: EnvironmentConfig,
+    options?: { sampleUserEmail?: string; sampleNotebookId?: string }
+  ): Promise<ProjectCapabilities> {
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const collection = env.collectionId || 'default_collection';
+    const assistant = env.assistantId || 'default_assistant';
+    const sampleUser = options?.sampleUserEmail?.trim() || undefined;
+    const hasEngine = Boolean(env.appId && env.appId.trim());
+
+    const probeRpcRoute = async (
+      fn: () => Promise<any>,
+      visibilityFlag: string,
+      supportedReason: string,
+      restrictedReason: string,
+      methodCacheKey?: string
+    ): Promise<CapabilityCheckResult> => {
+      try {
+        await fn();
+        return {
+          status: 'SUPPORTED',
+          reason: supportedReason,
+          visibilityFlag
+        };
+      } catch (err: any) {
+        if (DiscoveryEngineClient.isMethodNotFoundError(err)) {
+          if (methodCacheKey) {
+            this.markMethodUnexposedOnProject(env.projectId, methodCacheKey);
+          }
+          return {
+            status: 'RESTRICTED',
+            reason: restrictedReason,
+            visibilityFlag,
+            httpStatus: err?.status || 404
+          };
+        }
+        // If ESF routed the call past the visibility filter and returned a domain error
+        // (e.g. 400 Invalid Argument or 404 Resource Not Found on a synthetic probe ID),
+        // the RPC method itself IS exposed on this project.
+        const msg = String(err?.message || '');
+        if (
+          err?.status === 400 ||
+          (err?.status === 404 && !DiscoveryEngineClient.isMethodNotFoundError(err))
+        ) {
+          return {
+            status: 'SUPPORTED',
+            reason: supportedReason,
+            visibilityFlag,
+            httpStatus: err?.status
+          };
+        }
+        return {
+          status: 'ERROR',
+          reason: `Probe returned HTTP ${err?.status || 'ERR'}: ${msg.slice(0, 180)}`,
+          visibilityFlag,
+          httpStatus: err?.status
+        };
+      }
+    };
+
+    const projectNum = hasEngine ? await this.resolveProjectNumber(env) : env.projectId;
+
+    // 1. Agents (AgentService - bypassed via skip_filters: [VISIBILITY_FILTER])
+    const agentsPromise: Promise<CapabilityCheckResult> = hasEngine
+      ? probeRpcRoute(
+          () =>
+            this.request<any>(
+              `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/assistants/${assistant}/agents?pageSize=1`,
+              'GET',
+              undefined,
+              env.projectId
+            ),
+          'PUBLIC (skip_filters: VISIBILITY_FILTER)',
+          'Custom Agents (AgentService) are exposed on this project.',
+          'AgentService is not exposed on this project.'
+        )
+      : Promise.resolve({
+          status: 'SUPPORTED',
+          reason: 'No Gemini Enterprise Engine ID specified (Agents require an Engine ID).',
+          visibilityFlag: 'PUBLIC (skip_filters: VISIBILITY_FILTER)'
+        });
+
+    // 2. Chat Sessions (SessionService - Public v1alpha)
+    const sessionsPromise: Promise<CapabilityCheckResult> = hasEngine
+      ? probeRpcRoute(
+          () =>
+            this.request<any>(
+              `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/sessions?pageSize=1`,
+              'GET',
+              undefined,
+              env.projectId,
+              undefined,
+              sampleUser
+            ),
+          'PUBLIC',
+          'Chat Sessions & Conversation Turns (SessionService) are exposed on this project.',
+          'SessionService is not exposed on this project.'
+        )
+      : Promise.resolve({
+          status: 'SUPPORTED',
+          reason: 'No Gemini Enterprise Engine ID specified (Sessions require an Engine ID).',
+          visibilityFlag: 'PUBLIC'
+        });
+
+    // 3. Skills (Agent Registry v1alpha / SkillRegistryService)
+    const skillsPromise: Promise<CapabilityCheckResult> = (async () => {
+      try {
+        await this.request<any>(
+          `https://agentregistry.googleapis.com/v1alpha/projects/${encodeURIComponent(env.projectId)}/locations/global/skills?pageSize=1`,
+          'GET',
+          undefined,
+          env.projectId
+        );
+        return {
+          status: 'SUPPORTED',
+          reason: 'Cloud Agent Registry Skills API (agentregistry.googleapis.com) is enabled and exposed.',
+          visibilityFlag: 'PUBLIC'
+        };
+      } catch (arErr: any) {
+        if (hasEngine) {
+          return probeRpcRoute(
+            () =>
+              this.request<any>(
+                `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/skills?pageSize=1`,
+                'GET',
+                undefined,
+                env.projectId
+              ),
+            'PUBLIC (skip_filters: VISIBILITY_FILTER)',
+            'Discovery Engine SkillRegistryService is exposed on this project.',
+            'Neither Cloud Agent Registry API nor SkillRegistryService is available on this project.'
+          );
+        }
+        return {
+          status: DiscoveryEngineClient.isMethodNotFoundError(arErr) ? 'RESTRICTED' : 'ERROR',
+          reason: `Cloud Agent Registry API check failed (${arErr?.status || 'ERR'}): ${String(arErr?.message || '').slice(0, 160)}`,
+          visibilityFlag: 'PUBLIC',
+          httpStatus: arErr?.status
+        };
+      }
+    })();
+
+    // 4. Personal Memories (KnowledgeGraphService - gated by GOOGLE_INTERNAL)
+    const memoriesPromise: Promise<CapabilityCheckResult> = hasEngine
+      ? probeRpcRoute(
+          () =>
+            this.request<any>(
+              `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/memories?pageSize=1`,
+              'GET',
+              undefined,
+              env.projectId,
+              undefined,
+              sampleUser
+            ),
+          'GOOGLE_INTERNAL',
+          'Personal Memories (KnowledgeGraphService) are unlocked on this project.',
+          'Gated by GOOGLE_INTERNAL in KnowledgeGraphService (404 Method not found on standard customer projects).',
+          'memories'
+        )
+      : Promise.resolve({
+          status: 'RESTRICTED',
+          reason: 'Personal Memories require a Gemini Enterprise Engine ID and GOOGLE_INTERNAL project allowlisting.',
+          visibilityFlag: 'GOOGLE_INTERNAL'
+        });
+
+    // 5. Engine User Data Consent (UserService - gated by TRUSTED_TESTER, GOOGLE_INTERNAL)
+    const engineUserDataPromise: Promise<CapabilityCheckResult> = hasEngine
+      ? probeRpcRoute(
+          () =>
+            this.request<any>(
+              `${baseUrl}/v1alpha/projects/${projectNum}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}:getEngineUserData`,
+              'POST',
+              {},
+              env.projectId,
+              undefined,
+              sampleUser
+            ),
+          'TRUSTED_TESTER, GOOGLE_INTERNAL',
+          'UserService (:getEngineUserData / :updateEngineUserData) is unlocked on this project.',
+          'Gated by TRUSTED_TESTER / GOOGLE_INTERNAL in UserService (404 Method not found on standard customer projects).',
+          'engineUserData'
+        )
+      : Promise.resolve({
+          status: 'RESTRICTED',
+          reason: 'UserService EngineUserData requires an Engine ID and TRUSTED_TESTER / GOOGLE_INTERNAL allowlisting.',
+          visibilityFlag: 'TRUSTED_TESTER, GOOGLE_INTERNAL'
+        });
+
+    // 6. NotebookLM sub-capabilities
+    let discoveredNotebookId = options?.sampleNotebookId?.trim() || '';
+    let containersAndLinks: CapabilityCheckResult;
+    try {
+      const nbRes = await this.request<{ notebooks?: Notebook[] }>(
+        `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks:listRecentlyViewed?pageSize=5`,
+        'GET',
+        undefined,
+        env.projectId,
+        undefined,
+        sampleUser
+      );
+      const list = Array.isArray(nbRes?.notebooks) ? nbRes.notebooks : [];
+      if (!discoveredNotebookId && list.length > 0) {
+        const first = list[0];
+        discoveredNotebookId = first.notebookId || (first.name ? first.name.split('/').pop() || '' : '');
+      }
+      containersAndLinks = {
+        status: 'SUPPORTED',
+        reason: 'Notebook containers & external reference links (Google Drive, Web URLs, YouTube, Agentspace DataStore) are supported.',
+        visibilityFlag: 'PUBLIC'
+      };
+    } catch (nbErr: any) {
+      if (DiscoveryEngineClient.isMethodNotFoundError(nbErr)) {
+        containersAndLinks = {
+          status: 'RESTRICTED',
+          reason: 'NotebookService (notebooks:listRecentlyViewed) is not exposed on this project.',
+          visibilityFlag: 'PUBLIC',
+          httpStatus: nbErr?.status || 404
+        };
+      } else {
+        // Even if listRecentlyViewed requires a user token (e.g. 400/403 when called without sampleUser),
+        // the NotebookService RPC route itself is publicly exposed.
+        containersAndLinks = {
+          status: 'SUPPORTED',
+          reason: 'Notebook containers & external reference links (Google Drive, Web URLs, YouTube, Agentspace DataStore) are supported.',
+          visibilityFlag: 'PUBLIC',
+          httpStatus: nbErr?.status
+        };
+      }
+    }
+
+    const probeNotebookId = discoveredNotebookId || '_capability_probe_';
+
+    const [agents, sessions, skills, memories, engineUserData, notes, artifacts] = await Promise.all([
+      agentsPromise,
+      sessionsPromise,
+      skillsPromise,
+      memoriesPromise,
+      engineUserDataPromise,
+      probeRpcRoute(
+        () =>
+          this.request<any>(
+            `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${probeNotebookId}/notes:batchGet`,
+            'GET',
+            undefined,
+            env.projectId,
+            undefined,
+            sampleUser
+          ),
+        'GOOGLE_INTERNAL, NLME_API_USER',
+        'NotebookLM Pinned Notes (NoteService) are unlocked on this project.',
+        'Gated by GOOGLE_INTERNAL / NLME_API_USER in NoteService (404 Method not found on standard customer projects).',
+        'notes'
+      ),
+      probeRpcRoute(
+        () =>
+          this.request<any>(
+            `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${probeNotebookId}/artifacts?pageSize=1`,
+            'GET',
+            undefined,
+            env.projectId,
+            undefined,
+            sampleUser
+          ),
+        'GOOGLE_INTERNAL, NLME_ARTIFACT_API_USER',
+        'NotebookLM Studio Artifacts (ArtifactService) are unlocked on this project.',
+        'Gated by GOOGLE_INTERNAL / NLME_ARTIFACT_API_USER in ArtifactService (404 Method not found on standard customer projects).',
+        'artifacts'
+      )
+    ]);
+
+    // Check GOOGLE_INTERNAL proto fields on Notebook & Source if a real sample notebook is available
+    let observedSharingRoster = false;
+    let observedTailwindDoc = false;
+    let inspectedUploadedSource = false;
+
+    if (discoveredNotebookId) {
+      try {
+        const fullNb = await this.getNotebook(discoveredNotebookId, env, sampleUser);
+        if (Array.isArray(fullNb?.userInfoAndRole) && fullNb.userInfoAndRole.length > 0) {
+          observedSharingRoster = true;
+        }
+        const sources = Array.isArray(fullNb?.sources) ? fullNb.sources : [];
+        const uploadedCandidate = sources.find((s) => {
+          const meta = s?.metadata || {};
+          return !meta.googleDocsMetadata && !meta.webScrapeMetadata && !meta.youtubeMetadata && !meta.agentspaceMetadata;
+        });
+        if (uploadedCandidate) {
+          const rawSourceId =
+            uploadedCandidate.sourceId?.id ||
+            (typeof uploadedCandidate.sourceId === 'string' ? uploadedCandidate.sourceId : '') ||
+            (uploadedCandidate.name ? uploadedCandidate.name.split('/').pop() || '' : '');
+          if (rawSourceId) {
+            inspectedUploadedSource = true;
+            const fullSource = await this.getNotebookSource(discoveredNotebookId, rawSourceId, env, sampleUser);
+            if (
+              fullSource?.tailwindDoc?.plainText ||
+              fullSource?.tailwindDoc?.markdownString ||
+              (fullSource as any)?.plainText ||
+              (fullSource as any)?.markdownString
+            ) {
+              observedTailwindDoc = true;
+            }
+          }
+        }
+      } catch (inspectErr: any) {
+        logger.debug(`Optional deep notebook field inspection skipped on "${env.projectId}": ${inspectErr.message}`);
+      }
+    }
+
+    const internalVisibilityUnlocked =
+      memories.status === 'SUPPORTED' || (notes.status === 'SUPPORTED' && artifacts.status === 'SUPPORTED');
+
+    const uploadedFileContent: CapabilityCheckResult =
+      observedTailwindDoc || (!inspectedUploadedSource && internalVisibilityUnlocked)
+        ? {
+            status: 'SUPPORTED',
+            reason: 'Uploaded file body field (Source.tailwind_doc) is accessible on this project.',
+            visibilityFlag: 'GOOGLE_INTERNAL'
+          }
+        : {
+            status: 'RESTRICTED',
+            reason:
+              'Gated by GOOGLE_INTERNAL field visibility on Source.tailwind_doc; ESF strips raw text of uploaded PDFs/TXTs/Audio/Pasted Text on customer projects.',
+            visibilityFlag: 'GOOGLE_INTERNAL'
+          };
+
+    const sharingRoster: CapabilityCheckResult =
+      observedSharingRoster || internalVisibilityUnlocked
+        ? {
+            status: 'SUPPORTED',
+            reason: 'Notebook sharing ACL roster (Notebook.user_info_and_role) is accessible and POST :share is public.',
+            visibilityFlag: 'GOOGLE_INTERNAL'
+          }
+        : {
+            status: 'RESTRICTED',
+            reason:
+              'POST :share is public, but reading existing shared ACLs (Notebook.user_info_and_role) is gated by GOOGLE_INTERNAL field visibility unless supplied via --share-map.',
+            visibilityFlag: 'GOOGLE_INTERNAL'
+          };
+
+    return {
+      projectId: env.projectId,
+      appLocation: env.appLocation,
+      appId: env.appId,
+      probedAt: new Date().toISOString(),
+      agents,
+      sessions,
+      skills,
+      memories,
+      engineUserData,
+      notebooks: {
+        containersAndLinks,
+        uploadedFileContent,
+        notes,
+        artifacts,
+        sharingRoster
+      }
+    };
   }
 }
 

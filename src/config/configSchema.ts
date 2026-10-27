@@ -44,7 +44,7 @@ export const MigrationOptionsSchema = z.object({
   userFilter: z.array(z.string()).default([]),
   preserveOwnership: z.boolean().default(true),
   preserveSharing: z.boolean().default(true),
-  publishAgents: z.boolean().default(false),
+  publishAgents: z.boolean().default(true),
   prefixReplacements: z.record(z.string()).default({}),
   allowOverwrite: z.boolean().default(false),
   resumeFrom: z.string().optional(),

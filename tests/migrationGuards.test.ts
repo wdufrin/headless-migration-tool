@@ -217,4 +217,63 @@ describe('Migration launch guards are wired into the page', () => {
     expect(liveGuardIndex).toBeGreaterThan(-1);
     expect(liveGuardIndex).toBeLessThan(confirmIndex);
   });
+
+  it('wires optPublishAgents and optPreserveSharing checkboxes and disables re-sharing when publishing is unchecked', () => {
+    const onOptAgentsSource = extractFunctionSource(html, 'onOptAgentsChange');
+    const onPublishSource = extractFunctionSource(html, 'onPublishAgentsChange');
+
+    const elements: Record<string, { checked: boolean; disabled: boolean; classList: { toggle: (cls: string, force?: boolean) => void; classes: Set<string> } }> = {};
+    for (const id of [
+      'optAgents',
+      'optExcludeDraftAgents',
+      'optExcludeDraftAgentsRow',
+      'optPublishAgents',
+      'optPublishAgentsRow',
+      'optPreserveSharing',
+      'optPreserveSharingRow'
+    ]) {
+      const classes = new Set<string>();
+      elements[id] = {
+        checked: true,
+        disabled: false,
+        classList: {
+          classes,
+          toggle(cls: string, force?: boolean) {
+            if (force) classes.add(cls);
+            else classes.delete(cls);
+          }
+        }
+      };
+    }
+
+    const docStub = {
+      getElementById: (id: string) => elements[id] || null
+    };
+
+    // eslint-disable-next-line no-new-func
+    const { onOptAgentsChange, onPublishAgentsChange } = new Function(
+      'document',
+      `${onPublishSource}\n${onOptAgentsSource}\nreturn { onOptAgentsChange, onPublishAgentsChange };`
+    )(docStub);
+
+    // 1. Unchecking Publish disables Re-Share while keeping Migrate Agents active
+    elements.optPublishAgents.checked = false;
+    onPublishAgentsChange();
+    expect(elements.optPreserveSharing.disabled).toBe(true);
+    expect(elements.optPreserveSharingRow.classList.classes.has('opacity-50')).toBe(true);
+
+    // 2. Re-checking Publish re-enables Re-Share
+    elements.optPublishAgents.checked = true;
+    onPublishAgentsChange();
+    expect(elements.optPreserveSharing.disabled).toBe(false);
+    expect(elements.optPreserveSharingRow.classList.classes.has('opacity-50')).toBe(false);
+
+    // 3. Unchecking Migrate Agents disables Exclude Drafts, Publish, and Re-Share
+    elements.optAgents.checked = false;
+    onOptAgentsChange();
+    expect(elements.optExcludeDraftAgents.disabled).toBe(true);
+    expect(elements.optPublishAgents.disabled).toBe(true);
+    expect(elements.optPreserveSharing.disabled).toBe(true);
+  });
 });
+

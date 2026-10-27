@@ -87,7 +87,7 @@ export function loadConfigFromEnv(): Partial<ValidatedMigrationConfig> {
       userFilter: process.env.USER_FILTER ? process.env.USER_FILTER.split(',').map(s => s.trim()) : [],
       preserveOwnership: process.env.PRESERVE_OWNERSHIP !== 'false',
       preserveSharing: process.env.PRESERVE_SHARING !== 'false',
-      publishAgents: process.env.PUBLISH_AGENTS === 'true',
+      publishAgents: process.env.PUBLISH_AGENTS !== 'false',
       prefixReplacements: {},
       allowOverwrite: process.env.ALLOW_OVERWRITE === 'true',
       resumeFrom: process.env.RESUME_FROM || undefined,

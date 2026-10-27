@@ -477,25 +477,40 @@
                   </div>
                 </div>
               </div>
-              
+              <!-- Source Project Capability Probe Banner -->
+              <div id="projectCapabilitiesBanner" class="mb-3 p-2.5 rounded-lg bg-slate-900/90 border border-slate-700/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+                <div id="projectCapabilitiesSummary" class="text-slate-300 flex items-center gap-2 flex-wrap">
+                  <span class="text-indigo-400">🛡️</span>
+                  <span><strong>Project Capability Gate:</strong> Probes your Source Project for Google API visibility flags (<code class="text-[10px] text-amber-300">GOOGLE_INTERNAL</code>, <code class="text-[10px] text-amber-300">NLME_API_USER</code>) and disables unexposed options automatically.</span>
+                </div>
+                <button type="button" id="btnProbeCapabilities" onclick="probeSourceProjectCapabilities()" class="shrink-0 px-2.5 py-1 rounded bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/70 font-medium text-[11px] transition flex items-center gap-1.5">
+                  <span id="probeCapabilitiesSpinner" class="hidden animate-spin">⏳</span>
+                  <span>🔍 Validate Project Capabilities</span>
+                </button>
+              </div>
+
               <div id="sec-scope-config" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <!-- Checkbox toggles -->
                 <div class="space-y-2.5">
-                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                  <label id="optNotebooksRow" class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optNotebooks" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
                     <div>
                       <span class="font-medium text-white flex items-center gap-1.5 flex-wrap">
                         <span>📓 Migrate Notebooks & Sources</span>
-                        <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Sources: Experimental</span>
+                        <span id="optNotebooksBadge" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Containers + External Links</span>
                       </span>
-                      <span class="block text-[10px] text-gray-400">Migrates user notebooks &amp; sources <span class="text-amber-400/90">(Source content extraction is experimental &amp; strips formatting)</span></span>
+                      <span id="optNotebooksDesc" class="block text-[10px] text-gray-400">Migrates notebook containers &amp; external reference links (Drive, Web URLs, YouTube, DataStore). <span class="text-amber-400/90">Uploaded file bodies &amp; pinned notes require Google allowlisting.</span></span>
+                      <div id="optNotebooksSubCapabilities" class="hidden mt-1 flex flex-wrap gap-1"></div>
                     </div>
                   </label>
                   <div class="space-y-1.5">
-                    <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <label id="optAgentsRow" class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                       <input type="checkbox" id="optAgents" checked onchange="onOptAgentsChange()" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-600 focus:ring-indigo-500">
                       <div>
-                        <span class="font-medium text-white">🤖 Migrate Agents & Workflows</span>
+                        <span class="font-medium text-white flex items-center gap-1.5 flex-wrap">
+                          <span>🤖 Migrate Agents & Workflows</span>
+                          <span id="optAgentsBadge" class="hidden text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"></span>
+                        </span>
                         <span class="block text-[10px] text-gray-400">Transfers agent definitions, instructions, grounding data connectors & assistant configs</span>
                       </div>
                     </label>
@@ -506,34 +521,57 @@
                         <span class="block text-[10px] text-gray-400">Skips unsaved/undeployed source drafts (e.g. "My Agent") and only migrates created private & published agents</span>
                       </div>
                     </label>
+                    <label id="optPublishAgentsRow" class="flex items-start space-x-2 text-xs text-gray-300 cursor-pointer ml-5 pl-2.5 border-l border-indigo-500/40">
+                      <input type="checkbox" id="optPublishAgents" checked onchange="onPublishAgentsChange()" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-500 focus:ring-indigo-500">
+                      <div>
+                        <span class="font-medium text-indigo-300">🚀 Publish / Deploy Agents & Workflows</span>
+                        <span class="block text-[10px] text-gray-400">Publishes/deploys migrated agents &amp; workflows on target if they were published/deployed in source (keeps source drafts in draft)</span>
+                      </div>
+                    </label>
+                    <label id="optPreserveSharingRow" class="flex items-start space-x-2 text-xs text-gray-300 cursor-pointer ml-5 pl-2.5 border-l border-indigo-500/40">
+                      <input type="checkbox" id="optPreserveSharing" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-indigo-500 focus:ring-indigo-500">
+                      <div>
+                        <span class="font-medium text-indigo-300">🔗 Re-Share Published Agents & Workflows</span>
+                        <span class="block text-[10px] text-gray-400">Replicates source sharing scope (Organization / Restricted) and IAM permissions for published agents &amp; workflows</span>
+                      </div>
+                    </label>
                   </div>
-                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                  <label id="optSkillsRow" class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optSkills" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-blue-500">
                     <div>
                       <span class="font-medium text-blue-300 flex items-center gap-1.5 flex-wrap">
                         <span>🎯 Migrate Skills (Agent Registry)</span>
-                        <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Experimental</span>
+                        <span id="optSkillsBadge" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Experimental</span>
                       </span>
-                      <span class="block text-[10px] text-gray-400">Directly migrates enterprise and user skills between cloud registries <span class="text-amber-400/90">(Experimental — may not work for everyone)</span></span>
+                      <span id="optSkillsDesc" class="block text-[10px] text-gray-400">Directly migrates enterprise and user skills between cloud registries <span class="text-amber-400/90">(Experimental — may not work for everyone)</span></span>
                     </div>
                   </label>
-                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                  <label id="optSessionsRow" class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optSessions" checked class="rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
-                    <span class="font-medium text-cyan-300">💬 Migrate Multi-User Chat History</span>
+                    <span class="font-medium text-cyan-300 flex items-center gap-1.5 flex-wrap">
+                      <span>💬 Migrate Multi-User Chat History</span>
+                      <span id="optSessionsBadge" class="hidden text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"></span>
+                    </span>
                   </label>
-                  <label class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                  <label id="optMemoriesRow" class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optMemories" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-emerald-500">
                     <div>
                       <span class="font-medium text-emerald-300 flex items-center gap-1.5 flex-wrap">
                         <span>🧠 Migrate User Memories & Facts</span>
-                        <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Experimental</span>
+                        <span id="optMemoriesBadge" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Allowlist-Gated</span>
                       </span>
-                      <span class="block text-[10px] text-gray-400">Transfers personalized facts and profile preferences <span class="text-amber-400/90">(Experimental — may not work for everyone)</span></span>
+                      <span id="optMemoriesDesc" class="block text-[10px] text-gray-400">Transfers personalized facts and profile preferences <span class="text-amber-400/90">(Requires GOOGLE_INTERNAL visibility allowlisting on KnowledgeGraphService)</span></span>
                     </div>
                   </label>
-                  <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" id="optArtifacts" checked class="rounded bg-gray-800 border-gray-700 text-purple-500 focus:ring-purple-500">
-                    <span class="font-medium text-purple-300">🎨 Export & Archive User Artifacts (Audio/Canvas)</span>
+                  <label id="optArtifactsRow" class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="checkbox" id="optArtifacts" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-purple-500 focus:ring-purple-500">
+                    <div>
+                      <span class="font-medium text-purple-300 flex items-center gap-1.5 flex-wrap">
+                        <span>🎨 Export & Archive User Artifacts (Audio/Canvas)</span>
+                        <span id="optArtifactsBadge" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase tracking-wider">Allowlist-Gated</span>
+                      </span>
+                      <span id="optArtifactsDesc" class="block text-[10px] text-gray-400">Exports NotebookLM Studio Audio Overviews &amp; Study Guides <span class="text-amber-400/90">(Requires NLME_ARTIFACT_API_USER allowlisting on ArtifactService)</span></span>
+                    </div>
                   </label>
                   <label class="flex items-start space-x-2 text-sm text-gray-500 cursor-not-allowed opacity-75" title="Gemini Enterprise Project migrations are currently a Work in Progress (WIP)">
                     <input type="checkbox" id="optProjects" disabled class="mt-0.5 rounded bg-gray-900 border-gray-700 text-gray-600 cursor-not-allowed">
@@ -1836,10 +1874,20 @@
                         <span class="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 uppercase">Exp</span>
                       </span>
                     </label>
-                    <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
-                      <input type="checkbox" id="singleOptAgents" checked class="rounded bg-gray-800 border-gray-700 text-indigo-600">
-                      <span>🤖 Agents & Workflows</span>
-                    </label>
+                    <div class="space-y-1">
+                      <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                        <input type="checkbox" id="singleOptAgents" checked onchange="onSingleOptAgentsChange()" class="rounded bg-gray-800 border-gray-700 text-indigo-600">
+                        <span>🤖 Agents & Workflows</span>
+                      </label>
+                      <label id="singleOptPublishAgentsRow" class="flex items-center space-x-1.5 text-[11px] text-indigo-300 cursor-pointer ml-4 pl-2 border-l border-indigo-500/40">
+                        <input type="checkbox" id="singleOptPublishAgents" checked onchange="onSingleOptAgentsChange()" class="rounded bg-gray-800 border-gray-700 text-indigo-500">
+                        <span>🚀 Publish / Deploy</span>
+                      </label>
+                      <label id="singleOptPreserveSharingRow" class="flex items-center space-x-1.5 text-[11px] text-indigo-300 cursor-pointer ml-4 pl-2 border-l border-indigo-500/40">
+                        <input type="checkbox" id="singleOptPreserveSharing" checked class="rounded bg-gray-800 border-gray-700 text-indigo-500">
+                        <span>🔗 Re-Share</span>
+                      </label>
+                    </div>
                     <label class="flex items-center space-x-2 text-gray-300 cursor-pointer">
                       <input type="checkbox" id="singleOptSessions" checked class="rounded bg-gray-800 border-gray-700 text-cyan-500">
                       <span>💬 Chat Sessions</span>
@@ -9095,7 +9143,7 @@ ${projectIamBlock}`;
       if (btnAll) btnAll.disabled = true;
       if (spinner) spinner.classList.remove('hidden');
 
-      let queryParams = `projectId=${encodeURIComponent(srcProj)}&location=${encodeURIComponent(srcLoc)}`;
+      let queryParams = `projectId=${encodeURIComponent(srcProj)}&location=${encodeURIComponent(srcLoc)}&includeCapabilities=true`;
       if (forceScope === 'all') {
         queryParams += '&scope=all';
       } else if (forceScope === 'single' && srcApp) {
@@ -9151,6 +9199,10 @@ ${projectIamBlock}`;
           }
         }
 
+        if (data.capabilities) {
+          applyProjectCapabilities(data.capabilities);
+        }
+
         renderUserSelectionTable();
         if (typeof previewAutoMapping === 'function' && getActiveDomainRules().length > 0) {
           previewAutoMapping();
@@ -9160,6 +9212,183 @@ ${projectIamBlock}`;
       } finally {
         if (btn) btn.disabled = false;
         if (btnAll) btnAll.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+      }
+    }
+
+    let lastProbedCapabilities = null;
+
+    function updateOptionCapabilityState(checkboxId, rowId, badgeId, descId, checkResult, restrictedTitle, supportedBadgeText) {
+      const cb = document.getElementById(checkboxId);
+      const row = document.getElementById(rowId);
+      const badge = document.getElementById(badgeId);
+      const desc = document.getElementById(descId);
+      if (!cb || !checkResult) return;
+
+      if (checkResult.status === 'RESTRICTED') {
+        cb.checked = false;
+        cb.disabled = true;
+        if (row) {
+          row.classList.add('opacity-60', 'cursor-not-allowed');
+          row.classList.remove('cursor-pointer');
+          row.title = checkResult.reason || restrictedTitle || 'Restricted on this project by Google API visibility flags';
+        }
+        if (badge) {
+          badge.classList.remove('hidden', 'bg-amber-950/90', 'text-amber-300', 'border-amber-700/60', 'bg-emerald-950/90', 'text-emerald-300', 'border-emerald-700/60');
+          badge.classList.add('bg-rose-950/90', 'text-rose-300', 'border', 'border-rose-700/60');
+          badge.textContent = `🔒 Restricted (${checkResult.visibilityFlag || 'GOOGLE_INTERNAL'})`;
+        }
+        if (desc && checkResult.reason) {
+          desc.innerHTML = `<span class="text-rose-400/90">Auto-disabled for this project: ${checkResult.reason}</span>`;
+        }
+      } else if (checkResult.status === 'SUPPORTED') {
+        cb.disabled = false;
+        if (row) {
+          row.classList.remove('opacity-60', 'cursor-not-allowed');
+          row.classList.add('cursor-pointer');
+          row.title = checkResult.reason || '';
+        }
+        if (badge) {
+          badge.classList.remove('hidden', 'bg-amber-950/90', 'text-amber-300', 'border-amber-700/60', 'bg-rose-950/90', 'text-rose-300', 'border-rose-700/60');
+          badge.classList.add('bg-emerald-950/90', 'text-emerald-300', 'border', 'border-emerald-700/60');
+          badge.textContent = supportedBadgeText || '✅ Verified Public';
+        }
+      }
+    }
+
+    function applyProjectCapabilities(cap) {
+      if (!cap || typeof cap !== 'object') return;
+      lastProbedCapabilities = cap;
+
+      // 1. Agents & Sessions
+      updateOptionCapabilityState('optAgents', 'optAgentsRow', 'optAgentsBadge', null, cap.agents, 'AgentService restricted', '✅ Public API');
+      onOptAgentsChange();
+      updateOptionCapabilityState('optSessions', 'optSessionsRow', 'optSessionsBadge', null, cap.sessions, 'SessionService restricted', '✅ Public API');
+
+      // 2. Skills (Agent Registry / SkillRegistryService)
+      updateOptionCapabilityState('optSkills', 'optSkillsRow', 'optSkillsBadge', 'optSkillsDesc', cap.skills, 'Skills API restricted', '✅ Registry Active');
+
+      // 3. Personal Memories (KnowledgeGraphService - GOOGLE_INTERNAL)
+      updateOptionCapabilityState('optMemories', 'optMemoriesRow', 'optMemoriesBadge', 'optMemoriesDesc', cap.memories, 'KnowledgeGraphService is GOOGLE_INTERNAL', '✅ Allowlisted');
+
+      // 4. NotebookLM Studio Artifacts (ArtifactService - NLME_ARTIFACT_API_USER)
+      if (cap.notebooks && cap.notebooks.artifacts) {
+        updateOptionCapabilityState('optArtifacts', 'optArtifactsRow', 'optArtifactsBadge', 'optArtifactsDesc', cap.notebooks.artifacts, 'ArtifactService is NLME_ARTIFACT_API_USER', '✅ Allowlisted');
+      }
+
+      // 5. NotebookLM Containers, Links, Uploaded File Body, Pinned Notes, Sharing ACLs
+      if (cap.notebooks) {
+        const nbBadge = document.getElementById('optNotebooksBadge');
+        const nbDesc = document.getElementById('optNotebooksDesc');
+        const nbPills = document.getElementById('optNotebooksSubCapabilities');
+        const nb = cap.notebooks;
+
+        const pillItems = [
+          { label: 'Containers & Links', res: nb.containersAndLinks },
+          { label: 'Uploaded File Body', res: nb.uploadedFileContent },
+          { label: 'Pinned Notes', res: nb.notes },
+          { label: 'Studio Artifacts', res: nb.artifacts },
+          { label: 'Sharing ACL Read', res: nb.sharingRoster }
+        ];
+
+        if (nbPills) {
+          nbPills.classList.remove('hidden');
+          nbPills.innerHTML = pillItems
+            .filter(item => item.res)
+            .map(item => {
+              const ok = item.res.status === 'SUPPORTED';
+              const cls = ok
+                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60'
+                : 'bg-slate-800/90 text-amber-300/90 border-amber-700/50';
+              const icon = ok ? '✅' : '🔒';
+              const titleAttr = (item.res.reason || '').replace(/"/g, '&quot;');
+              return `<span title="${titleAttr}" class="text-[9px] font-mono px-1.5 py-0.5 rounded border ${cls}">${icon} ${item.label}</span>`;
+            })
+            .join('');
+        }
+
+        const allInternalUnlocked =
+          nb.uploadedFileContent?.status === 'SUPPORTED' &&
+          nb.notes?.status === 'SUPPORTED';
+
+        if (nbBadge) {
+          nbBadge.classList.remove('bg-amber-950/90', 'text-amber-300', 'border-amber-700/60', 'bg-emerald-950/90', 'text-emerald-300', 'border-emerald-700/60');
+          if (allInternalUnlocked) {
+            nbBadge.classList.add('bg-emerald-950/90', 'text-emerald-300', 'border', 'border-emerald-700/60');
+            nbBadge.textContent = '✅ Full Notebook + Uploaded Files';
+          } else {
+            nbBadge.classList.add('bg-amber-950/90', 'text-amber-300', 'border', 'border-amber-700/60');
+            nbBadge.textContent = '✅ Containers & External Links Only';
+          }
+        }
+        if (nbDesc && !allInternalUnlocked) {
+          nbDesc.innerHTML = `Migrates notebook containers &amp; external reference links (Drive, Web URLs, YouTube, Agentspace DataStore). <span class="text-amber-300/90">Uploaded file bodies (<code class="text-[9px]">tailwind_doc</code>) &amp; pinned notes (<code class="text-[9px]">NoteService</code>) are gated by Google internal visibility flags on project <strong>${cap.projectId}</strong>.</span>`;
+        }
+      }
+
+      // 6. Update top Project Capability Banner
+      const summaryEl = document.getElementById('projectCapabilitiesSummary');
+      if (summaryEl) {
+        const disabledList = [];
+        if (cap.memories?.status === 'RESTRICTED') disabledList.push('User Memories (GOOGLE_INTERNAL)');
+        if (cap.notebooks?.artifacts?.status === 'RESTRICTED') disabledList.push('Studio Artifacts (NLME_ARTIFACT_API_USER)');
+        if (cap.skills?.status === 'RESTRICTED') disabledList.push('Skills Registry');
+        if (cap.engineUserData?.status === 'RESTRICTED') disabledList.push('EngineUserData Consent RPC');
+
+        if (disabledList.length > 0) {
+          summaryEl.innerHTML = `
+            <span class="text-emerald-400">🛡️</span>
+            <span><strong>Probed <code class="text-indigo-300">${cap.projectId}</code>:</strong> Public APIs verified (<span class="text-emerald-300">Agents, Chat History, Skills, Notebook Containers &amp; Links</span>). Auto-disabled internal-only endpoints: <span class="text-rose-300">${disabledList.join(', ')}</span>.</span>
+          `;
+        } else {
+          summaryEl.innerHTML = `
+            <span class="text-emerald-400">🛡️</span>
+            <span><strong>Probed <code class="text-indigo-300">${cap.projectId}</code>:</strong> All public &amp; allowlist-gated APIs are unlocked on this project!</span>
+          `;
+        }
+      }
+    }
+
+    async function probeSourceProjectCapabilities() {
+      const srcProj = (getFieldValue('srcProjectId') || '').trim();
+      const srcLoc = (getFieldValue('srcLocation') || 'global').trim();
+      const srcApp = (getFieldValue('srcAppId') || '').trim();
+      const btn = document.getElementById('btnProbeCapabilities');
+      const spinner = document.getElementById('probeCapabilitiesSpinner');
+      const summaryEl = document.getElementById('projectCapabilitiesSummary');
+
+      if (!srcProj) {
+        if (summaryEl) {
+          summaryEl.innerHTML = `<span class="text-amber-400">⚠️</span><span class="text-amber-300">Enter a <strong>Source Project ID</strong> in Step 2 first to validate project API capabilities.</span>`;
+        }
+        return;
+      }
+
+      if (btn) btn.disabled = true;
+      if (spinner) spinner.classList.remove('hidden');
+
+      try {
+        const sampleUser = targetedUsersList.length > 0 ? targetedUsersList[0].email : '';
+        const params = new URLSearchParams({
+          projectId: srcProj,
+          location: srcLoc
+        });
+        if (srcApp && srcApp !== 'custom') params.set('appId', srcApp);
+        if (sampleUser) params.set('sampleUserEmail', sampleUser);
+
+        const res = await fetch(`/api/capabilities/probe?${params.toString()}`);
+        const data = await res.json();
+        if (res.ok && data.capabilities) {
+          applyProjectCapabilities(data.capabilities);
+        } else if (summaryEl) {
+          summaryEl.innerHTML = `<span class="text-rose-400">⚠️</span><span class="text-rose-300">Capability probe failed: ${data.message || data.error || res.statusText}</span>`;
+        }
+      } catch (err) {
+        if (summaryEl) {
+          summaryEl.innerHTML = `<span class="text-rose-400">⚠️</span><span class="text-rose-300">Capability probe request failed: ${err.message}</span>`;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
         if (spinner) spinner.classList.add('hidden');
       }
     }
@@ -9221,11 +9450,55 @@ ${projectIamBlock}`;
       const agentsChecked = document.getElementById('optAgents')?.checked ?? true;
       const excludeRow = document.getElementById('optExcludeDraftAgentsRow');
       const excludeChk = document.getElementById('optExcludeDraftAgents');
+      const publishRow = document.getElementById('optPublishAgentsRow');
+      const publishChk = document.getElementById('optPublishAgents');
       if (excludeRow) {
         excludeRow.classList.toggle('opacity-50', !agentsChecked);
       }
       if (excludeChk) {
         excludeChk.disabled = !agentsChecked;
+      }
+      if (publishRow) {
+        publishRow.classList.toggle('opacity-50', !agentsChecked);
+      }
+      if (publishChk) {
+        publishChk.disabled = !agentsChecked;
+      }
+      onPublishAgentsChange();
+    }
+
+    function onPublishAgentsChange() {
+      const agentsChecked = document.getElementById('optAgents')?.checked ?? true;
+      const publishChecked = document.getElementById('optPublishAgents')?.checked ?? true;
+      const canShare = agentsChecked && publishChecked;
+      const shareRow = document.getElementById('optPreserveSharingRow');
+      const shareChk = document.getElementById('optPreserveSharing');
+      if (shareRow) {
+        shareRow.classList.toggle('opacity-50', !canShare);
+      }
+      if (shareChk) {
+        shareChk.disabled = !canShare;
+      }
+    }
+
+    function onSingleOptAgentsChange() {
+      const agentsChecked = document.getElementById('singleOptAgents')?.checked ?? true;
+      const publishRow = document.getElementById('singleOptPublishAgentsRow');
+      const publishChk = document.getElementById('singleOptPublishAgents');
+      const shareRow = document.getElementById('singleOptPreserveSharingRow');
+      const shareChk = document.getElementById('singleOptPreserveSharing');
+      if (publishRow) {
+        publishRow.classList.toggle('opacity-50', !agentsChecked);
+      }
+      if (publishChk) {
+        publishChk.disabled = !agentsChecked;
+      }
+      const canShare = agentsChecked && (publishChk?.checked ?? true);
+      if (shareRow) {
+        shareRow.classList.toggle('opacity-50', !canShare);
+      }
+      if (shareChk) {
+        shareChk.disabled = !canShare;
       }
     }
 
@@ -9403,8 +9676,11 @@ ${projectIamBlock}`;
             document.getElementById('optExcludeDraftAgents')?.checked ||
             document.getElementById('optAgentLifecycle')?.value === 'PUBLISHED_ONLY'
           ),
-          preserveSharing: false,
-          publishAgents: false,
+          publishAgents: document.getElementById('optPublishAgents') ? document.getElementById('optPublishAgents').checked : true,
+          preserveSharing: Boolean(
+            (document.getElementById('optPublishAgents') ? document.getElementById('optPublishAgents').checked : true) &&
+            (document.getElementById('optPreserveSharing') ? document.getElementById('optPreserveSharing').checked : true)
+          ),
           dryRun: isDryRun,
           promptForAdminNotebookHitl: document.getElementById('optPromptAdminNotebookHitl') ? document.getElementById('optPromptAdminNotebookHitl').checked : false,
           promptForConnectorHitl: true,
@@ -12488,6 +12764,11 @@ ${projectIamBlock}`;
         options: {
           migrateNotebooks: document.getElementById('singleOptNotebooks').checked,
           migrateAgents: document.getElementById('singleOptAgents').checked,
+          publishAgents: document.getElementById('singleOptPublishAgents') ? document.getElementById('singleOptPublishAgents').checked : true,
+          preserveSharing: Boolean(
+            (document.getElementById('singleOptPublishAgents') ? document.getElementById('singleOptPublishAgents').checked : true) &&
+            (document.getElementById('singleOptPreserveSharing') ? document.getElementById('singleOptPreserveSharing').checked : true)
+          ),
           migrateSessions: document.getElementById('singleOptSessions').checked,
           migrateMemories: true,
           exportMemories: true,

@@ -1041,11 +1041,13 @@ export class AgentMigrator {
           logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
         }
 
-        // 1. Publish / Deploy agent on the target instance ONLY if it was already published/deployed
-        // in the source environment. If it was in draft in the source environment, keep it in draft on target.
+        // 1. Publish / Deploy agent on the target instance ONLY if publishAgents is enabled (default true)
+        // AND it was already published/deployed in the source environment.
+        // If it was in draft in the source environment, or if publishAgents is false, keep it in draft on target.
         // Note: Deploy/Publish MUST run before RequestAgentReview / SetIamPolicy because Discovery Engine
         // requires `deployed_root_agent_id` to be populated before an agent can transition out of PRIVATE.
-        const shouldPublishOrDeploy = this.isSourceAgentPublished(agent);
+        const shouldPublishOrDeploy =
+          options.publishAgents !== false && this.isSourceAgentPublished(agent);
 
         if (shouldPublishOrDeploy) {
           try {
@@ -1059,16 +1061,19 @@ export class AgentMigrator {
               logger.warn(`Notice for agent "${result.displayName}": ${pubErr.message}`);
             }
           }
+        } else if (options.publishAgents === false && this.isSourceAgentPublished(agent)) {
+          logger.info(`Skipped publishing agent "${result.displayName}" on target (publishAgents disabled; kept in draft).`);
         } else {
           logger.info(`Preserved agent "${result.displayName}" as native editable draft.`);
         }
 
-        // 2. Replicate sharing state & IAM policy ONLY if the source agent was published and shared.
+        // 2. Replicate sharing state & IAM policy ONLY if preserveSharing is enabled (default true),
+        // the agent was published/deployed on target, and the source agent was shared.
         const isSharedScope =
           agent.sharingConfig?.scope === 'ALL_USERS' ||
           agent.sharingConfig?.scope === 'RESTRICTED';
 
-        if (shouldPublishOrDeploy && isSharedScope) {
+        if (shouldPublishOrDeploy && isSharedScope && options.preserveSharing !== false) {
           if (typeof this.client.requestAgentReview === 'function') {
             try {
               const reviewRes = await this.client.requestAgentReview(newAgentName, targetEnv, userOwner);
@@ -1081,7 +1086,7 @@ export class AgentMigrator {
             }
           }
 
-          if (options.preserveSharing !== false && agent.sharingConfig?.scope) {
+          if (agent.sharingConfig?.scope) {
             const effectiveSharing = agent.sharingConfig;
             try {
               await this.client.patchAgentSharing(newAgentName, effectiveSharing, targetEnv, userOwner);
@@ -1103,6 +1108,8 @@ export class AgentMigrator {
               logger.warn(`Could not set IAM policy on agent "${result.displayName}" (${iamErr.message}). Agent creation succeeded.`);
             }
           }
+        } else if (isSharedScope && (options.preserveSharing === false || !shouldPublishOrDeploy)) {
+          logger.info(`Skipped re-sharing agent "${result.displayName}" on target (preserving private scope).`);
         } else if (!agent.sharingConfig?.scope) {
           logger.info(`Agent "${result.displayName}" has no public sharing scope; preserving private scope.`);
         }
