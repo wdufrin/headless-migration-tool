@@ -242,7 +242,7 @@ describe('SessionMigrator Engine (Fix 2.5)', () => {
     }
   });
 
-  it('should filter sessions by user_pseudo_id and request full view in listSourceSessions', async () => {
+  it('should filter sessions by user_pseudo_id and not send the unsupported view parameter in listSourceSessions', async () => {
     vi.spyOn(dummyAuth, 'getAccessToken').mockResolvedValue('stub-access-token');
 
     let requestedUrls: string[] = [];
@@ -272,7 +272,7 @@ describe('SessionMigrator Engine (Fix 2.5)', () => {
       expect(requestedUrls).toHaveLength(1);
       const calledUrl = requestedUrls[0];
       expect(calledUrl).toContain('filter=user_pseudo_id%3D%22alice%40company.com%22');
-      expect(calledUrl).toContain('view=SESSION_VIEW_FULL');
+      expect(calledUrl).not.toContain('view=');
     } finally {
       global.fetch = originalFetch;
     }
@@ -365,5 +365,133 @@ describe('SessionMigrator Engine (Fix 2.5)', () => {
     } finally {
       global.fetch = originalFetch;
     }
+  });
+
+  describe('web-app sessions without userPseudoId', () => {
+    const SRC = 'projects/source-corp/locations/global/collections/default_collection/engines/source-engine/sessions';
+
+    it('lists again without the filter when the filtered list is empty and the token impersonates the user', async () => {
+      vi.spyOn(dummyAuth, 'getAccessToken').mockResolvedValue('stub-access-token');
+      vi.spyOn(dummyAuth, 'getLastUsedImpersonationMode').mockReturnValue('WIF');
+      const requestedUrls: string[] = [];
+      const originalFetch = global.fetch;
+      global.fetch = async (url: any) => {
+        requestedUrls.push(String(url));
+        const filtered = String(url).includes('filter=user_pseudo_id');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (filtered ? { sessions: [] } : {
+            sessions: [
+              { name: `${SRC}/web-1`, displayName: 'Web chat' },
+              { name: `${SRC}/other-1`, displayName: 'Other user chat', userPseudoId: 'bob@company.com' }
+            ]
+          })
+        } as any;
+      };
+      try {
+        const sessions = await migrator.listSourceSessions(['alice@company.com']);
+        expect(requestedUrls).toHaveLength(2);
+        expect(requestedUrls[0]).toContain('filter=user_pseudo_id');
+        expect(requestedUrls[1]).not.toContain('filter=');
+        // The session that names another owner is dropped. The web-app session is assigned to alice.
+        expect(sessions.map((x: any) => x.displayName)).toEqual(['Web chat']);
+        expect(sessions[0].userPseudoId).toBe('alice@company.com');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('does not list without the filter when the token does not impersonate the user', async () => {
+      vi.spyOn(dummyAuth, 'getAccessToken').mockResolvedValue('stub-access-token');
+      vi.spyOn(dummyAuth, 'getLastUsedImpersonationMode').mockReturnValue(undefined);
+      const requestedUrls: string[] = [];
+      const originalFetch = global.fetch;
+      global.fetch = async (url: any) => {
+        requestedUrls.push(String(url));
+        return { ok: true, status: 200, json: async () => ({ sessions: [] }) } as any;
+      };
+      try {
+        const sessions = await migrator.listSourceSessions(['alice@company.com']);
+        expect(requestedUrls).toHaveLength(1);
+        expect(requestedUrls[0]).toContain('filter=user_pseudo_id');
+        expect(sessions).toHaveLength(0);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('hydrates a session whose turns hold no answer reference and writes the real answer', async () => {
+      vi.spyOn(dummyAuth, 'getAccessToken').mockResolvedValue('stub-access-token');
+      let capturedPayload: any = null;
+      let hydrateUrl = '';
+      const originalFetch = global.fetch;
+      global.fetch = async (url: any, init: any) => {
+        const u = String(url);
+        if (init?.method === 'POST') {
+          capturedPayload = JSON.parse(init.body);
+          return { ok: true, status: 200, json: async () => ({ name: 'projects/target-corp/locations/global/collections/default_collection/engines/target-engine/sessions/new-1' }) } as any;
+        }
+        if (u.includes('includeAnswerDetails=true')) {
+          hydrateUrl = u;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              name: `${SRC}/web-2`,
+              displayName: 'Release checklist',
+              turns: [{
+                query: { text: 'Add a rollback step.' },
+                detailedAssistAnswer: { replies: [{ groundedContent: { content: { text: 'Step 5: roll back the release.' } } }] }
+              }]
+            })
+          } as any;
+        }
+        return { ok: true, status: 200, json: async () => ({ sessions: [] }) } as any;
+      };
+      try {
+        await migrator.migrateSession({
+          name: `${SRC}/web-2`,
+          displayName: 'Release checklist',
+          userPseudoId: 'alice@source.com',
+          // sessions.list returns only query and queryConfig, with no answer reference.
+          turns: [{ query: { text: 'Add a rollback step.' }, queryConfig: {} } as any]
+        }, 'alice@target.com');
+        expect(hydrateUrl).toContain(`${SRC}/web-2?includeAnswerDetails=true`);
+        expect(capturedPayload.turns[0].query.text).toContain('Step 5: roll back the release.');
+        expect(capturedPayload.turns[0].query.text).not.toContain('Archived Dialogue Record');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('keeps only the query, with no placeholder text, when no answer can be read', async () => {
+      vi.spyOn(dummyAuth, 'getAccessToken').mockResolvedValue('stub-access-token');
+      let capturedPayload: any = null;
+      const originalFetch = global.fetch;
+      global.fetch = async (url: any, init: any) => {
+        if (init?.method === 'POST') {
+          capturedPayload = JSON.parse(init.body);
+          return { ok: true, status: 200, json: async () => ({ name: 'projects/target-corp/locations/global/collections/default_collection/engines/target-engine/sessions/new-2' }) } as any;
+        }
+        if (String(url).includes('includeAnswerDetails=true')) {
+          return { ok: false, status: 403, text: async () => 'PERMISSION_DENIED' } as any;
+        }
+        return { ok: true, status: 200, json: async () => ({ sessions: [] }) } as any;
+      };
+      try {
+        await migrator.migrateSession({
+          name: `${SRC}/web-3`,
+          displayName: 'No access',
+          userPseudoId: 'alice@source.com',
+          turns: [{ query: { text: 'Question without a readable answer' }, queryConfig: {} } as any]
+        }, 'alice@target.com');
+        expect(capturedPayload.turns[0].query.text).toContain('Question without a readable answer');
+        expect(capturedPayload.turns[0].query.text).not.toContain('Archived Dialogue Record');
+        expect(capturedPayload.turns[0].query.text).not.toContain('Gemini Response');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 });
