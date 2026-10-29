@@ -279,11 +279,24 @@ export class SessionMigrator {
         const token = await this.getAuthToken(email);
         const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
         let pageToken = '';
+        // Sessions created in the web app (streamAssist) have no userPseudoId, so the
+        // user_pseudo_id filter returns 0 rows. If that happens, list again without the filter.
+        // Do this only when the token impersonates this user (DWD or WIF). sessions.list then
+        // returns only the caller's own sessions. With an admin token, an unfiltered list could
+        // hold other users' sessions, so the retry is not done.
+        const impersonatesUser = Boolean(email) && Boolean(this.auth.getLastUsedImpersonationMode?.(email));
+        let useUserFilter = Boolean(email);
+        let unfiltered = false;
+        let foundForUser = 0;
+        let retryUnfiltered = false;
 
         do {
+          retryUnfiltered = false;
           const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
-          const userFilterParam = email ? `&filter=user_pseudo_id%3D%22${encodeURIComponent(email)}%22` : '';
-          const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100&view=SESSION_VIEW_FULL${userFilterParam}${pageParam}`;
+          const userFilterParam = email && useUserFilter ? `&filter=user_pseudo_id%3D%22${encodeURIComponent(email)}%22` : '';
+          // The sessions.list API has no "view" field (HTTP 400). Answers come from the per-session
+          // includeAnswerDetails=true read.
+          const url = `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${env.collectionId || 'default_collection'}/engines/${env.appId}/sessions?pageSize=100${userFilterParam}${pageParam}`;
 
           const response = await fetch(url, {
             method: 'GET',
@@ -297,21 +310,38 @@ export class SessionMigrator {
             const data = await response.json() as any;
             for (const s of (data.sessions || [])) {
               const sid = s.name.split('/').pop() || s.name;
+              // In an unfiltered list, never take a session that names a different owner.
+              if (unfiltered && s.userPseudoId && s.userPseudoId.includes('@') &&
+                  s.userPseudoId.replace(/^user:/i, '').trim().toLowerCase() !== String(email).toLowerCase()) {
+                continue;
+              }
               if (!seenSessionIds.has(sid)) {
                 seenSessionIds.add(sid);
                 if (email && (!s.userPseudoId || !s.userPseudoId.includes('@'))) {
                   s.userPseudoId = email;
                 }
                 allSessions.push(s);
+                foundForUser++;
               }
             }
             pageToken = data.nextPageToken || '';
+            if (!pageToken && useUserFilter && foundForUser === 0) {
+              if (impersonatesUser) {
+                logger.info(`No sessions matched user_pseudo_id="${email}". Listing again without the filter, with the impersonated token for ${email}.`);
+                useUserFilter = false;
+                unfiltered = true;
+                pageToken = '';
+                retryUnfiltered = true;
+                continue;
+              }
+              logger.warn(`No sessions matched user_pseudo_id="${email}". Web-app sessions have no userPseudoId. The unfiltered list is not read, because the token does not impersonate ${email} (DWD or WIF).`);
+            }
           } else {
             const errText = await response.text();
             logger.warn(`Could not list sessions for user ${email || 'all'} (${response.status}): ${errText}`);
             break;
           }
-        } while (pageToken);
+        } while (pageToken || retryUnfiltered);
       } catch (err: any) {
         logger.warn(`Could not list sessions for user ${email || 'all'}: ${err.message}`);
       }
@@ -391,14 +421,21 @@ export class SessionMigrator {
     // If session has turns with answer references but lacks detailed answers, hydrate session once
     let currentSession = session;
     const srcUserEmail = currentSession.userPseudoId?.includes('@') ? currentSession.userPseudoId : undefined;
+    // sessions.list returns turns with only query and queryConfig (no answer reference at all), so
+    // hydrate whenever a turn lacks a detailed answer, not only when it holds an answer reference.
     const needsSessionHydration = currentSession.turns?.some(
-      t => !((t as any).detailedAssistAnswer || (t as any).detailedAnswer) && (t.assistAnswer || (t.answer && t.answer.startsWith('projects/')))
+      t => !((t as any).detailedAssistAnswer || (t as any).detailedAnswer) &&
+        !(typeof t.answer === 'string' && t.answer && !t.answer.startsWith('projects/'))
     );
     if (needsSessionHydration && currentSession.name) {
       try {
-        currentSession = await this.getSession(currentSession.name, srcUserEmail);
+        const hydrated = await this.getSession(currentSession.name, srcUserEmail);
+        // Use the hydrated copy only if it is a real session with turns. Keep the listed copy otherwise.
+        if (hydrated && hydrated.name && Array.isArray(hydrated.turns) && hydrated.turns.length > 0) {
+          currentSession = { ...hydrated, userPseudoId: currentSession.userPseudoId || hydrated.userPseudoId };
+        }
       } catch (e: any) {
-        logger.debug(`Could not hydrate full session ${currentSession.name}: ${e.message}`);
+        logger.warn(`Could not read answers for session ${currentSession.name}: ${e.message}`);
       }
     }
 
@@ -466,12 +503,11 @@ export class SessionMigrator {
       }
     }
 
-    // Only after ALL raw turns are processed, apply fallback to any turns that STILL lack an answer
+    // Do not invent an answer. A turn that still lacks an answer keeps only its query, and the
+    // tool logs a warning so the gap is visible in the run output.
     for (const p of pairedTurns) {
       if (!p.answerText) {
-        const timeStr = currentSession.startTime || new Date().toISOString();
-        const srcProj = this.config.source?.projectId || 'source-workspace';
-        p.answerText = `> 📋 **Archived Dialogue Record**\n> * **Source Project**: \`${srcProj}\`\n> * **Recorded Query**: \`${p.queryText}\`\n> * **Timestamp**: \`${timeStr}\`\n> * **Status**: Executed in source workspace. Restored for historical auditing and reference.`;
+        logger.warn(`No answer text found for a turn in session "${currentSession.displayName}". The turn keeps only the query.`);
       }
     }
 
