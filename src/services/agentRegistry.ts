@@ -15,27 +15,122 @@
  */
 
 import { EnvironmentConfig } from '../types/migration.js';
-import { RegistrySkill, RegistrySkillRevision } from '../types/index.js';
+import { IamPolicy, LongRunningOperation, RegistrySkill, RegistrySkillRevision } from '../types/index.js';
+import { SecurityValidationError } from '../security/validator.js';
 import { GcpAuthService } from './gcpAuth.js';
 import { retryWithBackoff } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
 export const AGENT_REGISTRY_BASE_URL = 'https://agentregistry.googleapis.com';
-export const AGENT_REGISTRY_API_VERSION = 'v1alpha';
+export const AGENT_REGISTRY_API_VERSION = 'v1';
+
+const SAFE_LOCATION_REGEX = /^[a-z0-9-]+$/i;
+const SAFE_SKILL_ID_REGEX = /^[a-z0-9._-]+$/i;
+const SAFE_SKILL_RESOURCE_REGEX = /^projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/skills\/[a-z0-9._-]+(?:\/revisions\/[a-z0-9._-]+)?$/i;
+const SAFE_OPERATION_NAME_REGEX = /^projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/operations\/[a-z0-9._-]+$/i;
+
+export function getSafeAgentRegistryLocation(location?: string): string {
+  const loc = (location || 'global').trim().toLowerCase();
+  if (!loc || !SAFE_LOCATION_REGEX.test(loc)) {
+    throw new SecurityValidationError(
+      `Invalid Agent Registry location: "${location}". Location must only contain alphanumeric characters and hyphens.`
+    );
+  }
+  return loc;
+}
 
 export interface AgentRegistryClientOptions {
   requestTimeoutMs?: number;
+  operationPollIntervalMs?: number;
+  operationTimeoutMs?: number;
 }
 
 export class AgentRegistryClient {
   private auth: GcpAuthService;
   private requestTimeoutMs: number;
+  private operationPollIntervalMs: number;
+  private operationTimeoutMs: number;
 
   constructor(auth: GcpAuthService, options: AgentRegistryClientOptions = {}) {
     this.auth = auth;
     const envTimeout = Number(process.env.AGENT_REGISTRY_TIMEOUT_MS);
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 90000);
+    this.operationPollIntervalMs = options.operationPollIntervalMs ?? 1000;
+    this.operationTimeoutMs = options.operationTimeoutMs ?? 90000;
+  }
+
+  private resolveSkillResourceName(skillNameOrId: string, env: EnvironmentConfig): string {
+    const trimmed = (skillNameOrId || '').trim().replace(/^\/+/, '');
+    if (trimmed.startsWith('projects/')) {
+      if (!SAFE_SKILL_RESOURCE_REGEX.test(trimmed)) {
+        throw new SecurityValidationError(`Invalid Agent Registry skill resource name: "${skillNameOrId}"`);
+      }
+      return trimmed;
+    }
+    if (!trimmed || !SAFE_SKILL_ID_REGEX.test(trimmed)) {
+      throw new SecurityValidationError(`Invalid Agent Registry skill ID: "${skillNameOrId}"`);
+    }
+    const location = getSafeAgentRegistryLocation(env.appLocation);
+    return `projects/${env.projectId}/locations/${location}/skills/${trimmed}`;
+  }
+
+  private isLongRunningOperation(obj: any): obj is LongRunningOperation {
+    if (!obj || typeof obj !== 'object') return false;
+    if (typeof obj.name === 'string' && obj.name.includes('/operations/')) {
+      return true;
+    }
+    return 'done' in obj && ('response' in obj || 'error' in obj || 'metadata' in obj);
+  }
+
+  async getOperation<T = any>(
+    operationName: string,
+    projectId: string,
+    forUserEmail?: string
+  ): Promise<LongRunningOperation<T>> {
+    const cleanName = (operationName || '').trim().replace(/^\/+/, '');
+    if (!SAFE_OPERATION_NAME_REGEX.test(cleanName)) {
+      throw new SecurityValidationError(`Invalid Agent Registry operation resource name: "${operationName}"`);
+    }
+    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${cleanName}`;
+    return this.request<LongRunningOperation<T>>(url, 'GET', undefined, projectId, forUserEmail);
+  }
+
+  async waitForOperation<T>(
+    operationOrResult: any,
+    projectId: string,
+    forUserEmail?: string
+  ): Promise<T> {
+    if (!this.isLongRunningOperation(operationOrResult)) {
+      return operationOrResult as T;
+    }
+
+    let current: LongRunningOperation<T> = operationOrResult;
+    const deadline = Date.now() + this.operationTimeoutMs;
+
+    while (!current.done) {
+      if (Date.now() >= deadline) {
+        const timeoutErr: any = new Error(
+          `Agent Registry Operation Timed Out after ${this.operationTimeoutMs}ms: ${current.name}`
+        );
+        timeoutErr.name = 'TimeoutError';
+        timeoutErr.code = 'ETIMEDOUT';
+        throw timeoutErr;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.operationPollIntervalMs));
+      current = await this.getOperation<T>(current.name, projectId, forUserEmail);
+    }
+
+    if (current.error) {
+      const opErr: any = new Error(
+        `Agent Registry Operation Failed [${current.error.code ?? 'ERR'}]: ${current.error.message || 'Unknown operation error'}`
+      );
+      opErr.code = current.error.code;
+      opErr.details = current.error;
+      throw opErr;
+    }
+
+    return (current.response ?? current) as T;
   }
 
   private async request<T>(
@@ -128,11 +223,12 @@ export class AgentRegistryClient {
   }
 
   async listSkills(env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill[]> {
+    const location = getSafeAgentRegistryLocation(env.appLocation);
     return this.listAllPages<RegistrySkill>(
       (pageToken) => {
         const query = new URLSearchParams({ pageSize: '100' });
         if (pageToken) query.set('pageToken', pageToken);
-        return `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills?${query.toString()}`;
+        return `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${location}/skills?${query.toString()}`;
       },
       (res) => res.skills,
       env.projectId,
@@ -141,24 +237,34 @@ export class AgentRegistryClient {
   }
 
   async getSkill(skillName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill> {
-    const resourceName = skillName.startsWith('projects/')
-      ? skillName
-      : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${skillName}`;
+    const resourceName = this.resolveSkillResourceName(skillName, env);
     const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}`;
     return this.request<RegistrySkill>(url, 'GET', undefined, env.projectId, forUserEmail);
   }
 
   async createSkill(skillId: string, payload: Partial<RegistrySkill>, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill> {
-    const cleanId = skillId.split('/').pop() || skillId;
-    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills?skillId=${encodeURIComponent(cleanId)}`;
-    return this.request<RegistrySkill>(url, 'POST', payload, env.projectId, forUserEmail);
+    const rawTrimmed = (skillId || '').trim().replace(/^\/+/, '');
+    let cleanId: string;
+    if (rawTrimmed.startsWith('projects/')) {
+      if (!SAFE_SKILL_RESOURCE_REGEX.test(rawTrimmed)) {
+        throw new SecurityValidationError(`Invalid Agent Registry skill resource name: "${skillId}"`);
+      }
+      cleanId = rawTrimmed.split('/').pop() || '';
+    } else {
+      cleanId = rawTrimmed;
+    }
+    if (!cleanId || !SAFE_SKILL_ID_REGEX.test(cleanId)) {
+      throw new SecurityValidationError(`Invalid Agent Registry skillId: "${skillId}"`);
+    }
+    const location = getSafeAgentRegistryLocation(env.appLocation);
+    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/projects/${env.projectId}/locations/${location}/skills?skillId=${encodeURIComponent(cleanId)}`;
+    const opOrSkill = await this.request<any>(url, 'POST', payload, env.projectId, forUserEmail);
+    return this.waitForOperation<RegistrySkill>(opOrSkill, env.projectId, forUserEmail);
   }
 
   async downloadSkillRevisionMedia(revisionName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<string | null> {
-    const resourceName = revisionName.startsWith('projects/')
-      ? revisionName
-      : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${revisionName}`;
-    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}?alt=media`;
+    const resourceName = this.resolveSkillResourceName(revisionName, env);
+    const url = `${AGENT_REGISTRY_BASE_URL}/download/${AGENT_REGISTRY_API_VERSION}/${resourceName}?alt=media`;
     const token = await this.auth.getAccessToken(forUserEmail);
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${token}`
@@ -177,7 +283,12 @@ export class AgentRegistryClient {
       });
       if (!response.ok) {
         if (response.status === 404) return null;
-        throw new Error(`Failed to download skill revision media [${response.status}]: ${response.statusText}`);
+        const errBody = await response.text();
+        const err: any = new Error(
+          `Failed to download skill revision media [${response.status}]: ${errBody || response.statusText}`
+        );
+        err.status = response.status;
+        throw err;
       }
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
@@ -186,26 +297,22 @@ export class AgentRegistryClient {
   }
 
   async updateSkill(skillName: string, payload: Partial<RegistrySkill>, updateMask: string[], env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkill> {
-    const resourceName = skillName.startsWith('projects/')
-      ? skillName
-      : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${skillName}`;
-    const mask = updateMask.length > 0 ? `?updateMask=${updateMask.join(',')}` : '';
+    const resourceName = this.resolveSkillResourceName(skillName, env);
+    const mask = updateMask.length > 0 ? `?updateMask=${updateMask.map(encodeURIComponent).join(',')}` : '';
     const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}${mask}`;
-    return this.request<RegistrySkill>(url, 'PATCH', payload, env.projectId, forUserEmail);
+    const opOrSkill = await this.request<any>(url, 'PATCH', payload, env.projectId, forUserEmail);
+    return this.waitForOperation<RegistrySkill>(opOrSkill, env.projectId, forUserEmail);
   }
 
   async deleteSkill(skillName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<void> {
-    const resourceName = skillName.startsWith('projects/')
-      ? skillName
-      : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${skillName}`;
+    const resourceName = this.resolveSkillResourceName(skillName, env);
     const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}`;
-    await this.request<void>(url, 'DELETE', undefined, env.projectId, forUserEmail);
+    const op = await this.request<any>(url, 'DELETE', undefined, env.projectId, forUserEmail);
+    await this.waitForOperation<void>(op, env.projectId, forUserEmail);
   }
 
   async listSkillRevisions(skillName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkillRevision[]> {
-    const resourceName = skillName.startsWith('projects/')
-      ? skillName
-      : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${skillName}`;
+    const resourceName = this.resolveSkillResourceName(skillName, env);
     return this.listAllPages<RegistrySkillRevision>(
       (pageToken) => {
         const query = new URLSearchParams({ pageSize: '50' });
@@ -219,10 +326,22 @@ export class AgentRegistryClient {
   }
 
   async createSkillRevision(skillName: string, payload: any, env: EnvironmentConfig, forUserEmail?: string): Promise<RegistrySkillRevision> {
-    const resourceName = skillName.startsWith('projects/')
-      ? skillName
-      : `projects/${env.projectId}/locations/${env.appLocation || 'global'}/skills/${skillName}`;
+    const resourceName = this.resolveSkillResourceName(skillName, env);
     const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}/revisions`;
-    return this.request<RegistrySkillRevision>(url, 'POST', payload, env.projectId, forUserEmail);
+    const opOrRevision = await this.request<any>(url, 'POST', payload, env.projectId, forUserEmail);
+    return this.waitForOperation<RegistrySkillRevision>(opOrRevision, env.projectId, forUserEmail);
+  }
+
+  async getSkillIamPolicy(skillName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<IamPolicy> {
+    const resourceName = this.resolveSkillResourceName(skillName, env);
+    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}:getIamPolicy?options.requestedPolicyVersion=3`;
+    return this.request<IamPolicy>(url, 'GET', undefined, env.projectId, forUserEmail);
+  }
+
+  async setSkillIamPolicy(skillName: string, policy: IamPolicy, env: EnvironmentConfig, forUserEmail?: string): Promise<IamPolicy> {
+    const resourceName = this.resolveSkillResourceName(skillName, env);
+    const url = `${AGENT_REGISTRY_BASE_URL}/${AGENT_REGISTRY_API_VERSION}/${resourceName}:setIamPolicy`;
+    return this.request<IamPolicy>(url, 'POST', { policy }, env.projectId, forUserEmail);
   }
 }
+

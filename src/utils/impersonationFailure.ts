@@ -73,7 +73,9 @@ const MISCONFIGURED_PATTERNS: RegExp[] = [
   /\baccess_denied\b/i,
   /not authorized to act as/i,
   /insufficient authentication scopes/i,
-  /iam\.serviceAccountTokenCreator/i
+  /iam\.serviceAccountTokenCreator/i,
+  /workforce identity federation.*not configured/i,
+  /cannot impersonate non-user principal/i
 ];
 
 /**

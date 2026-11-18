@@ -92,6 +92,12 @@ export interface MigrationOptions {
   preserveOwnership?: boolean;
   preserveSharing?: boolean;
   publishAgents?: boolean;
+  migrateAgentFiles?: boolean;
+  migrateSessionFiles?: boolean;
+  continuableSessions?: boolean;
+  migrateSubscriptions?: boolean;
+  transferOwnershipViaAdmin?: boolean;
+  localSourceFilesDir?: string;
   prefixReplacements?: Record<string, string>;
   allowOverwrite?: boolean;
   resumeFrom?: string;

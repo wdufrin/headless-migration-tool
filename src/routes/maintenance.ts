@@ -19,7 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { GcpAuthService } from '../services/gcpAuth.js';
+import { GcpAuthService, isGroupOrNonHumanPrincipal } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { getSafeDiscoveryEngineUrl } from '../security/validator.js';
 import { getDynamicConfig } from './configHelper.js';
@@ -33,6 +33,7 @@ export const maintenanceRouter = express.Router();
 
 export interface TargetAssetCleanupParams {
   sourceProject?: string;
+  sourceEngine?: string;
   targetProject: string;
   targetEngine?: string;
   targetLocation?: string;
@@ -89,19 +90,59 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
   const cleanArtifacts = params.cleanArtifacts !== false;
   const cleanReports = params.cleanReports !== false;
 
-  // Cross-project collision guard: never allow targetProject to wipe sourceProject
+  // Same-project / same-engine collision guard:
+  // - In-project migrations between DIFFERENT engines (`cosmere` -> `cosmere-clone`) are supported for engine-scoped
+  //   assets (Custom Agents, Chat History Sessions, User Memories).
+  // - Project-scoped NotebookLM notebooks (`cleanNotebooks`) MUST still be blocked when `targetProject === sourceProject`
+  //   because notebooks live at `projects/{project}/locations/{location}/notebooks/*` across the entire project.
+  // - Wiping the source engine itself (`targetEngine === sourceEngine`) or wiping cloud assets without a distinct
+  //   `sourceEngine` in the same project MUST always be blocked.
   let effectiveSourceProject = params.sourceProject || process.env.SOURCE_PROJECT_ID;
-  if (!effectiveSourceProject) {
+  let effectiveSourceEngine = params.sourceEngine || process.env.SOURCE_APP_ID;
+  if (!effectiveSourceProject || !effectiveSourceEngine) {
     try {
       const configPath = path.resolve(process.cwd(), 'migration-config.json');
       if (fs.existsSync(configPath)) {
         const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        effectiveSourceProject = cfg.source?.projectId;
+        if (!effectiveSourceProject) effectiveSourceProject = cfg.source?.projectId;
+        if (!effectiveSourceEngine) effectiveSourceEngine = cfg.source?.appId;
       }
-    } catch {}
+    } catch (cfgErr: any) {
+      logger.debug(`Could not read migration-config.json during cleanup guard check: ${cfgErr.message}`);
+    }
   }
-  if (effectiveSourceProject && targetProject && targetProject.trim().toLowerCase() === effectiveSourceProject.trim().toLowerCase()) {
-    throw new Error(`Target project "${targetProject}" matches source project "${effectiveSourceProject}". Destructive asset cleanup is blocked to prevent accidental deletion of production source assets.`);
+
+  if (
+    effectiveSourceProject &&
+    targetProject &&
+    targetProject.trim().toLowerCase() === effectiveSourceProject.trim().toLowerCase()
+  ) {
+    if (cleanNotebooks) {
+      const collisionErr: any = new Error(
+        `Target project "${targetProject}" matches source project "${effectiveSourceProject}". Destructive asset cleanup is blocked to prevent accidental deletion of production source assets: NotebookLM notebooks are project-scoped across "${targetProject}". Uncheck "Gemini Notebooks" to clean engine-scoped assets on "${targetEngine || 'target engine'}".`
+      );
+      collisionErr.code = 'SourceCollisionBlocked';
+      throw collisionErr;
+    }
+
+    if (cleanAgents || cleanSessions || cleanMemories) {
+      const normSrcEngine = (effectiveSourceEngine || '').trim().toLowerCase();
+      const normTgtEngine = (targetEngine || '').trim().toLowerCase();
+      if (!normSrcEngine) {
+        const collisionErr: any = new Error(
+          `Target project "${targetProject}" matches source project "${effectiveSourceProject}", and no Source GE App (Engine) ID was provided to verify engine isolation. Destructive asset cleanup is blocked to prevent accidental deletion of production source assets.`
+        );
+        collisionErr.code = 'SourceCollisionBlocked';
+        throw collisionErr;
+      }
+      if (normTgtEngine === normSrcEngine) {
+        const collisionErr: any = new Error(
+          `Target GE App "${targetEngine}" matches source GE App "${effectiveSourceEngine}" in project "${targetProject}". Destructive asset cleanup is blocked to prevent accidental deletion of source engine assets.`
+        );
+        collisionErr.code = 'SourceCollisionBlocked';
+        throw collisionErr;
+      }
+    }
   }
 
   // Granular Scope Protection: If wiping GE App assets (agents, chats, memories), require explicit engine
@@ -166,7 +207,9 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
               }
             }
           }
-        } catch {}
+        } catch (repErr: any) {
+          logger.debug(`Skipping malformed report file ${rf} during cleanup discovery: ${repErr.message}`);
+        }
       }
     }
     const configPath = path.resolve(process.cwd(), 'migration-config.json');
@@ -180,9 +223,13 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
           rawUsers.push(...Object.values(cfg.identityMapping) as string[]);
           rawUsers.push(...Object.keys(cfg.identityMapping) as string[]);
         }
-      } catch {}
+      } catch (cfgParseErr: any) {
+        logger.debug(`Skipping malformed migration-config.json during cleanup user discovery: ${cfgParseErr.message}`);
+      }
     }
-  } catch {}
+  } catch (discErr: any) {
+    logger.debug(`Local report/config discovery skipped during cleanup: ${discErr.message}`);
+  }
 
   const callerEmail = await authService.getCallerIdentity().catch(() => undefined);
   if (callerEmail) rawUsers.push(callerEmail);
@@ -202,12 +249,14 @@ export async function executeTargetAssetCleanup(params: TargetAssetCleanupParams
           }
         }
       }
-    } catch {}
+    } catch (iamErr: any) {
+      logger.debug(`Could not read project IAM policy for user discovery on ${targetProject}: ${iamErr.message}`);
+    }
   }
 
   const targetUsersToClean = Array.from(new Set<string>(
     rawUsers
-      .filter(Boolean)
+      .filter(u => Boolean(u) && !isGroupOrNonHumanPrincipal(String(u)))
       .map(u => String(u || '').replace(/^user:/i, '').trim())
       .filter(u => u.includes('@') && !u.endsWith('.gserviceaccount.com') && !u.startsWith('service-'))
   ));
@@ -529,10 +578,12 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
     }
 
     const sourceProject = req.body?.srcProjectId || req.body?.source?.projectId || req.body?.sourceProjectId || process.env.SOURCE_PROJECT_ID;
+    const sourceEngine = req.body?.srcAppId || req.body?.sourceEngine || req.body?.source?.appId || process.env.SOURCE_APP_ID;
     const forceAllAgents = req.body?.forceAllAgents !== false && req.body?.forceAllAgents !== 'false';
 
     const result = await executeTargetAssetCleanup({
       sourceProject,
+      sourceEngine,
       targetProject,
       targetEngine,
       targetLocation,
@@ -554,6 +605,9 @@ maintenanceRouter.post('/cleanup', async (req, res) => {
 
     return res.status(200).json(result);
   } catch (err: any) {
+    if (err?.code === 'SourceCollisionBlocked') {
+      return res.status(400).json({ error: 'SourceCollisionBlocked', message: err.message });
+    }
     return res.status(500).json({ error: 'CleanupFailed', message: err.message });
   }
 });
@@ -691,6 +745,8 @@ maintenanceRouter.post('/maintenance/decommission', async (req, res) => {
       try {
         logger.info(`Target asset wipe requested before decommissioning credentials on "${safeTargetProject}"...`);
         targetAssetsWiped = await executeTargetAssetCleanup({
+          sourceProject: req.body?.srcProjectId || req.body?.source?.projectId || process.env.SOURCE_PROJECT_ID,
+          sourceEngine: req.body?.srcAppId || req.body?.sourceEngine || req.body?.source?.appId || process.env.SOURCE_APP_ID,
           targetProject: safeTargetProject,
           targetEngine: req.body?.tgtAppId || req.body?.appId || req.body?.target?.appId || process.env.TARGET_APP_ID || '',
           targetLocation: req.body?.tgtLocation || req.body?.location || req.body?.target?.appLocation || process.env.TARGET_LOCATION || 'global',

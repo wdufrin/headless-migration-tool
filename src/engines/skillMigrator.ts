@@ -59,6 +59,19 @@ export function isSkillOwnedByUser(skill: RegistrySkill, userFilter: string[] = 
     (skill as any).metadata?.publisher
   ].filter(Boolean) as string[];
 
+  if (skill.iamPolicy?.bindings) {
+    for (const binding of skill.iamPolicy.bindings) {
+      const roleLower = String(binding.role || '').toLowerCase();
+      if (roleLower.includes('owner') || roleLower.includes('admin')) {
+        for (const m of binding.members || []) {
+          if (m && !m.includes('gserviceaccount.com')) {
+            candidateOwners.push(m);
+          }
+        }
+      }
+    }
+  }
+
   if (candidateOwners.length === 0) {
     return false;
   }
@@ -83,6 +96,74 @@ export class SkillMigrator {
   constructor(client: AgentRegistryClient, discoveryClient?: DiscoveryEngineClient) {
     this.client = client;
     this.discoveryClient = discoveryClient;
+  }
+
+  /**
+   * Restores Skill IAM policy bindings from source to target Agent Registry skill,
+   * remapping member identities across IdPs while preserving target owner/admin bindings.
+   */
+  async restoreSkillIamPolicy(
+    targetSkillNameOrId: string,
+    sourcePolicy: IamPolicy,
+    targetEnv: EnvironmentConfig,
+    identityMapping: Record<string, string> = {}
+  ): Promise<void> {
+    if (
+      !sourcePolicy?.bindings ||
+      sourcePolicy.bindings.length === 0 ||
+      typeof this.client.getSkillIamPolicy !== 'function' ||
+      typeof this.client.setSkillIamPolicy !== 'function'
+    ) {
+      return;
+    }
+
+    const currentPolicy = await this.client.getSkillIamPolicy(targetSkillNameOrId, targetEnv);
+    const bindingMap = new Map<string, { role: string; members: Set<string>; condition?: any }>();
+
+    const addBinding = (role: string, members: string[], condition?: any) => {
+      if (!role || !members || members.length === 0) return;
+      const condKey = condition ? JSON.stringify(condition) : '';
+      const mapKey = `${role}::${condKey}`;
+      let entry = bindingMap.get(mapKey);
+      if (!entry) {
+        entry = { role, members: new Set<string>(), ...(condition ? { condition } : {}) };
+        bindingMap.set(mapKey, entry);
+      }
+      for (const m of members) {
+        if (m) entry.members.add(m);
+      }
+    };
+
+    for (const existing of currentPolicy.bindings || []) {
+      addBinding(existing.role, existing.members || [], existing.condition);
+    }
+
+    for (const srcBinding of sourcePolicy.bindings) {
+      const mappedMembers = (srcBinding.members || [])
+        .filter(m => Boolean(m) && !m.startsWith('deleted:'))
+        .map(m => mapIamMember(m, identityMapping));
+      addBinding(srcBinding.role, mappedMembers, srcBinding.condition);
+    }
+
+    const finalBindings = Array.from(bindingMap.values()).map(entry => ({
+      role: entry.role,
+      members: Array.from(entry.members),
+      ...(entry.condition ? { condition: entry.condition } : {})
+    }));
+
+    if (finalBindings.length === 0) {
+      return;
+    }
+
+    await this.client.setSkillIamPolicy(
+      targetSkillNameOrId,
+      {
+        version: Math.max(currentPolicy.version || 1, sourcePolicy.version || 1, 3),
+        bindings: finalBindings,
+        etag: currentPolicy.etag
+      },
+      targetEnv
+    );
   }
 
   /**
@@ -122,6 +203,16 @@ export class SkillMigrator {
       return true;
     });
 
+    if (typeof this.client.getSkillIamPolicy === 'function' && userRegistrySkills.length > 0) {
+      await mapConcurrent(userRegistrySkills, concurrency, async (skill: RegistrySkill) => {
+        try {
+          skill.iamPolicy = await this.client.getSkillIamPolicy(skill.name, sourceEnv);
+        } catch (iamErr: any) {
+          logger.debug(`Could not fetch IAM policy for source skill "${skill.displayName || skill.name}": ${iamErr.message}`);
+        }
+      });
+    }
+
     const userFilter = options.userFilter || [];
     const hasUserFilter = userFilter.length > 0 && !userFilter.includes('*') && !userFilter.includes('*@*');
     const filteredRegistrySkills = userRegistrySkills.filter((skill: RegistrySkill) => {
@@ -139,7 +230,10 @@ export class SkillMigrator {
       const resourceId = skill.name ? skill.name.split('/').pop()! : (skill.skillId || 'unknown-skill');
       const displayName = skill.displayName || resourceId;
 
-      const rawOwner = skill.publisher || (skill as any).owner || (skill as any).creator;
+      const iamOwnerMember = skill.iamPolicy?.bindings
+        ?.find(b => String(b.role || '').toLowerCase().includes('owner') || String(b.role || '').toLowerCase().includes('admin'))
+        ?.members?.find(m => m && !m.includes('gserviceaccount.com'));
+      const rawOwner = skill.publisher || (skill as any).owner || (skill as any).creator || iamOwnerMember;
       const originalOwner = rawOwner ? normalizePrincipal(rawOwner) : undefined;
       const targetOwner = originalOwner ? IdentityMappingService.lookupTargetIdentity(originalOwner, identityMapping, originalOwner) : undefined;
 
@@ -152,12 +246,16 @@ export class SkillMigrator {
         let fullSkill = skill;
         try {
           fullSkill = await this.client.getSkill(skill.name, sourceEnv);
-        } catch {}
+        } catch (getSkillErr: any) {
+          logger.debug(`Using list metadata for skill "${displayName}" (${resourceId}); getSkill returned: ${getSkillErr.message}`);
+        }
 
         let revisions: RegistrySkillRevision[] = [];
         try {
           revisions = await this.client.listSkillRevisions(skill.name, sourceEnv);
-        } catch {}
+        } catch (revErr: any) {
+          logger.debug(`Could not list revisions for skill "${displayName}" (${resourceId}): ${revErr.message}`);
+        }
 
         if (options.dryRun) {
           logger.info(`[DRY RUN] Would migrate Skill "${displayName}" (ID: ${resourceId}) to target Agent Registry`);
@@ -174,11 +272,16 @@ export class SkillMigrator {
         }
 
         let existsInTarget = false;
+        let targetSkillId = resourceId;
         try {
-          await this.client.getSkill(resourceId, targetEnv);
+          const existingSkill = await this.client.getSkill(resourceId, targetEnv);
           existsInTarget = true;
+          if (existingSkill?.name) {
+            targetSkillId = existingSkill.name.split('/').pop() || resourceId;
+          }
           logger.info(`Skill "${displayName}" (${resourceId}) already exists in target Agent Registry. Skipping creation.`);
-        } catch {
+        } catch (probeErr: any) {
+          logger.debug(`Target skill "${resourceId}" not found (${probeErr.message}); proceeding with creation.`);
           existsInTarget = false;
         }
 
@@ -211,12 +314,16 @@ export class SkillMigrator {
 
           logger.info(`Creating Skill "${displayName}" (${resourceId}) in target Agent Registry...`);
           const createdSkill = await this.client.createSkill(resourceId, payload, targetEnv);
-          const targetSkillId = createdSkill?.name ? createdSkill.name.split('/').pop()! : resourceId;
+          if (createdSkill?.name && !createdSkill.name.includes('/operations/')) {
+            targetSkillId = createdSkill.name.split('/').pop() || resourceId;
+          }
 
           if (fullSkill.targetState === 'TARGET_STATE_ACTIVE') {
             try {
               for (let attempt = 0; attempt < 5; attempt++) {
-                await new Promise(r => setTimeout(r, 2000));
+                if (attempt > 0) {
+                  await new Promise(r => setTimeout(r, 1500));
+                }
                 const targetRevs = await this.client.listSkillRevisions(targetSkillId, targetEnv);
                 const activeTargetRev = targetRevs.find(r => r.state === 'ACTIVE');
                 if (activeTargetRev) {
@@ -239,12 +346,21 @@ export class SkillMigrator {
           }
         }
 
+        if (options.preserveSharing !== false && skill.iamPolicy?.bindings && skill.iamPolicy.bindings.length > 0) {
+          try {
+            await this.restoreSkillIamPolicy(targetSkillId, skill.iamPolicy, targetEnv, identityMapping);
+            logger.info(`Restored IAM sharing bindings on target Skill "${displayName}" (${targetSkillId}).`);
+          } catch (iamErr: any) {
+            logger.warn(`Could not restore IAM policy on target Skill "${displayName}" (${targetSkillId}): ${iamErr.message}`);
+          }
+        }
+
         pushResult({
           id: resourceId,
           displayName,
           type: 'SKILL',
           status: 'SUCCESS',
-          targetId: resourceId,
+          targetId: targetSkillId,
           originalOwner,
           targetOwner
         });
@@ -395,10 +511,13 @@ export class SkillMigrator {
               if (agent.sharingConfig && options.preserveSharing !== false) {
                 try {
                   await this.discoveryClient!.patchAgentSharing(newAgentName, agent.sharingConfig, targetEnv, userOwner);
-                } catch {
+                } catch (userShareErr: any) {
+                  logger.debug(`User-scoped sharing patch failed for skill agent "${agent.displayName}" (${userShareErr.message}); retrying with service account.`);
                   try {
                     await this.discoveryClient!.patchAgentSharing(newAgentName, agent.sharingConfig, targetEnv, undefined);
-                  } catch {}
+                  } catch (saShareErr: any) {
+                    logger.warn(`Could not configure sharing on skill agent "${agent.displayName}": ${saShareErr.message}`);
+                  }
                 }
               }
 

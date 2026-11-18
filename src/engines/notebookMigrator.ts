@@ -14,13 +14,112 @@
  * limitations under the License.
  */
 
+import fs from 'fs';
+import path from 'path';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
+import { SecurityValidationError } from '../security/validator.js';
 import { EnvironmentConfig, MigrationOptions, MigrationItemResult, MigratedSourceItem, AdminHitlNotebookCandidate } from '../types/migration.js';
 import { Notebook, NotebookSource, NotebookNote } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
 import { logger } from '../utils/logger.js';
+
+export function inferSourceMimeType(fileName: string, explicitMimeType?: string): string {
+  if (explicitMimeType && explicitMimeType.trim()) {
+    return explicitMimeType.trim();
+  }
+  const ext = path.extname(fileName || '').toLowerCase();
+  switch (ext) {
+    case '.pdf':
+      return 'application/pdf';
+    case '.docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case '.doc':
+      return 'application/msword';
+    case '.pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case '.txt':
+      return 'text/plain';
+    case '.md':
+    case '.markdown':
+      return 'text/markdown';
+    case '.csv':
+      return 'text/csv';
+    case '.html':
+    case '.htm':
+      return 'text/html';
+    case '.json':
+      return 'application/json';
+    case '.mp3':
+      return 'audio/mpeg';
+    case '.wav':
+      return 'audio/wav';
+    case '.m4a':
+      return 'audio/mp4';
+    case '.png':
+      return 'image/png';
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+/**
+ * Resolves a local binary file matching `requestedFileName` strictly inside `localSourceFilesDir`.
+ * Rejects path traversal (`..`, directory separators, null bytes, or symlink escapes) with `SecurityValidationError`.
+ */
+export function resolveLocalSourceFile(
+  localSourceFilesDir: string,
+  requestedFileName: string
+): { fileName: string; content: Buffer; mimeType: string } | null {
+  const cleanName = String(requestedFileName || '').trim();
+  if (!cleanName) return null;
+
+  if (
+    cleanName.includes('\0') ||
+    cleanName.includes('..') ||
+    cleanName.includes('/') ||
+    cleanName.includes('\\') ||
+    path.basename(cleanName) !== cleanName
+  ) {
+    throw new SecurityValidationError(
+      `Rejected unsafe source file name "${requestedFileName}": path traversal and directory separators are forbidden.`
+    );
+  }
+
+  if (!fs.existsSync(localSourceFilesDir)) {
+    throw new SecurityValidationError(`Configured localSourceFilesDir does not exist: "${localSourceFilesDir}"`);
+  }
+
+  const baseRealDir = fs.realpathSync(localSourceFilesDir);
+  const candidatePath = path.join(baseRealDir, cleanName);
+  if (!fs.existsSync(candidatePath)) {
+    return null;
+  }
+
+  const candidateRealPath = fs.realpathSync(candidatePath);
+  if (candidateRealPath !== path.join(baseRealDir, path.basename(candidateRealPath)) && !candidateRealPath.startsWith(baseRealDir + path.sep)) {
+    throw new SecurityValidationError(
+      `Rejected symlink escape for source file "${requestedFileName}" outside "${baseRealDir}".`
+    );
+  }
+
+  const stat = fs.statSync(candidateRealPath);
+  if (!stat.isFile() || stat.size === 0) {
+    return null;
+  }
+
+  const content = fs.readFileSync(candidateRealPath);
+  return {
+    fileName: cleanName,
+    content,
+    mimeType: inferSourceMimeType(cleanName)
+  };
+}
+
 /**
  * Compares two notebook sources to determine if they represent the same underlying resource.
  */
@@ -717,6 +816,56 @@ export class NotebookMigrator {
   }
 
   /**
+   * Resolves raw binary bytes for a NotebookSource when available (either from a binary DataStore document's
+   * `content.rawBytes`, inline `rawBytes`/`binaryContent`, or a matching file inside `localSourceFilesDir`)
+   * so it can be uploaded natively via the public Scotty `SourceService.UploadSourceFile` endpoint.
+   */
+  resolveBinarySourceUpload(
+    source: NotebookSource,
+    localSourceFilesDir?: string
+  ): { fileName: string; content: Buffer; mimeType: string } | null {
+    if (!source || (source as any)._fetchError) {
+      return null;
+    }
+
+    const sourceTitle = (source.title || source.displayName || '').trim() || 'source-file';
+
+    if ((source as any)._binaryUpload?.content) {
+      const bin = (source as any)._binaryUpload;
+      return {
+        fileName: bin.fileName || sourceTitle,
+        content: Buffer.isBuffer(bin.content) ? bin.content : Buffer.from(bin.content),
+        mimeType: inferSourceMimeType(bin.fileName || sourceTitle, bin.mimeType)
+      };
+    }
+
+    if (Buffer.isBuffer((source as any).binaryContent) && (source as any).binaryContent.byteLength > 0) {
+      return {
+        fileName: sourceTitle,
+        content: (source as any).binaryContent,
+        mimeType: inferSourceMimeType(sourceTitle, (source as any).mimeType)
+      };
+    }
+
+    if (typeof (source as any).rawBytes === 'string' && (source as any).rawBytes.trim()) {
+      const buf = Buffer.from((source as any).rawBytes, 'base64');
+      if (buf.byteLength > 0) {
+        return {
+          fileName: sourceTitle,
+          content: buf,
+          mimeType: inferSourceMimeType(sourceTitle, (source as any).mimeType)
+        };
+      }
+    }
+
+    if (localSourceFilesDir && localSourceFilesDir.trim()) {
+      return resolveLocalSourceFile(localSourceFilesDir.trim(), sourceTitle);
+    }
+
+    return null;
+  }
+
+  /**
    * Migrates notebooks from source environment to target environment on behalf of users.
    */
   async migrateNotebooks(
@@ -1301,6 +1450,15 @@ export class NotebookMigrator {
                     if (dsText) {
                       extractedText = dsText;
                       logger.info(`Extracted ${dsText.length} chars of text from source DataStore document "${asDocName}" for source "${sTitle}"`);
+                    } else if (typeof dsDoc?.content?.rawBytes === 'string' && dsDoc.content.rawBytes.trim()) {
+                      const rawBuf = Buffer.from(dsDoc.content.rawBytes, 'base64');
+                      if (rawBuf.byteLength > 0) {
+                        (merged as any)._binaryUpload = {
+                          fileName: sTitle,
+                          content: rawBuf,
+                          mimeType: inferSourceMimeType(sTitle, dsDoc.content.mimeType)
+                        };
+                      }
                     }
                   } catch (dsErr: any) {
                     logger.debug(`Could not fetch DataStore document "${asDocName}" for source "${sTitle}": ${dsErr.message}`);
@@ -1314,7 +1472,7 @@ export class NotebookMigrator {
                 // Note: On external customer projects, Google's NotebookService.GetSource omits tailwindDoc/plainText/markdownString
                 // (restricted behind internal NOTEBOOKLM_SOURCE_CONTENT proto visibility), and both :interactSources and :streamAssist
                 // cannot extract raw uploaded/pasted source content. Sources without external reference links (Drive, Web, YouTube, DataStore)
-                // return null in mapSourceToPayload and are honestly reported as MANUAL_REUPLOAD_REQUIRED.
+                // return null in mapSourceToPayload unless binary bytes are supplied (e.g. via localSourceFilesDir + UploadSourceFile).
 
                 return merged;
               } catch (err: any) {
@@ -1377,6 +1535,24 @@ export class NotebookMigrator {
         }
         const payload = this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping);
         if (payload === null) {
+          try {
+            const binaryCandidate = this.resolveBinarySourceUpload(s, options.localSourceFilesDir);
+            if (binaryCandidate) {
+              dryRunSourcesRestored++;
+              return this.buildMigratedSourceItem(s, 'DRY_RUN', {
+                binaryUpload: {
+                  fileName: binaryCandidate.fileName,
+                  mimeType: binaryCandidate.mimeType,
+                  byteLength: binaryCandidate.content.byteLength
+                }
+              });
+            }
+          } catch (binErr: any) {
+            dryRunSourcesFailed++;
+            return this.buildMigratedSourceItem(s, 'FAILED', null, {
+              error: binErr.message
+            });
+          }
           dryRunSourcesFailed++;
           return this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
             error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
@@ -1387,7 +1563,16 @@ export class NotebookMigrator {
       });
 
       const unmigratableSamples = rawSources
-        .filter(s => !(s as any)._fetchError && this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping) === null)
+        .filter(s => {
+          if ((s as any)._fetchError) return false;
+          if (this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping) !== null) return false;
+          try {
+            return this.resolveBinarySourceUpload(s, options.localSourceFilesDir) === null;
+          } catch (sampleErr: any) {
+            logger.debug(`Skipping invalid local source sample "${s.displayName || s.title}": ${sampleErr.message}`);
+            return false;
+          }
+        })
         .slice(0, 3)
         .map(s => {
           const sTitle = s.displayName || s.title || 'Source';
@@ -1568,12 +1753,69 @@ export class NotebookMigrator {
 
             const payload = this.mapSourceToPayload(s, targetEnv, datastoreMapping, collectionMapping);
             if (payload === null) {
-              sourceDetails.push(
-                this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
-                  error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
-                })
-              );
-              sourcesFailed++;
+              let binaryCandidate: { fileName: string; content: Buffer; mimeType: string } | null = null;
+              try {
+                binaryCandidate = this.resolveBinarySourceUpload(s, options.localSourceFilesDir);
+              } catch (binResolveErr: any) {
+                logger.error(`Rejected binary source "${sTitle}" in Notebook ${newNotebookId}: ${binResolveErr.message}`);
+                sourceDetails.push(
+                  this.buildMigratedSourceItem(s, 'FAILED', null, {
+                    error: binResolveErr.message
+                  })
+                );
+                sourcesFailed++;
+                continue;
+              }
+
+              if (binaryCandidate && typeof this.client.uploadNotebookSourceFile === 'function') {
+                try {
+                  const uploadRes = await this.client.uploadNotebookSourceFile(
+                    newNotebookId,
+                    binaryCandidate.fileName,
+                    binaryCandidate.content,
+                    binaryCandidate.mimeType,
+                    targetEnv,
+                    userOwner
+                  );
+                  const uploadedSourceId = uploadRes?.sourceId?.id || (uploadRes as any)?.name?.split('/').pop();
+                  if (oldSourceId && uploadedSourceId) {
+                    sourceIdMap[oldSourceId] = uploadedSourceId;
+                  }
+                  sourceDetails.push(
+                    this.buildMigratedSourceItem(
+                      s,
+                      'SUCCESS',
+                      {
+                        binaryUpload: {
+                          fileName: binaryCandidate.fileName,
+                          mimeType: binaryCandidate.mimeType,
+                          byteLength: binaryCandidate.content.byteLength
+                        }
+                      },
+                      { targetSourceId: uploadedSourceId }
+                    )
+                  );
+                  sourcesRestored++;
+                  logger.info(
+                    `Uploaded binary source "${binaryCandidate.fileName}" (${binaryCandidate.content.byteLength} bytes, ${binaryCandidate.mimeType}) into target Notebook ${newNotebookId}.`
+                  );
+                } catch (uploadErr: any) {
+                  logger.error(`Failed to upload binary source "${binaryCandidate.fileName}" into Notebook ${newNotebookId}: ${uploadErr.message}`);
+                  sourceDetails.push(
+                    this.buildMigratedSourceItem(s, 'FAILED', null, {
+                      error: uploadErr.message
+                    })
+                  );
+                  sourcesFailed++;
+                }
+              } else {
+                sourceDetails.push(
+                  this.buildMigratedSourceItem(s, 'MANUAL_REUPLOAD_REQUIRED', null, {
+                    error: 'Document binary content unavailable across tenant boundary. Manual re-upload required to restore full grounding.'
+                  })
+                );
+                sourcesFailed++;
+              }
             } else {
               itemsToCreate.push({ raw: s, payload });
             }
@@ -1622,6 +1864,33 @@ export class NotebookMigrator {
                   );
                   sourcesRestored++;
                 } catch (singleErr: any) {
+                  const fallbackBinary = (rawSingle as any)._binaryUpload;
+                  if (fallbackBinary?.content && typeof this.client.uploadNotebookSourceFile === 'function') {
+                    try {
+                      const upRes = await this.client.uploadNotebookSourceFile(
+                        newNotebookId,
+                        fallbackBinary.fileName || sTitle,
+                        fallbackBinary.content,
+                        fallbackBinary.mimeType || 'application/octet-stream',
+                        targetEnv,
+                        userOwner
+                      );
+                      const uploadedId = upRes?.sourceId?.id || (upRes as any)?.name?.split('/').pop();
+                      if (oldSourceId && uploadedId) {
+                        sourceIdMap[oldSourceId] = uploadedId;
+                      }
+                      sourceDetails.push(
+                        this.buildMigratedSourceItem(rawSingle, 'SUCCESS', singleItem.payload, {
+                          targetSourceId: uploadedId
+                        })
+                      );
+                      sourcesRestored++;
+                      logger.info(`Recovered binary DataStore source "${sTitle}" via UploadSourceFile into Notebook ${newNotebookId}.`);
+                      continue;
+                    } catch (binFallbackErr: any) {
+                      logger.warn(`Binary UploadSourceFile fallback also failed for "${sTitle}": ${binFallbackErr.message}`);
+                    }
+                  }
                   logger.error(`Failed to migrate Source "${sTitle}" in Notebook ${newNotebookId}: ${singleErr.message}`);
                   sourceDetails.push(
                     this.buildMigratedSourceItem(rawSingle, 'FAILED', singleItem.payload, {

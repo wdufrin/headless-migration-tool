@@ -275,5 +275,49 @@ describe('Migration launch guards are wired into the page', () => {
     expect(elements.optPublishAgents.disabled).toBe(true);
     expect(elements.optPreserveSharing.disabled).toBe(true);
   });
+
+  it('wires optContinuableSessions checkbox and disables it when optSessions is unchecked', () => {
+    const onOptSessionsSource = extractFunctionSource(html, 'onOptSessionsChange');
+    const startMigrationSource = extractFunctionSource(html, 'startMigration');
+    expect(startMigrationSource).toContain('continuableSessions:');
+    expect(html).toContain('id="optContinuableSessions"');
+
+    const elements: Record<string, { checked: boolean; disabled: boolean; classList: { toggle: (cls: string, force?: boolean) => void; classes: Set<string> } }> = {};
+    for (const id of ['optSessions', 'optContinuableSessions', 'optContinuableSessionsRow']) {
+      const classes = new Set<string>();
+      elements[id] = {
+        checked: id === 'optSessions',
+        disabled: false,
+        classList: {
+          classes,
+          toggle(cls: string, force?: boolean) {
+            if (force) classes.add(cls);
+            else classes.delete(cls);
+          }
+        }
+      };
+    }
+
+    const docStub = {
+      getElementById: (id: string) => elements[id] || null
+    };
+
+    // eslint-disable-next-line no-new-func
+    const onOptSessionsChange = new Function(
+      'document',
+      `${onOptSessionsSource}\nreturn onOptSessionsChange;`
+    )(docStub);
+
+    elements.optSessions.checked = false;
+    onOptSessionsChange();
+    expect(elements.optContinuableSessions.disabled).toBe(true);
+    expect(elements.optContinuableSessionsRow.classList.classes.has('opacity-50')).toBe(true);
+
+    elements.optSessions.checked = true;
+    onOptSessionsChange();
+    expect(elements.optContinuableSessions.disabled).toBe(false);
+    expect(elements.optContinuableSessionsRow.classList.classes.has('opacity-50')).toBe(false);
+  });
 });
+
 

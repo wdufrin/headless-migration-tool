@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { GcpAuthService, isCredentialAutoloadDisabled } from '../services/gcpAuth.js';
+import { GcpAuthService, isCredentialAutoloadDisabled, isGroupOrNonHumanPrincipal } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
@@ -50,7 +50,8 @@ export class MemoryMigrator {
    */
   private resolveCandidateUsers(candidateUsers: string[] = []): string[] {
     const usersToScan = new Set<string>();
-    const rawFilters = (this.config.options?.userFilter || []).map(u => u.replace(/^user:/i, '').trim()).filter(Boolean);
+    const humanFilterEntries = (this.config.options?.userFilter || []).filter(u => !isGroupOrNonHumanPrincipal(u));
+    const rawFilters = humanFilterEntries.map(u => u.replace(/^user:/i, '').trim()).filter(Boolean);
     const exactUserFilters = rawFilters.filter(u => u.includes('@') && !u.includes('*'));
     const wildcardFilters = rawFilters.filter(u => u.includes('*') && u !== '*' && u !== '*@*');
     const matchesWildcards = (email: string): boolean => {
@@ -72,19 +73,23 @@ export class MemoryMigrator {
         usersToScan.add(u);
       }
       for (const u of candidateUsers) {
+        if (isGroupOrNonHumanPrincipal(u)) continue;
         const clean = u ? u.replace(/^user:/i, '').trim() : '';
         if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) usersToScan.add(clean);
       }
       if (this.config.identityMapping) {
         for (const k of Object.keys(this.config.identityMapping)) {
+          if (isGroupOrNonHumanPrincipal(k)) continue;
           const clean = k ? k.replace(/^user:/i, '').trim() : '';
           if (clean.includes('@') && !clean.includes('*') && matchesWildcards(clean)) usersToScan.add(clean);
         }
       }
     }
-    if (usersToScan.size === 0) {
+    if (usersToScan.size === 0 && !hasExplicitExactOnly) {
       const defaultAdmin = process.env.ADMIN_EMAIL || process.env.DEFAULT_USER_EMAIL || '';
-      if (defaultAdmin && matchesWildcards(defaultAdmin)) usersToScan.add(defaultAdmin);
+      if (defaultAdmin && !isGroupOrNonHumanPrincipal(defaultAdmin) && matchesWildcards(defaultAdmin)) {
+        usersToScan.add(defaultAdmin);
+      }
     }
     return Array.from(usersToScan);
   }

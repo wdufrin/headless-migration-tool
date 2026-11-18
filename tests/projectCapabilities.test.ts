@@ -64,7 +64,7 @@ describe('Project Capability Probe & Google-Internal API Circuit Breakers', () =
       if (url.includes('/sessions?pageSize=1')) {
         return { sessions: [] };
       }
-      if (url.includes('agentregistry.googleapis.com/v1alpha/projects/customer-prod-proj/locations/global/skills')) {
+      if (url.includes('agentregistry.googleapis.com/v1/projects/customer-prod-proj/locations/global/skills')) {
         return { skills: [] };
       }
       if (url.includes('/memories?pageSize=1')) {
@@ -144,6 +144,46 @@ describe('Project Capability Probe & Google-Internal API Circuit Breakers', () =
     expect(report.notebooks.artifacts.visibilityFlag).toContain('NLME_ARTIFACT_API_USER');
     expect(report.notebooks.uploadedFileContent.status).toBe('RESTRICTED');
     expect(report.notebooks.sharingRoster.status).toBe('RESTRICTED');
+  });
+
+  it('probes regional Agent Registry v1 location (us/eu) rather than hardcoded global', async () => {
+    const mockAuth = {
+      getAccessToken: vi.fn().mockResolvedValue('mock-admin-token'),
+      getUserAccessToken: vi.fn().mockResolvedValue('mock-user-token'),
+      getServiceAccountProjectId: vi.fn().mockReturnValue(undefined)
+    };
+    const client = new DiscoveryEngineClient(mockAuth as any);
+    vi.spyOn(client, 'resolveProjectNumber').mockResolvedValue('222333444');
+
+    const observedUrls: string[] = [];
+    vi.spyOn(client as any, 'request').mockImplementation(async (...args: any[]) => {
+      const url = String(args[0] || '');
+      observedUrls.push(url);
+      if (url.includes('agentregistry.googleapis.com/v1/projects/us-customer-proj/locations/us/skills')) {
+        return { skills: [] };
+      }
+      if (url.includes('/notebooks:listRecentlyViewed')) return { notebooks: [] };
+      if (url.includes('/agents?pageSize=1')) return { agents: [] };
+      if (url.includes('/sessions?pageSize=1')) return { sessions: [] };
+      const err: any = new Error('DiscoveryEngine API Error [404]: {"error":{"code":404,"message":"Method not found.","status":"NOT_FOUND"}}');
+      err.status = 404;
+      throw err;
+    });
+
+    const usEnv: EnvironmentConfig = {
+      projectId: 'us-customer-proj',
+      appLocation: 'us',
+      collectionId: 'default_collection',
+      appId: 'us-engine-1'
+    };
+
+    const report = await client.probeProjectCapabilities(usEnv);
+    expect(report.skills.status).toBe('SUPPORTED');
+    expect(report.skills.reason).toContain('location=us');
+    expect(
+      observedUrls.some(u => u.includes('agentregistry.googleapis.com/v1/projects/us-customer-proj/locations/us/skills'))
+    ).toBe(true);
+    expect(observedUrls.some(u => u.includes('/engines/us-engine-1/skills'))).toBe(false);
   });
 
   it('detects unlocked capabilities on an allowlisted project where GOOGLE_INTERNAL methods and fields are returned', async () => {

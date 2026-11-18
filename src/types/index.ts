@@ -241,6 +241,36 @@ export interface RegistrySkillRevision {
   [key: string]: any;
 }
 
+export interface AgentFile {
+  name: string;
+  fileName: string;
+  mimeType?: string;
+  [key: string]: any;
+}
+
+export interface AgentSubscription {
+  name?: string;
+  subscriberCpi?: string;
+  agentFlowNode?: Record<string, any>;
+  state?: 'STATE_UNSPECIFIED' | 'ACTIVE' | 'INACTIVE' | string;
+  createTime?: string;
+  updateTime?: string;
+  longRunningAgentPlan?: Record<string, any>;
+  [key: string]: any;
+}
+
+export interface LongRunningOperation<T = any> {
+  name: string;
+  done?: boolean;
+  metadata?: Record<string, any>;
+  error?: {
+    code?: number;
+    message?: string;
+    details?: any[];
+  };
+  response?: T;
+}
+
 export interface RegistrySkill {
   name: string;
   displayName: string;
@@ -253,6 +283,7 @@ export interface RegistrySkill {
   skillId?: string;
   createTime?: string;
   updateTime?: string;
+  iamPolicy?: IamPolicy;
   frontmatter?: RegistrySkillFrontmatter;
   initialRevision?: {
     frontmatter?: RegistrySkillFrontmatter;
@@ -263,4 +294,5 @@ export interface RegistrySkill {
   };
   [key: string]: any;
 }
+
 

@@ -1,7 +1,7 @@
 # 📘 Gemini Enterprise Admin Migration Platform
 ## Administrator & Operator User Guide
 
-**Document Version:** `v1.8.2 (Enterprise Release)`  
+**Document Version:** `v1.8.3 (Enterprise Release)`  
 **Target Audience:** Cloud Architects, Migration Operators & IT Administrators  
 **Supported Assets:** Research Notebooks, Grounding Sources, Custom Agents, User Skills *(Experimental)*, Chat Sessions, Personalized Memories *(Experimental)*, Studio Artifacts & Projects *(WIP)*  
 **Handover Formats:** Interactive Checklists, Single-ZIP Archives, Office PPTX/DOCX, Offline HTML5 Apps  
@@ -9,19 +9,18 @@
 
 ---
 
-## 1. Overview & Key Capabilities
+## 1. Overview & Key Capabilities (With Public API Caveats)
 
-The **Gemini Enterprise Admin Migration Platform** empowers Google Cloud administrators to execute frictionless, zero-data-loss migrations of Gemini Enterprise and Google Cloud Discovery Engine assets between Google Cloud projects, geographic regions, and Identity Providers.
+The **Gemini Enterprise Admin Migration Platform** enables Google Cloud administrators to migrate **supported** Gemini Enterprise and Google Cloud Discovery Engine assets across projects, regions, and Identity Providers — within the boundaries of Google's external public REST APIs. Because Discovery Engine does not provide a raw database clone API, every asset type has specific caveats:
 
-* **Research Notebooks & External Grounding Sources**: Deep-clones notebooks, preserves sharing permissions, and re-links external grounding sources (**Google Drive files**, **Web URLs**, **YouTube videos**, and **Agentspace DataStore documents**) with adaptive source read concurrency (`min(concurrency, 3)`). Because Google's public NotebookLM API restricts internal body content (`NOTEBOOKLM_SOURCE_CONTENT`), locally uploaded files (`.pdf`, `.docx`, `.txt`, audio) and pasted text are transparently reported as `MANUAL_REUPLOAD_REQUIRED` with zero fake metadata stubs.
-* **Custom Agents, Draft Filtering & Dynamic Connector Auto-Mapping**: Migrates Low-Code and Workflow agents, preserving system prompts, descriptions, author tags, and grounding DataStore connections as native editable drafts. Supports **Ignore Draft Agents (`excludeDraftAgents`)** to skip unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`) and migrate only **Private (created/deployed)** and **Published/Shared** agents. Automatically pairs timestamp-suffixed Connector Collections (`<connector>_<timestamp>`) and child entity DataStores (`_issue`, `_pull_request`, `_repository`) across projects using Regex Pattern Matching (`_#####` instance matching) to prevent 1-to-3 Connector source multiplication.
+* **Research Notebooks & External Grounding Links**: Recreates notebook shells, sharing ACLs, and **external reference links only** (**Google Drive files**, **Web URLs**, **YouTube videos**, and **Agentspace DataStore documents**). Because Google's external NotebookLM API restricts internal body content (`NOTEBOOKLM_SOURCE_CONTENT`), **locally uploaded files (`.pdf`, `.docx`, `.txt`, audio) and pasted text cannot be migrated on customer projects** and are flagged as `MANUAL_REUPLOAD_REQUIRED`. In-app Notebook Notes (`/notes`) and Studio Artifacts (`/artifacts`) also return `404` on standard external customer projects.
+* **Custom Agents, Lifecycle Parity & Connector Auto-Mapping**: Migrates Low-Code, Workflow, Managed, ADK, and A2A agent definitions, preserving `Draft` vs `Published` state, sharing scopes, local Low-Code files, and rewritten `datastoreMapping` / `collectionMapping` bindings (`_#####` timestamp matching). *Required Admin & User Steps*: **Admins must identify replacement DataStores and Connectors on the target GE app instance** (or strip unmapped ones via `__STRIP__`), ADK/Cloud Run backends are not redeployed, and **users must sign into the target GE app and authorize their connectors before their migrated agents will be able to use them**.
 * **Human-in-the-Loop (HITL) Connector & Notebook Validation**: Provides interactive Step 2 mapping dropdowns and Step 3 runtime HITL modals so operators can verify, remap, or strip (`__STRIP__`) unmapped agent connectors and selectively filter colleague-shared Admin notebooks.
-* **User-Created Skills in Agent Registry (`Experimental`)**: Migrates custom skills from `agentregistry.googleapis.com` while intelligently ignoring built-in 1P Google templates. *(Experimental — may not work for everyone)*.
-* **Multi-Turn Chat History**: Rehydrates conversational histories turn-by-turn into each user's left-hand Gemini Enterprise History sidebar.
-* **Personalized AI Memories & Facts (`Experimental`)**: Discovers and exports user preferences, role profiles, and learned memory facts. *(Experimental — may not work for everyone)*.
-* **Studio Artifacts Export (PPTX, DOCX, Video, Interactive Apps)**: Converts generated presentations into native widescreen PowerPoint (`.pptx`) decks, briefing docs into formatted Microsoft Word (`.docx`) files, explainer videos with automated `ffmpeg` compression, and quizzes/flashcards into 100% offline interactive HTML5 applications.
-* **Gemini Enterprise Project Migrations (`WIP`)**: Workspace Project migrations are currently a **Work in Progress (`WIP`)**.
-* **Automated User Handover Delivery Engine**: Dispatches personalized email notifications with interactive onboarding checklists (`/checklist`) and a consolidated `NotebookLM_Artifacts.zip` archive.
+* **Chat History (Archive vs. Single-Prompt Continuable Mode)**: Because `Turn.assist_answer` is `OUTPUT_ONLY` in Google's public `session.proto`, **historical chats cannot be recreated as alternating User / Gemini bubbles**. **Archive Mode** (default) writes static reference text inside User bubbles (cannot be continued), whereas opt-in **Continuable Mode** (`--continuable-sessions`) consolidates the **entire historical transcript into a single initial User input prompt** via `:streamAssist` (`toolsSpec: {}`) so follow-up questions remember the conversation.
+* **User-Created Skills (`Experimental`) & Personalized Memories (`Experimental`)**: Best-effort migration of custom skills (`agentregistry.googleapis.com` preview) and user memory facts (`EngineUserData`); frequently unavailable (`403`/`404`) on standard customer projects and does not migrate remote MCP servers or secrets.
+* **Offline Studio Artifacts Export *(Allowlisted Source Projects Only)***: On projects where `ArtifactService` is exposed, exports presentations to `.pptx`, briefing docs to `.docx`, explainer videos to compressed `.mp4`, and quizzes/flashcards to offline HTML5 apps for email handover *(cannot be re-imported into NotebookLM Studio)*.
+* **Gemini Enterprise Project Migrations (`WIP`)**: Workspace Project migrations are **not yet supported (`WIP`)**.
+* **Automated User Handover Delivery Engine**: Dispatches personalized email notifications with interactive onboarding checklists (`/checklist`) listing manual re-uploads and 3P connector re-authorizations.
 
 ---
 

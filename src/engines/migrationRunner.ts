@@ -25,7 +25,7 @@ import {
   ConnectorMappingEntry
 } from '../types/migration.js';
 import { ValidatedMigrationConfig } from '../config/configSchema.js';
-import { GcpAuthService } from '../services/gcpAuth.js';
+import { GcpAuthService, isGroupOrNonHumanPrincipal } from '../services/gcpAuth.js';
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { AgentRegistryClient } from '../services/agentRegistry.js';
 import { NotebookMigrator } from './notebookMigrator.js';
@@ -208,13 +208,18 @@ export class MigrationRunner {
     // Step 2: User Asset Discovery via UserFilters & IdentityMapping
     let discoveredUsers: string[] = [];
     const rawUserFilters = (config.options?.userFilter || []).map(f => f.replace(/^user:/i, '').trim().toLowerCase()).filter(Boolean);
-    const exactUserFilters = rawUserFilters.filter(f => f.includes('@') && !f.includes('*'));
-    const wildcardFilters = rawUserFilters.filter(f => f.includes('*') && f !== '*' && f !== '*@*');
+    const humanUserFilters = (config.options?.userFilter || [])
+      .filter(f => !isGroupOrNonHumanPrincipal(f))
+      .map(f => f.replace(/^user:/i, '').trim().toLowerCase())
+      .filter(Boolean);
+    const exactUserFilters = humanUserFilters.filter(f => f.includes('@') && !f.includes('*'));
+    const wildcardFilters = humanUserFilters.filter(f => f.includes('*') && f !== '*' && f !== '*@*');
     const wildcardRegexes = wildcardFilters.map(w => new RegExp('^' + w.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i'));
     const matchesUserFilters = (email: string): boolean => {
+      if (isGroupOrNonHumanPrincipal(email)) return false;
       const clean = email.replace(/^user:/i, '').trim().toLowerCase();
       if (!clean.includes('@') || clean.includes('*')) return false;
-      if (rawUserFilters.length === 0 || rawUserFilters.includes('*') || rawUserFilters.includes('*@*')) return true;
+      if (humanUserFilters.length === 0 || humanUserFilters.includes('*') || humanUserFilters.includes('*@*')) return true;
       if (exactUserFilters.includes(clean)) return true;
       if (wildcardRegexes.some(rx => rx.test(clean))) return true;
       return false;
@@ -228,6 +233,7 @@ export class MigrationRunner {
 
     if (config.identityMapping) {
       for (const k of Object.keys(config.identityMapping)) {
+        if (isGroupOrNonHumanPrincipal(k)) continue;
         const cleanK = k.replace(/^user:/i, '').trim();
         if (cleanK.includes('@') && !cleanK.includes('*') && matchesUserFilters(cleanK)) {
           if (!discoveredUsers.map(u => u.toLowerCase()).includes(cleanK.toLowerCase())) {
@@ -244,9 +250,9 @@ export class MigrationRunner {
       try {
         const discoveredSet = new Set<string>();
         const addCandidateEmail = (val?: string) => {
-          if (!val || typeof val !== 'string') return;
-          const clean = val.replace(/^(user|group|serviceAccount):/i, '').trim().toLowerCase();
-          if (clean.includes('@') && !clean.includes('*') && !clean.endsWith('.gserviceaccount.com') && matchesUserFilters(clean)) {
+          if (!val || typeof val !== 'string' || isGroupOrNonHumanPrincipal(val)) return;
+          const clean = val.replace(/^user:/i, '').trim().toLowerCase();
+          if (clean.includes('@') && !clean.includes('*') && matchesUserFilters(clean)) {
             discoveredSet.add(clean);
           }
         };
@@ -523,8 +529,18 @@ export class MigrationRunner {
           }
 
           try {
+            let migratedFilesCount = 0;
+            let continuableSeeded = false;
+            const turnsCount = Array.isArray(s.turns) ? s.turns.length : 0;
             if (!config.options?.dryRun) {
-              await sessionMigrator.migrateSession(s, tgtOwner);
+              const migratedSession = await sessionMigrator.migrateSession(s, tgtOwner);
+              migratedFilesCount = migratedSession?.migratedFilesCount || 0;
+              continuableSeeded = Boolean(migratedSession?.continuableSeeded);
+            } else {
+              logger.info(
+                `[DRY RUN] Verified chat session "${s.displayName || 'Untitled Chat'}" (${sessId}) for ${origOwner} -> ${tgtOwner}` +
+                ` (${turnsCount} turn(s)${s.isPinned ? ', pinned' : ''}${config.options?.continuableSessions ? ', continuable handshake armed' : ''})`
+              );
             }
             const sessionItem: MigrationItemResult = {
               id: sessId,
@@ -532,7 +548,13 @@ export class MigrationRunner {
               type: 'SESSION',
               status: config.options?.dryRun ? 'DRY_RUN' : 'SUCCESS',
               originalOwner: origOwner,
-              targetOwner: tgtOwner
+              targetOwner: tgtOwner,
+              details: {
+                turnsCount,
+                isPinned: Boolean(s.isPinned),
+                ...(continuableSeeded ? { continuableSeeded: true } : {}),
+                ...(migratedFilesCount > 0 ? { filesCount: migratedFilesCount } : {})
+              }
             };
             allResults.push(sessionItem);
             checkpointManager.recordSuccess(sessionItem);

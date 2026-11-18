@@ -16,12 +16,47 @@
 
 import { EnvironmentConfig } from '../types/migration.js';
 export type { EnvironmentConfig };
-import { Agent, Notebook, NotebookSource, NotebookNote, DataStore, ConnectorCollection, AppEngine, IamPolicy, Memory } from '../types/index.js';
-import { getSafeDiscoveryEngineUrl, validateResourceId } from '../security/validator.js';
+import {
+  Agent,
+  AgentFile,
+  AgentSubscription,
+  Notebook,
+  NotebookSource,
+  NotebookNote,
+  DataStore,
+  ConnectorCollection,
+  AppEngine,
+  IamPolicy,
+  Memory
+} from '../types/index.js';
+import { getSafeDiscoveryEngineUrl, SecurityValidationError, validateResourceId } from '../security/validator.js';
+import { getSafeAgentRegistryLocation } from './agentRegistry.js';
 import { GcpAuthService } from './gcpAuth.js';
 import { registerDiscoveredPoolGroups } from './wifPreflight.js';
 import { retryWithBackoff, mapConcurrent } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
+
+function encodeScottyFileNameHeader(fileName: string): string {
+  const sanitized = String(fileName || '').replace(/[\r\n\0]/g, '_').trim();
+  if (!sanitized) {
+    throw new SecurityValidationError('File name for Scotty media upload must not be empty.');
+  }
+  return Buffer.from(sanitized, 'utf8').toString('latin1');
+}
+
+function validateSafeAgentSubresourcePath(rawPath: string, requiredSegment: string, label: string): string {
+  const clean = String(rawPath || '').trim().replace(/^\/+/, '');
+  if (
+    !clean ||
+    !clean.includes(requiredSegment) ||
+    clean.includes('..') ||
+    clean.includes('//') ||
+    !/^[a-z0-9._/-]+$/i.test(clean)
+  ) {
+    throw new SecurityValidationError(`Invalid ${label} resource path: "${rawPath}"`);
+  }
+  return clean;
+}
 
 export interface DiscoveryEngineClientOptions {
   requestTimeoutMs?: number;
@@ -104,6 +139,7 @@ export class DiscoveryEngineClient {
     }
 
     let impersonationFallbackAttempted = false;
+    let keylessAdminFallbackAttempted = false;
 
     const fetchWithTimeout = async (reqHeaders: Record<string, string>) => {
       try {
@@ -187,7 +223,35 @@ export class DiscoveryEngineClient {
           }
         }
 
-        // 2. If 403 Permission Denied when impersonating a user (e.g., WiF token sent to Google Workspace target project),
+        // 2a. If 403 Permission Denied on a non-impersonated admin call under Keyless DWD (e.g. caller holds
+        // `serviceAccountTokenCreator` while project-level Discovery Engine IAM roles live on the DWD SA),
+        // retry once using `iamcredentials...:generateAccessToken` on the DWD SA.
+        if (
+          response.status === 403 &&
+          !forUserEmail &&
+          !keylessAdminFallbackAttempted &&
+          typeof this.auth.isKeylessDwd === 'function' &&
+          this.auth.isKeylessDwd() &&
+          typeof this.auth.mintKeylessServiceAccountAccessToken === 'function'
+        ) {
+          keylessAdminFallbackAttempted = true;
+          const keylessSaToken = await this.auth.mintKeylessServiceAccountAccessToken();
+          if (keylessSaToken && headers['Authorization'] !== `Bearer ${keylessSaToken}`) {
+            logger.debug(
+              `Admin call received HTTP 403 with operator base token under Keyless DWD; retrying with ${this.auth.getDwdServiceAccountEmail()} access token.`
+            );
+            headers['Authorization'] = `Bearer ${keylessSaToken}`;
+            response = await fetchWithTimeout(headers);
+            if (response.ok) {
+              if (response.status === 204) return {} as T;
+              return (await response.json()) as T;
+            }
+            errorText = await response.text();
+            try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+          }
+        }
+
+        // 2b. If 403 Permission Denied when impersonating a user (e.g., WiF token sent to Google Workspace target project),
         // retry using the alternate impersonation mechanism (DWD <-> WIF) -- but ONLY if that
         // mechanism is actually configured, and only ONCE per request to prevent flip-flop loops.
         if (response.status === 403 && forUserEmail && !impersonationFallbackAttempted) {
@@ -198,7 +262,7 @@ export class DiscoveryEngineClient {
               : undefined) ||
             initialMode ||
             'WIF';
-          const alternateMode: 'DWD' | 'WIF' = (actualInitialMode === 'DWD') ? 'WIF' : 'DWD';
+          const alternateMode: 'DWD' | 'WIF' = (actualInitialMode === 'DWD') ? 'WIF' : 'WIF' === actualInitialMode ? 'DWD' : 'DWD';
           const initialLabel = actualInitialMode;
           const firstFailureDetail = (parsedError?.error?.message || errorText || '').slice(0, 500);
           const mechanism = this.auth.getImpersonationMechanismStatus(forUserEmail, alternateMode);
@@ -337,6 +401,20 @@ export class DiscoveryEngineClient {
     const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
     const url = `${baseUrl}/v1alpha/${agentName}?updateMask=sharingConfig`;
     return this.request<Agent>(url, 'PATCH', { sharingConfig }, env.projectId, undefined, forUserEmail);
+  }
+
+  async patchAgent(agentName: string, payload: Partial<Agent>, updateMask: string, env: EnvironmentConfig, forUserEmail?: string): Promise<Agent> {
+    const cleanAgentName = validateSafeAgentSubresourcePath(agentName, '/agents/', 'agentName');
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const cleanMask = updateMask
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(encodeURIComponent)
+      .join(',');
+    const query = cleanMask ? `?updateMask=${cleanMask}` : '';
+    const url = `${baseUrl}/v1alpha/${cleanAgentName}${query}`;
+    return this.request<Agent>(url, 'PATCH', payload, env.projectId, undefined, forUserEmail);
   }
 
   async deployLowCodeAgent(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<any> {
@@ -576,6 +654,363 @@ export class DiscoveryEngineClient {
     const url = `${baseUrl}/v1alpha/${agentName}`;
     const pId = projectId || agentName.split('/')[1];
     return this.request<any>(url, 'DELETE', undefined, pId);
+  }
+
+  /**
+   * Executes a binary/media HTTP call against Discovery Engine's Scotty `/upload` or `/download` endpoints,
+   * preserving quota-project fallback and one-shot DWD <-> WIF impersonation retry semantics.
+   */
+  private async scottyBinaryRequest(
+    url: string,
+    method: 'GET' | 'POST',
+    options: {
+      body?: Buffer | Uint8Array;
+      headers?: Record<string, string>;
+      userProject?: string;
+      forUserEmail?: string;
+      timeoutMsOverride?: number;
+    } = {}
+  ): Promise<Response> {
+    const effectiveTimeoutMs = options.timeoutMsOverride ?? Math.max(this.requestTimeoutMs, 180_000);
+    const saHomeProject = this.auth.getServiceAccountProjectId();
+    const initialMode: 'DWD' | 'WIF' | undefined =
+      options.forUserEmail && saHomeProject && options.userProject === saHomeProject ? 'DWD' : undefined;
+
+    const token = await this.auth.getAccessToken(options.forUserEmail, undefined, initialMode);
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      ...options.headers
+    };
+
+    const homeProject = saHomeProject || process.env.SOURCE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
+    if (options.userProject) {
+      headers['X-Goog-User-Project'] = options.userProject;
+    } else if (homeProject) {
+      headers['X-Goog-User-Project'] = homeProject;
+    }
+
+    let impersonationFallbackAttempted = false;
+
+    const dispatchFetch = async (reqHeaders: Record<string, string>): Promise<Response> => {
+      try {
+        return await fetch(url, {
+          method,
+          headers: reqHeaders,
+          body: options.body ? (Buffer.from(options.body) as unknown as RequestInit['body']) : undefined,
+          redirect: 'follow',
+          signal: AbortSignal.timeout(effectiveTimeoutMs)
+        });
+      } catch (fetchErr: any) {
+        if (
+          fetchErr?.name === 'TimeoutError' ||
+          fetchErr?.name === 'AbortError' ||
+          String(fetchErr?.message || '').toLowerCase().includes('timeout')
+        ) {
+          const timeoutErr: any = new Error(
+            `Discovery Engine Media Request Timed Out after ${effectiveTimeoutMs}ms: ${method} ${url}`
+          );
+          timeoutErr.name = 'TimeoutError';
+          timeoutErr.code = 'ETIMEDOUT';
+          throw timeoutErr;
+        }
+        throw fetchErr;
+      }
+    };
+
+    return retryWithBackoff(async () => {
+      logger.debug(`HTTP (Scotty) ${method} ${url}`);
+      let response = await dispatchFetch(headers);
+
+      if (!response.ok) {
+        let errorText = await response.text();
+        let parsedError: any;
+        try {
+          parsedError = JSON.parse(errorText);
+        } catch {
+          parsedError = null;
+        }
+
+        const isQuotaDenied = (errObj: any, raw: string) => {
+          const r = errObj?.error?.details?.[0]?.reason || '';
+          const m = errObj?.error?.message || raw;
+          return r === 'USER_PROJECT_DENIED' || m.includes('USER_PROJECT_DENIED') || m.includes('serviceusage.services.use');
+        };
+
+        if (response.status === 403 && isQuotaDenied(parsedError, errorText)) {
+          if (homeProject && headers['X-Goog-User-Project'] !== homeProject) {
+            headers['X-Goog-User-Project'] = homeProject;
+            response = await dispatchFetch(headers);
+            if (response.ok) return response;
+            errorText = await response.text();
+            try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+          }
+          if (response.status === 403 && isQuotaDenied(parsedError, errorText) && headers['X-Goog-User-Project']) {
+            delete headers['X-Goog-User-Project'];
+            response = await dispatchFetch(headers);
+            if (response.ok) return response;
+            errorText = await response.text();
+            try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+          }
+        }
+
+        if (response.status === 403 && options.forUserEmail && !impersonationFallbackAttempted) {
+          impersonationFallbackAttempted = true;
+          const actualInitialMode: 'DWD' | 'WIF' =
+            (typeof this.auth.getLastUsedImpersonationMode === 'function'
+              ? this.auth.getLastUsedImpersonationMode(options.forUserEmail)
+              : undefined) ||
+            initialMode ||
+            'WIF';
+          const alternateMode: 'DWD' | 'WIF' = actualInitialMode === 'DWD' ? 'WIF' : 'DWD';
+          const mechanism = this.auth.getImpersonationMechanismStatus(options.forUserEmail, alternateMode);
+          if (mechanism.available) {
+            try {
+              const altToken = await this.auth.getAccessToken(options.forUserEmail, undefined, alternateMode);
+              if (altToken) {
+                headers['Authorization'] = `Bearer ${altToken}`;
+                response = await dispatchFetch(headers);
+                if (response.ok) return response;
+                errorText = await response.text();
+                try { parsedError = JSON.parse(errorText); } catch { parsedError = null; }
+              }
+            } catch (altErr: any) {
+              logger.debug(`Alternate ${alternateMode} impersonation retry failed on Scotty request: ${altErr.message}`);
+            }
+          }
+        }
+
+        const msg = parsedError?.error?.message || errorText || response.statusText;
+        const err: any = new Error(`Discovery Engine Media Request Failed [${response.status}]: ${msg}`);
+        err.status = response.status;
+        err.details = parsedError;
+        err.retryAfter = response.headers?.get?.('retry-after') ?? undefined;
+        throw err;
+      }
+
+      return response;
+    }, this.maxRetries, this.retryBaseDelayMs);
+  }
+
+  /**
+   * Lists local knowledge context files (`AgentFile`s) attached to a Custom Agent.
+   * Publicly exposed via `skip_filters: [VISIBILITY_FILTER]` on `AgentService.ListAgentFiles`.
+   */
+  async listAgentFiles(agentName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<AgentFile[]> {
+    const cleanAgentName = validateSafeAgentSubresourcePath(agentName, '/agents/', 'agentName');
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    return this.listAllPages<AgentFile>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/${cleanAgentName}/files?${query.toString()}`;
+      },
+      (res) => res.agentFiles,
+      env.projectId,
+      forUserEmail
+    );
+  }
+
+  /**
+   * Downloads raw binary bytes of a Custom Agent's `AgentFile` via Scotty media download.
+   * Publicly exposed via `skip_filters: [VISIBILITY_FILTER]` on `AgentService.DownloadAgentFile`.
+   */
+  async downloadAgentFile(agentFileName: string, env: EnvironmentConfig, forUserEmail?: string): Promise<Buffer> {
+    const cleanFileName = validateSafeAgentSubresourcePath(agentFileName, '/files/', 'agentFileName');
+    if (!cleanFileName.includes('/agents/')) {
+      throw new SecurityValidationError(`Invalid agentFileName resource path: "${agentFileName}"`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/download/v1alpha/${cleanFileName}:download?alt=media`;
+    const response = await this.scottyBinaryRequest(url, 'GET', {
+      userProject: env.projectId,
+      forUserEmail
+    });
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
+  /**
+   * Uploads raw binary bytes as a new `AgentFile` onto a target Custom Agent via Scotty raw upload.
+   * Publicly exposed via `skip_filters: [VISIBILITY_FILTER]` on `AgentService.UploadAgentFile`.
+   */
+  async uploadAgentFile(
+    agentName: string,
+    fileName: string,
+    content: Buffer | Uint8Array,
+    mimeType: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<AgentFile> {
+    const cleanAgentName = validateSafeAgentSubresourcePath(agentName, '/agents/', 'agentName');
+    const encodedHeaderFileName = encodeScottyFileNameHeader(fileName);
+    if (!content || content.byteLength === 0) {
+      throw new Error(`Cannot upload empty AgentFile "${fileName}" to agent "${cleanAgentName}".`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/upload/v1alpha/${cleanAgentName}/files:upload`;
+    const response = await this.scottyBinaryRequest(url, 'POST', {
+      body: content,
+      headers: {
+        'Content-Type': (mimeType || 'application/octet-stream').trim(),
+        'X-Goog-Upload-Protocol': 'raw',
+        'X-Goog-Upload-File-Name': encodedHeaderFileName
+      },
+      userProject: env.projectId,
+      forUserEmail
+    });
+    if (response.status === 204) {
+      return { name: '', fileName, mimeType };
+    }
+    const parsed: any = await response.json();
+    return (parsed?.agentFile || parsed) as AgentFile;
+  }
+
+  /**
+   * Atomically transfers ownership of a non-PRIVATE agent to a target human (`user:`) or WIF (`principal://`)
+   * identity via `AgentService.TransferAgentOwner` (`POST /v1alpha/{agent}:transferAgentOwner`).
+   * Requires `discoveryengine.agents.manage` (included in `roles/discoveryengine.admin`).
+   */
+  async transferAgentOwner(
+    agentName: string,
+    targetPrincipal: string,
+    env: EnvironmentConfig,
+    previousOwnerDisposition: 'REMOVE' | 'KEEP_AS_AGENT_USER' = 'REMOVE'
+  ): Promise<void> {
+    const cleanAgentName = validateSafeAgentSubresourcePath(agentName, '/agents/', 'agentName');
+    const trimmed = String(targetPrincipal || '').trim();
+    if (!trimmed || /^serviceAccount:/i.test(trimmed) || trimmed.toLowerCase().includes('.gserviceaccount.com')) {
+      throw new SecurityValidationError(
+        `Invalid targetPrincipal for transferAgentOwner: "${targetPrincipal}". Must be a human "user:<email>" or Workforce Identity "principal://..." principal.`
+      );
+    }
+
+    let formattedPrincipal: string;
+    if (trimmed.startsWith('principal://') || /^user:/i.test(trimmed)) {
+      formattedPrincipal = trimmed.startsWith('USER:') ? `user:${trimmed.slice(5)}` : trimmed;
+    } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      formattedPrincipal = `user:${trimmed}`;
+    } else {
+      throw new SecurityValidationError(
+        `Invalid targetPrincipal format for transferAgentOwner: "${targetPrincipal}". Expected "user:email@domain" or "principal://...".`
+      );
+    }
+
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${cleanAgentName}:transferAgentOwner`;
+    const body: Record<string, any> = {
+      targetPrincipal: {
+        principal: formattedPrincipal
+      }
+    };
+    if (previousOwnerDisposition === 'KEEP_AS_AGENT_USER') {
+      body.previousOwnerDisposition = 'KEEP_AS_AGENT_USER';
+    }
+    await this.request<any>(url, 'POST', body, env.projectId);
+  }
+
+  /**
+   * Lists the calling user's `AgentSubscription`s under an Agent (`GET /v1alpha/{agent}/agentSubscriptions`).
+   * Note: Results are scoped server-side to the authenticated end-user's CPI (`forUserEmail` required).
+   */
+  async listAgentSubscriptions(
+    agentName: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<AgentSubscription[]> {
+    const cleanAgentName = validateSafeAgentSubresourcePath(agentName, '/agents/', 'agentName');
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    return this.listAllPages<AgentSubscription>(
+      (pageToken) => {
+        const query = new URLSearchParams({ pageSize: '100' });
+        if (pageToken) query.set('pageToken', pageToken);
+        return `${baseUrl}/v1alpha/${cleanAgentName}/agentSubscriptions?${query.toString()}`;
+      },
+      (res) => res.agentSubscriptions,
+      env.projectId,
+      forUserEmail
+    );
+  }
+
+  /**
+   * Creates a per-user `AgentSubscription` under a target Agent (`POST /v1alpha/{agent}/agentSubscriptions`).
+   */
+  async createAgentSubscription(
+    agentName: string,
+    subscription: Partial<AgentSubscription>,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<AgentSubscription> {
+    const cleanAgentName = validateSafeAgentSubresourcePath(agentName, '/agents/', 'agentName');
+    if (!subscription || typeof subscription !== 'object') {
+      throw new Error('Subscription payload must be a non-null object.');
+    }
+    const sanitizedBody: Record<string, any> = { ...subscription };
+    delete sanitizedBody.name;
+    delete sanitizedBody.subscriberCpi;
+    delete sanitizedBody.subscriber_cpi;
+    delete sanitizedBody.state;
+    delete sanitizedBody.createTime;
+    delete sanitizedBody.create_time;
+    delete sanitizedBody.updateTime;
+    delete sanitizedBody.update_time;
+
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${cleanAgentName}/agentSubscriptions`;
+    return this.request<AgentSubscription>(url, 'POST', sanitizedBody, env.projectId, undefined, forUserEmail);
+  }
+
+  /**
+   * Pauses an active `AgentSubscription` (`POST /v1alpha/{subscription}:pause`) to preserve `INACTIVE` state.
+   */
+  async pauseAgentSubscription(
+    subscriptionName: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<AgentSubscription> {
+    const cleanSubName = validateSafeAgentSubresourcePath(
+      subscriptionName,
+      '/agentSubscriptions/',
+      'subscriptionName'
+    );
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/v1alpha/${cleanSubName}:pause`;
+    return this.request<AgentSubscription>(url, 'POST', {}, env.projectId, undefined, forUserEmail);
+  }
+
+  /**
+   * Uploads a raw binary source file (PDF, DOCX, Audio, TXT, Markdown) directly into a NotebookLM Notebook
+   * via the publicly exposed Scotty `SourceService.UploadSourceFile` endpoint
+   * (`POST /upload/v1alpha/projects/{p}/locations/{l}/notebooks/{nb}/sources:uploadFile`).
+   */
+  async uploadNotebookSourceFile(
+    notebookId: string,
+    fileName: string,
+    content: Buffer | Uint8Array,
+    mimeType: string,
+    env: EnvironmentConfig,
+    forUserEmail?: string
+  ): Promise<{ sourceId?: { id?: string }; [key: string]: any }> {
+    validateResourceId(notebookId, 'notebookId');
+    const encodedHeaderFileName = encodeScottyFileNameHeader(fileName);
+    if (!content || content.byteLength === 0) {
+      throw new Error(`Cannot upload empty source file "${fileName}" to notebook "${notebookId}".`);
+    }
+    const baseUrl = getSafeDiscoveryEngineUrl(env.appLocation);
+    const url = `${baseUrl}/upload/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/notebooks/${notebookId}/sources:uploadFile`;
+    const response = await this.scottyBinaryRequest(url, 'POST', {
+      body: content,
+      headers: {
+        'Content-Type': (mimeType || 'application/octet-stream').trim(),
+        'X-Goog-Upload-Protocol': 'raw',
+        'X-Goog-Upload-File-Name': encodedHeaderFileName
+      },
+      userProject: env.projectId,
+      forUserEmail
+    });
+    if (response.status === 204) {
+      return {};
+    }
+    return (await response.json()) as { sourceId?: { id?: string }; [key: string]: any };
   }
 
   async listNotebooks(env: EnvironmentConfig, forUserEmail?: string): Promise<Notebook[]> {
@@ -1717,38 +2152,34 @@ export class DiscoveryEngineClient {
           visibilityFlag: 'PUBLIC'
         });
 
-    // 3. Skills (Agent Registry v1alpha / SkillRegistryService)
+    // 3. Skills (Cloud Agent Registry GA v1 at the engine's configured location)
+    const skillLocation = getSafeAgentRegistryLocation(env.appLocation);
     const skillsPromise: Promise<CapabilityCheckResult> = (async () => {
       try {
         await this.request<any>(
-          `https://agentregistry.googleapis.com/v1alpha/projects/${encodeURIComponent(env.projectId)}/locations/global/skills?pageSize=1`,
+          `https://agentregistry.googleapis.com/v1/projects/${encodeURIComponent(env.projectId)}/locations/${encodeURIComponent(skillLocation)}/skills?pageSize=1`,
           'GET',
           undefined,
           env.projectId
         );
         return {
           status: 'SUPPORTED',
-          reason: 'Cloud Agent Registry Skills API (agentregistry.googleapis.com) is enabled and exposed.',
+          reason: `Cloud Agent Registry Skills v1 API (agentregistry.googleapis.com, location=${skillLocation}) is enabled and exposed.`,
           visibilityFlag: 'PUBLIC'
         };
       } catch (arErr: any) {
-        if (hasEngine) {
-          return probeRpcRoute(
-            () =>
-              this.request<any>(
-                `${baseUrl}/v1alpha/projects/${env.projectId}/locations/${env.appLocation}/collections/${collection}/engines/${env.appId}/skills?pageSize=1`,
-                'GET',
-                undefined,
-                env.projectId
-              ),
-            'PUBLIC (skip_filters: VISIBILITY_FILTER)',
-            'Discovery Engine SkillRegistryService is exposed on this project.',
-            'Neither Cloud Agent Registry API nor SkillRegistryService is available on this project.'
-          );
+        const msg = String(arErr?.message || '');
+        if (arErr?.status === 400 || (arErr?.status === 404 && !DiscoveryEngineClient.isMethodNotFoundError(arErr))) {
+          return {
+            status: 'SUPPORTED',
+            reason: `Cloud Agent Registry Skills v1 API (agentregistry.googleapis.com, location=${skillLocation}) is exposed.`,
+            visibilityFlag: 'PUBLIC',
+            httpStatus: arErr?.status
+          };
         }
         return {
           status: DiscoveryEngineClient.isMethodNotFoundError(arErr) ? 'RESTRICTED' : 'ERROR',
-          reason: `Cloud Agent Registry API check failed (${arErr?.status || 'ERR'}): ${String(arErr?.message || '').slice(0, 160)}`,
+          reason: `Cloud Agent Registry v1 check (${skillLocation}) failed (${arErr?.status || 'ERR'}): ${msg.slice(0, 180)}`,
           visibilityFlag: 'PUBLIC',
           httpStatus: arErr?.status
         };

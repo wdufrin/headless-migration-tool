@@ -1,4 +1,37 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
+## Release Notes — Version 1.8.3
+
+**Release Date:** November 17, 2026  
+**License:** Apache-2.0  
+**Build Target:** Node.js >= 20.0.0 / TypeScript 5.x  
+
+---
+
+### Executive Summary
+
+Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.8.3** introduces **Opt-In Continuable Chat Migration (`--continuable-sessions` / `:streamAssist` Context Handshake)** so follow-up questions in migrated chats remember the full verbatim historical conversation, fixes **Multi-User Web-UI Chat Discovery** (`ListSessions` under DWD/WiF EUC impersonation), filters out non-human `group:`/`serviceAccount:` principals before DWD JWT minting, resolves **Keyless DWD Admin Token Fallback**, enables **Same-Project Engine-Isolated Target Cleanup** for engine-scoped assets, and adds a comprehensive **What This Tool Can and Cannot Migrate** matrix to `README.md`. v1.8.3 includes **425 passing automated tests across 33 test suites at 100%**.
+
+---
+
+### 🌟 Key Highlights & New Features
+
+#### 1. 💬 Opt-In Continuable Chat Migration (`src/engines/sessionMigrator.ts`, `public/index.html`, `src/cli.ts`)
+* **`:streamAssist` Verbatim Context Handshake**: When `continuableSessions: true` (`--continuable-sessions` or the **🔄 Enable Continuable Chats** checkbox in Step 3) is enabled, `SessionMigrator` creates the target session container (`turns: []`), uploads all binary session files, and seeds 1 live `AssistantService.StreamAssist` turn (`toolsSpec: {}`) containing 100% of the verbatim historical prompts and responses so Spanner writes a real `AssistAnswer` row.
+* **Exact Title Preservation & Zero-Data-Loss Fallback**: Follows `:streamAssist` with `PATCH /v1alpha/{session}?updateMask=displayName[,isPinned]` to lock in the original chat title, and automatically falls back to `PATCH ?updateMask=turns,displayName` with verbatim archive turns if `:streamAssist` is skipped by Model Armor or rate-limited.
+
+#### 2. 👥 Multi-User Web-UI Chat Discovery & Non-Human Principal Filtering (`src/engines/sessionMigrator.ts`, `src/utils/impersonationFailure.ts`)
+* **Native Web-UI Session Discovery**: Omits `filter=user_pseudo_id` when `ListSessions` is called with a user-impersonated `DWD` or `WiF` token (where Spanner already scopes results by `owner_id` while Web-UI sessions store a numeric `session_id` in `userPseudoId`).
+* **Group Principal Filtering**: Skips `group:`, `domain:`, and `serviceAccount:` principals during user-scoped Session and Memory discovery.
+
+#### 3. 🔑 Keyless DWD Admin Token Resolution & Engine-Isolated Cleanup (`src/services/gcpAuth.ts`, `src/routes/maintenance.ts`)
+* **Keyless DWD Admin Token**: Uses the active caller's ADC/gcloud token first for admin discovery calls, falling back to IAM Credentials `generateAccessToken` on `401`/`403`.
+* **Same-Project Engine Cleanup**: Allows **Target Maintenance** (`POST /api/cleanup`) to wipe **Chat History Sessions**, **Custom Agents**, and **User Memories** when `targetProject === sourceProject` and `targetEngine !== sourceEngine`, while continuing to block project-wide **Gemini Notebooks** cleanup on same-project runs.
+
+#### 4. 📋 Transparent Capabilities & Boundaries Matrix (`README.md`)
+* Clearly documents what the tool **can** and **cannot** migrate across Custom Agents, Chat History, Research Notebooks, User Memories, User-Created Skills, and Projects (`WIP`).
+
+---
+
 ## Release Notes — Version 1.8.2
 
 **Release Date:** October 21, 2026  
@@ -281,7 +314,7 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ---
 
-### 📦 Upgrade Guide (v1.8.1 &rarr; v1.8.2)
+### 📦 Upgrade Guide (v1.8.2 &rarr; v1.8.3)
 
 1. **Pull Latest Changes & Install Dependencies**:
    ```bash
@@ -306,7 +339,8 @@ Gemini Enterprise Admin Migration Platform (`gemini-migrate`) **v1.5.7** introdu
 
 ### 📜 Version History
 
-* **v1.8.2** *(Current)*: Added public customer NotebookLM source extraction via `AssistantService.StreamAssist` (`query_notebook` tool with automatic numeric `projectNumber` resolution and grounded chunk extraction), automatic cleanup of temporary `:streamAssist` sessions, and per-project 404 caching for unexposed `NoteService` and `ArtifactService` endpoints, expanding to 391 passing tests across 31 test suites.
+* **v1.8.3** *(Current)*: Added opt-in continuable chat migration (`--continuable-sessions` / `:streamAssist` verbatim context handshake with automatic archive fallback), fixed multi-user Web-UI chat discovery under DWD/WiF EUC impersonation, filtered `group:`/`serviceAccount:` principals before DWD JWT minting, resolved Keyless DWD admin token fallback, enabled same-project engine-isolated cleanup for engine-scoped assets, and added the comprehensive Capabilities & API Boundaries matrix to `README.md`, expanding to 425 passing tests across 33 test suites.
+* **v1.8.2**: Hardened NotebookLM external source migration (Google Drive, Web URLs, YouTube, Agentspace DataStore documents), honest `MANUAL_REUPLOAD_REQUIRED` reporting for uploaded/pasted sources on customer projects, and per-project 404 caching for unexposed `NoteService` and `ArtifactService` endpoints, expanding to 395 passing tests across 31 test suites.
 * **v1.8.1**: Restored full NotebookLM source text extraction (`tailwindDoc`, `plainText`, `markdownString`, and table/codeBlock parsing) directly into `details.sources[].content` and `userContent` in the JSON report and `<Notebook>_sources_backup.json` handover bundle, added automatic `:interactSources` fallback extraction (`DiscoveryEngineClient.interactNotebookSource`) when `tailwindDoc` is omitted on customer projects, added DataStore-grounded notebook source text extraction (`getDataStoreDocument`) and `datastoreMapping`/`collectionMapping` path rewriting (`rewriteAgentspaceDocumentName`), and expanded to 389 passing tests across 31 test suites.
 * **v1.8.0**: Added source-faithful agent deployment & publishing (`:deployLowCode` with `{"deployMode":"DEPLOY"}`, `:publish` with automatic `_agent_execution_grant_` consent & numeric project normalization for `CONNECTOR_EVENT_TRIGGER`, `:requestAgentReview` before `:setIamPolicy` for shared agents, and strict preservation of source `Draft` vs `Published` state), expanding to 383 passing tests across 31 test suites.
 * **v1.7.0**: Added Step 3 Worker Concurrency selector (`#optConcurrency`) with adaptive per-notebook source read throttling, added Ignore Draft Agents sub-option (`excludeDraftAgents` / `--exclude-draft-agents`) to migrate Private (created) and Published/Shared agents while skipping unsaved UI drafts, removed the fake `[Restored Source: ...]` metadata stub in `NotebookMigrator` in favor of honest `FAILED` / `MANUAL_REUPLOAD_REQUIRED` reporting in both Dry Run and Live Run modes, and expanded to 375 passing tests across 31 test suites.

@@ -16,7 +16,7 @@
 
 import { DiscoveryEngineClient } from '../services/discoveryEngine.js';
 import { EnvironmentConfig, MigrationOptions, MigrationItemResult } from '../types/migration.js';
-import { Agent, ConnectorCollection, DataStore, IamPolicy } from '../types/index.js';
+import { Agent, AgentFile, AgentSubscription, ConnectorCollection, DataStore, IamPolicy } from '../types/index.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { classifyImpersonationFailure } from '../utils/impersonationFailure.js';
 import { IdentityMappingService } from '../services/identityMappingService.js';
@@ -47,7 +47,9 @@ export function mapIamMember(member: string, identityMapping: Record<string, str
 
   try {
     clean = decodeURIComponent(clean);
-  } catch {}
+  } catch (decodeErr: any) {
+    logger.debug(`Could not URI-decode IAM member "${clean}": ${decodeErr.message}`);
+  }
 
   const mapped = IdentityMappingService.lookupTargetIdentity(clean, identityMapping, clean);
 
@@ -72,7 +74,9 @@ export function normalizePrincipal(principal: string): string {
     .trim();
   try {
     clean = decodeURIComponent(clean);
-  } catch {}
+  } catch (decodeErr: any) {
+    logger.debug(`Could not URI-decode principal "${clean}": ${decodeErr.message}`);
+  }
   return clean;
 }
 
@@ -689,6 +693,454 @@ export class AgentMigrator {
   }
 
   /**
+   * Extracts deduplicated `AgentFile` references embedded in a Low-Code Agent definition
+   * (`agentFiles`, `deployedAgentFiles`, top-level `agentFiles`, and node `knowledgeSources`).
+   */
+  collectEmbeddedAgentFiles(agent: Agent): AgentFile[] {
+    const lowCode = agent.lowCodeAgentDefinition;
+    const rawLists: any[][] = [
+      Array.isArray(lowCode?.agentFiles) ? lowCode.agentFiles : [],
+      Array.isArray(lowCode?.deployedAgentFiles) ? lowCode.deployedAgentFiles : [],
+      Array.isArray((agent as any).agentFiles) ? (agent as any).agentFiles : []
+    ];
+
+    const nodeLists = [lowCode?.nodes, lowCode?.deployedNodes].filter(Array.isArray);
+    for (const nodes of nodeLists) {
+      for (const node of nodes) {
+        const ksList =
+          node?.llmAgentNode?.knowledgeSources ||
+          node?.llmAgentNode?.selectedTools?.knowledgeSources;
+        if (Array.isArray(ksList)) {
+          for (const ks of ksList) {
+            if (ks?.agentFile) {
+              rawLists.push([ks.agentFile]);
+            }
+          }
+        }
+      }
+    }
+
+    const seenKeys = new Set<string>();
+    const collected: AgentFile[] = [];
+    for (const list of rawLists) {
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue;
+        const name = String(item.name || '').trim();
+        const fileName = String(item.fileName || item.file_name || '').trim();
+        const mimeType = item.mimeType || item.mime_type || 'application/octet-stream';
+        if (!name) continue;
+        const dedupKey = name || fileName;
+        if (seenKeys.has(dedupKey)) continue;
+        seenKeys.add(dedupKey);
+        collected.push({
+          name,
+          fileName: fileName || name.split('/').pop() || 'agent-file',
+          mimeType
+        });
+      }
+    }
+    return collected;
+  }
+
+  /**
+   * Migrates local knowledge files (`AgentFile`s) attached to a Low-Code / No-Code Agent:
+   * 1. Downloads raw file bytes from source via Scotty (`DownloadAgentFile`)
+   * 2. Uploads bytes to target agent via Scotty (`UploadAgentFile`) with idempotency deduplication
+   * 3. Rewrites `lowCodeAgentDefinition.agentFiles` and node `knowledgeSources` to reference the new target `AgentFile` resource names
+   * 4. Patches `lowCodeAgentDefinition` on the target agent prior to `:deployLowCode`
+   */
+  async migrateAgentFiles(
+    sourceAgent: Agent,
+    targetAgentName: string,
+    createPayload: any,
+    sourceEnv: EnvironmentConfig,
+    targetEnv: EnvironmentConfig,
+    sourceUserEmail?: string,
+    targetUserEmail?: string,
+    options?: { forceListFromApi?: boolean }
+  ): Promise<{ migrated: number; failed: number }> {
+    if (
+      typeof this.client.downloadAgentFile !== 'function' ||
+      typeof this.client.uploadAgentFile !== 'function'
+    ) {
+      return { migrated: 0, failed: 0 };
+    }
+
+    let sourceFiles = this.collectEmbeddedAgentFiles(sourceAgent);
+    if (sourceFiles.length === 0 && options?.forceListFromApi && typeof this.client.listAgentFiles === 'function') {
+      try {
+        sourceFiles = await this.client.listAgentFiles(sourceAgent.name, sourceEnv);
+      } catch (adminListErr: any) {
+        if (sourceUserEmail) {
+          sourceFiles = await this.client.listAgentFiles(sourceAgent.name, sourceEnv, sourceUserEmail);
+        } else {
+          throw adminListErr;
+        }
+      }
+    }
+
+    if (sourceFiles.length === 0) {
+      return { migrated: 0, failed: 0 };
+    }
+
+    let existingTargetFiles: AgentFile[] = [];
+    if (typeof this.client.listAgentFiles === 'function') {
+      try {
+        existingTargetFiles = await this.client.listAgentFiles(targetAgentName, targetEnv, targetUserEmail);
+      } catch (userListErr: any) {
+        logger.debug(`User-scoped target listAgentFiles failed (${userListErr.message}); retrying with admin credentials.`);
+        try {
+          existingTargetFiles = await this.client.listAgentFiles(targetAgentName, targetEnv, undefined);
+        } catch (saListErr: any) {
+          logger.debug(`Admin-scoped target listAgentFiles skipped (${saListErr.message}).`);
+        }
+      }
+    }
+
+    const oldNameToNewFile = new Map<string, AgentFile>();
+    const attachedTargetFiles: AgentFile[] = [];
+    let migrated = 0;
+    let failed = 0;
+
+    for (const srcFile of sourceFiles) {
+      const targetMatch = existingTargetFiles.find(
+        tf => (tf.fileName || (tf as any).file_name) === srcFile.fileName
+      );
+      if (targetMatch?.name) {
+        const normalizedTargetFile: AgentFile = {
+          name: targetMatch.name,
+          fileName: targetMatch.fileName || (targetMatch as any).file_name || srcFile.fileName,
+          mimeType: targetMatch.mimeType || (targetMatch as any).mime_type || srcFile.mimeType
+        };
+        oldNameToNewFile.set(srcFile.name, normalizedTargetFile);
+        attachedTargetFiles.push(normalizedTargetFile);
+        migrated++;
+        logger.info(`AgentFile "${srcFile.fileName}" already exists on target agent "${targetAgentName}". Reusing existing file.`);
+        continue;
+      }
+
+      try {
+        let rawBytes: Buffer;
+        try {
+          rawBytes = await this.client.downloadAgentFile(srcFile.name, sourceEnv, undefined);
+        } catch (adminDlErr: any) {
+          if (sourceUserEmail) {
+            logger.debug(`Admin downloadAgentFile failed for "${srcFile.fileName}" (${adminDlErr.message}); retrying as "${sourceUserEmail}".`);
+            rawBytes = await this.client.downloadAgentFile(srcFile.name, sourceEnv, sourceUserEmail);
+          } else {
+            throw adminDlErr;
+          }
+        }
+
+        let uploadedFile: AgentFile;
+        try {
+          uploadedFile = await this.client.uploadAgentFile(
+            targetAgentName,
+            srcFile.fileName,
+            rawBytes,
+            srcFile.mimeType || 'application/octet-stream',
+            targetEnv,
+            targetUserEmail
+          );
+        } catch (userUpErr: any) {
+          if (targetUserEmail) {
+            logger.debug(`User uploadAgentFile failed for "${srcFile.fileName}" (${userUpErr.message}); retrying with admin service account.`);
+            uploadedFile = await this.client.uploadAgentFile(
+              targetAgentName,
+              srcFile.fileName,
+              rawBytes,
+              srcFile.mimeType || 'application/octet-stream',
+              targetEnv,
+              undefined
+            );
+          } else {
+            throw userUpErr;
+          }
+        }
+
+        const normalizedUploaded: AgentFile = {
+          name: uploadedFile.name,
+          fileName: uploadedFile.fileName || (uploadedFile as any).file_name || srcFile.fileName,
+          mimeType: uploadedFile.mimeType || (uploadedFile as any).mime_type || srcFile.mimeType
+        };
+        if (normalizedUploaded.name) {
+          oldNameToNewFile.set(srcFile.name, normalizedUploaded);
+          attachedTargetFiles.push(normalizedUploaded);
+        }
+        migrated++;
+        logger.info(`Migrated AgentFile "${srcFile.fileName}" (${rawBytes.byteLength} bytes) onto target agent "${targetAgentName}".`);
+      } catch (fileErr: any) {
+        failed++;
+        logger.warn(`Failed to migrate AgentFile "${srcFile.fileName}" for agent "${sourceAgent.displayName}": ${fileErr.message}`);
+      }
+    }
+
+    if (attachedTargetFiles.length > 0 && createPayload?.lowCodeAgentDefinition && typeof this.client.patchAgent === 'function') {
+      let defStr = JSON.stringify(createPayload.lowCodeAgentDefinition);
+      for (const [oldFileName, newFile] of oldNameToNewFile.entries()) {
+        const oldFileId = oldFileName.split('/').pop();
+        defStr = defStr.split(oldFileName).join(newFile.name);
+        if (oldFileId) {
+          defStr = defStr.replace(
+            new RegExp(`projects/[^"]+/agents/[^"]+/files/${oldFileId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+            newFile.name
+          );
+        }
+      }
+      const updatedLowCodeDef = JSON.parse(defStr);
+      updatedLowCodeDef.agentFiles = attachedTargetFiles.map(f => ({
+        name: f.name,
+        fileName: f.fileName,
+        ...(f.mimeType ? { mimeType: f.mimeType } : {})
+      }));
+      createPayload.lowCodeAgentDefinition = updatedLowCodeDef;
+
+      try {
+        await this.client.patchAgent(
+          targetAgentName,
+          { lowCodeAgentDefinition: updatedLowCodeDef },
+          'lowCodeAgentDefinition',
+          targetEnv,
+          targetUserEmail
+        );
+      } catch (userPatchErr: any) {
+        if (targetUserEmail) {
+          logger.debug(`User patchAgent for AgentFiles failed (${userPatchErr.message}); retrying with admin service account.`);
+          await this.client.patchAgent(
+            targetAgentName,
+            { lowCodeAgentDefinition: updatedLowCodeDef },
+            'lowCodeAgentDefinition',
+            targetEnv,
+            undefined
+          );
+        } else {
+          throw userPatchErr;
+        }
+      }
+    }
+
+    return { migrated, failed };
+  }
+
+  /**
+   * Returns true if a Workflow / AgentDesigner agent contains a trigger node capable of holding per-user `AgentSubscription`s.
+   */
+  hasSubscribableTrigger(agent: Agent): boolean {
+    if ((agent as any).hasSubscriptions === true) return true;
+    const flowDef = agent.workflowAgentDefinition || (agent as any).agentDesignerAgentDefinition;
+    if (!flowDef) return false;
+    const serialized = JSON.stringify(flowDef);
+    return (
+      serialized.includes('Trigger') ||
+      serialized.includes('TRIGGER') ||
+      serialized.includes('schedule') ||
+      serialized.includes('cron')
+    );
+  }
+
+  /**
+   * Rewrites project, location, engine, collection, DataStore, and tool references inside an `AgentSubscription` payload.
+   */
+  rewriteSubscriptionPayload(
+    sub: AgentSubscription,
+    sourceEnv: EnvironmentConfig,
+    targetEnv: EnvironmentConfig,
+    datastoreMapping: Record<string, string> = {},
+    collectionMapping: Record<string, string> = {},
+    toolMapping: Record<string, string> = {}
+  ): Partial<AgentSubscription> {
+    const clone: Record<string, any> = {};
+    const rawNode = sub.agentFlowNode || (sub as any).agent_flow_node;
+    if (rawNode) {
+      clone.agentFlowNode = rawNode;
+    }
+    const rawPlan = sub.longRunningAgentPlan || (sub as any).long_running_agent_plan;
+    if (rawPlan) {
+      clone.longRunningAgentPlan = rawPlan;
+    }
+
+    let serialized = JSON.stringify(clone);
+    const discoveryEngineResourceTypes = new Set([
+      'collections',
+      'dataStores',
+      'engines',
+      'authorizations',
+      'notebooks',
+      'assistants'
+    ]);
+    serialized = serialized.replace(
+      /projects\/([0-9a-zA-Z_-]+)\/locations\/([0-9a-zA-Z_-]+)\/([0-9a-zA-Z_-]+)\//g,
+      (_match, _proj, loc, resourceType) => {
+        const newLoc = discoveryEngineResourceTypes.has(resourceType) ? (targetEnv.appLocation || loc) : loc;
+        return `projects/${targetEnv.projectId}/locations/${newLoc}/${resourceType}/`;
+      }
+    );
+    if (sourceEnv.appId && targetEnv.appId) {
+      serialized = serialized.split(`/engines/${sourceEnv.appId}`).join(`/engines/${targetEnv.appId}`);
+    }
+    if (sourceEnv.projectId && targetEnv.projectId) {
+      serialized = serialized.split(`projects/${sourceEnv.projectId}/`).join(`projects/${targetEnv.projectId}/`);
+    }
+    for (const [oldCol, newCol] of Object.entries(collectionMapping)) {
+      if (newCol && newCol !== '__STRIP__') {
+        serialized = serialized.split(`/collections/${oldCol}/`).join(`/collections/${newCol}/`);
+        serialized = serialized.split(`"collections/${oldCol}/`).join(`"collections/${newCol}/`);
+      }
+    }
+    for (const [oldDs, newDs] of Object.entries(datastoreMapping)) {
+      if (newDs && newDs !== '__STRIP__') {
+        serialized = serialized.split(`/dataStores/${oldDs}"`).join(`/dataStores/${newDs}"`);
+        serialized = serialized.split(`/dataStores/${oldDs}/`).join(`/dataStores/${newDs}/`);
+      }
+    }
+    for (const [oldTool, newTool] of Object.entries(toolMapping)) {
+      if (newTool) {
+        serialized = serialized.split(`/tools/${oldTool}`).join(`/tools/${newTool}`);
+      }
+    }
+
+    return JSON.parse(serialized);
+  }
+
+  /**
+   * Migrates per-user `AgentSubscription`s from a source agent to a target agent using per-user impersonation.
+   * Preserves `INACTIVE` (paused) state via `:pause`.
+   */
+  async migrateAgentSubscriptions(
+    sourceAgent: Agent,
+    targetAgentName: string,
+    sourceEnv: EnvironmentConfig,
+    targetEnv: EnvironmentConfig,
+    candidateSourceUsers: string[],
+    identityMapping: Record<string, string> = {},
+    datastoreMapping: Record<string, string> = {},
+    collectionMapping: Record<string, string> = {},
+    toolMapping: Record<string, string> = {}
+  ): Promise<{ migrated: number; failed: number }> {
+    if (
+      typeof this.client.listAgentSubscriptions !== 'function' ||
+      typeof this.client.createAgentSubscription !== 'function'
+    ) {
+      return { migrated: 0, failed: 0 };
+    }
+
+    const uniqueSourceEmails = Array.from(
+      new Set(
+        candidateSourceUsers
+          .map(u => normalizePrincipal(u))
+          .filter(u => u.includes('@') && !u.includes('*') && !u.includes('gserviceaccount.com'))
+      )
+    );
+
+    let migrated = 0;
+    let failed = 0;
+
+    for (const srcEmail of uniqueSourceEmails) {
+      let srcSubs: AgentSubscription[] = [];
+      try {
+        srcSubs = await this.client.listAgentSubscriptions(sourceAgent.name, sourceEnv, srcEmail);
+      } catch (listErr: any) {
+        logger.debug(`Skipping subscription listing on "${sourceAgent.displayName}" for "${srcEmail}": ${listErr.message}`);
+        continue;
+      }
+
+      if (!srcSubs || srcSubs.length === 0) continue;
+
+      const tgtEmail = IdentityMappingService.lookupTargetIdentity(srcEmail, identityMapping, srcEmail)
+        .replace(/^.*\/subject\//i, '')
+        .replace(/^user:/i, '')
+        .trim();
+      if (!tgtEmail || !tgtEmail.includes('@')) continue;
+
+      let existingTgtSubs: AgentSubscription[] = [];
+      try {
+        existingTgtSubs = await this.client.listAgentSubscriptions(targetAgentName, targetEnv, tgtEmail);
+      } catch (tgtListErr: any) {
+        logger.debug(`Could not list existing target subscriptions for "${tgtEmail}": ${tgtListErr.message}`);
+      }
+
+      for (const srcSub of srcSubs) {
+        try {
+          const rewrittenPayload = this.rewriteSubscriptionPayload(
+            srcSub,
+            sourceEnv,
+            targetEnv,
+            datastoreMapping,
+            collectionMapping,
+            toolMapping
+          );
+          const rewrittenTriggerJson = JSON.stringify(rewrittenPayload.agentFlowNode || {});
+          const alreadyExists = existingTgtSubs.some(existing => {
+            const existingNode = existing.agentFlowNode || (existing as any).agent_flow_node || {};
+            if (rewrittenPayload.agentFlowNode?.id && existingNode?.id) {
+              return existingNode.id === rewrittenPayload.agentFlowNode.id;
+            }
+            return JSON.stringify(existingNode) === rewrittenTriggerJson;
+          });
+
+          if (alreadyExists) {
+            migrated++;
+            continue;
+          }
+
+          const createdSub = await this.client.createAgentSubscription(
+            targetAgentName,
+            rewrittenPayload,
+            targetEnv,
+            tgtEmail
+          );
+          if (
+            srcSub.state === 'INACTIVE' &&
+            createdSub?.name &&
+            typeof this.client.pauseAgentSubscription === 'function'
+          ) {
+            await this.client.pauseAgentSubscription(createdSub.name, targetEnv, tgtEmail);
+          }
+          migrated++;
+          logger.info(`Migrated AgentSubscription on "${sourceAgent.displayName}" for user "${tgtEmail}" (state: ${srcSub.state || 'ACTIVE'}).`);
+        } catch (subErr: any) {
+          failed++;
+          logger.warn(`Failed to migrate AgentSubscription on "${sourceAgent.displayName}" for "${tgtEmail}": ${subErr.message}`);
+        }
+      }
+    }
+
+    return { migrated, failed };
+  }
+
+  /**
+   * Resolves a valid `user:<email>` or `principal://...` target identity for `TransferAgentOwner`,
+   * or returns `null` if the mapped target identity is unknown or a service account.
+   */
+  resolveTransferTargetPrincipal(
+    originalOwner: string | undefined,
+    targetOwner: string | undefined,
+    identityMapping: Record<string, string> = {}
+  ): string | null {
+    const rawMapped =
+      (originalOwner && identityMapping[originalOwner]) ||
+      (originalOwner && identityMapping[originalOwner.toLowerCase()]) ||
+      targetOwner ||
+      '';
+    const trimmed = String(rawMapped).trim();
+    if (
+      !trimmed ||
+      trimmed === 'unknown' ||
+      /^serviceAccount:/i.test(trimmed) ||
+      trimmed.toLowerCase().includes('.gserviceaccount.com')
+    ) {
+      return null;
+    }
+    if (trimmed.startsWith('principal://') || /^user:/i.test(trimmed)) {
+      return trimmed.startsWith('USER:') ? `user:${trimmed.slice(5)}` : trimmed;
+    }
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      return `user:${trimmed}`;
+    }
+    return null;
+  }
+
+  /**
    * Migrates agents from source environment to target environment on behalf of users.
    */
   async migrateAgents(
@@ -1041,6 +1493,27 @@ export class AgentMigrator {
           logger.info(`Created target Agent "${result.displayName}" with new ID "${newAgentId}" (Owner: ${userOwner || 'admin'})`);
         }
 
+        // 0b. Migrate attached Custom Agent Knowledge Files (`AgentFile`s) BEFORE `:deployLowCode` (`publishAgent`)
+        // so that `:deployLowCode` snapshots the newly uploaded `agentFiles` into `deployedAgentFiles`.
+        let agentFilesStats = { migrated: 0, failed: 0 };
+        if (options.migrateAgentFiles !== false && agentType === 'LOW_CODE') {
+          const srcUserForFiles = originalOwner && originalOwner !== 'unknown' && originalOwner.includes('@') ? originalOwner : undefined;
+          const tgtUserForFiles = serviceAccountOwnershipFallback ? undefined : userOwner;
+          try {
+            agentFilesStats = await this.migrateAgentFiles(
+              agent,
+              newAgentName,
+              createPayload,
+              sourceEnv,
+              targetEnv,
+              srcUserForFiles,
+              tgtUserForFiles
+            );
+          } catch (afErr: any) {
+            logger.warn(`Could not complete AgentFile migration for "${result.displayName}": ${afErr.message}`);
+          }
+        }
+
         // 1. Publish / Deploy agent on the target instance ONLY if publishAgents is enabled (default true)
         // AND it was already published/deployed in the source environment.
         // If it was in draft in the source environment, or if publishAgents is false, keep it in draft on target.
@@ -1073,10 +1546,22 @@ export class AgentMigrator {
           agent.sharingConfig?.scope === 'ALL_USERS' ||
           agent.sharingConfig?.scope === 'RESTRICTED';
 
+        let adminTransferredOwnershipNote: string | undefined;
+        let transferOwnerFailureDetail: string | undefined;
+
         if (shouldPublishOrDeploy && isSharedScope && options.preserveSharing !== false) {
           if (typeof this.client.requestAgentReview === 'function') {
             try {
-              const reviewRes = await this.client.requestAgentReview(newAgentName, targetEnv, userOwner);
+              let reviewRes: Agent | undefined;
+              try {
+                reviewRes = await this.client.requestAgentReview(newAgentName, targetEnv, userOwner);
+              } catch (userRevErr: any) {
+                if (userOwner) {
+                  reviewRes = await this.client.requestAgentReview(newAgentName, targetEnv, undefined);
+                } else {
+                  throw userRevErr;
+                }
+              }
               if (reviewRes?.state === 'DISABLED' && typeof this.client.enableAgent === 'function') {
                 await this.client.enableAgent(newAgentName, targetEnv);
               }
@@ -1101,6 +1586,32 @@ export class AgentMigrator {
             }
           }
 
+          // 2b. If user impersonation failed and the agent was created via Service Account,
+          // use the public Admin `TransferAgentOwner` RPC (supported on non-PRIVATE agents) to assign
+          // real human (`user:`) or WIF (`principal://`) ownership atomically.
+          if (
+            serviceAccountOwnershipFallback &&
+            options.preserveOwnership !== false &&
+            options.transferOwnershipViaAdmin !== false &&
+            typeof this.client.transferAgentOwner === 'function'
+          ) {
+            const targetPrincipal = this.resolveTransferTargetPrincipal(originalOwner, targetOwner, identityMapping);
+            if (targetPrincipal) {
+              try {
+                await this.client.transferAgentOwner(newAgentName, targetPrincipal, targetEnv);
+                serviceAccountOwnershipFallback = null;
+                adminTransferredOwnershipNote =
+                  `Ownership transferred to "${targetPrincipal}" via Admin TransferAgentOwner API after service account fallback.`;
+                logger.info(`Transferred ownership of shared agent "${result.displayName}" to "${targetPrincipal}" via TransferAgentOwner.`);
+              } catch (transferErr: any) {
+                transferOwnerFailureDetail = transferErr.message;
+                logger.warn(
+                  `TransferAgentOwner could not reassign "${result.displayName}" to "${targetPrincipal}": ${transferErr.message}`
+                );
+              }
+            }
+          }
+
           if (agent.iamPolicy && agent.iamPolicy.bindings && agent.iamPolicy.bindings.length > 0) {
             try {
               await this.restoreAgentIamPolicy(newAgentName, agent.iamPolicy, targetEnv, identityMapping);
@@ -1112,6 +1623,49 @@ export class AgentMigrator {
           logger.info(`Skipped re-sharing agent "${result.displayName}" on target (preserving private scope).`);
         } else if (!agent.sharingConfig?.scope) {
           logger.info(`Agent "${result.displayName}" has no public sharing scope; preserving private scope.`);
+        }
+
+        // 3. Migrate per-user scheduled/event `AgentSubscription`s on published trigger-equipped workflow agents
+        let subscriptionsStats = { migrated: 0, failed: 0 };
+        if (
+          shouldPublishOrDeploy &&
+          options.migrateSubscriptions !== false &&
+          this.hasSubscribableTrigger(agent)
+        ) {
+          const candidateSubUsers: string[] = [];
+          if (originalOwner && originalOwner !== 'unknown') {
+            candidateSubUsers.push(originalOwner);
+          }
+          if (agent.iamPolicy?.bindings) {
+            for (const b of agent.iamPolicy.bindings) {
+              for (const m of b.members || []) {
+                if (m && !m.startsWith('group:') && !m.includes('gserviceaccount.com')) {
+                  candidateSubUsers.push(m);
+                }
+              }
+            }
+          }
+          for (const uf of userFilter) {
+            if (uf && uf.includes('@') && !uf.includes('*')) {
+              candidateSubUsers.push(uf);
+            }
+          }
+
+          try {
+            subscriptionsStats = await this.migrateAgentSubscriptions(
+              agent,
+              newAgentName,
+              sourceEnv,
+              targetEnv,
+              candidateSubUsers,
+              identityMapping,
+              effectiveDatastoreMapping,
+              effectiveCollectionMapping,
+              toolMapping
+            );
+          } catch (subMigrErr: any) {
+            logger.warn(`Could not complete AgentSubscription migration for "${result.displayName}": ${subMigrErr.message}`);
+          }
         }
 
         const cleanOriginalOwner = (originalOwner || '').replace(/^user:/i, '').replace(/^serviceAccount:/i, '').toLowerCase().trim();
@@ -1150,7 +1704,19 @@ export class AgentMigrator {
           agentType: this.getAgentType(agent),
           previousState: agent.state || 'PRIVATE',
           sharedWith: sharedWithList,
-          sharingScope: agent.sharingConfig?.scope || 'PRIVATE'
+          sharingScope: agent.sharingConfig?.scope || 'PRIVATE',
+          ...(agentFilesStats.migrated > 0 || agentFilesStats.failed > 0
+            ? {
+                agentFilesMigrated: agentFilesStats.migrated,
+                agentFilesFailed: agentFilesStats.failed
+              }
+            : {}),
+          ...(subscriptionsStats.migrated > 0 || subscriptionsStats.failed > 0
+            ? {
+                subscriptionsMigrated: subscriptionsStats.migrated,
+                subscriptionsFailed: subscriptionsStats.failed
+              }
+            : {})
         };
 
         result.status = 'SUCCESS';
@@ -1158,12 +1724,18 @@ export class AgentMigrator {
           // The agent exists in the target, but the ownership transfer this row claims
           // did not happen. Say so instead of reporting an unqualified success.
           result.ownershipTransferred = false;
+          const transferSuffix = transferOwnerFailureDetail
+            ? ` Admin TransferAgentOwner also failed: ${transferOwnerFailureDetail}.`
+            : '';
           result.ownershipNote =
             `Created by the admin service account, NOT by "${result.targetOwner}", because user impersonation failed: ` +
-            `${serviceAccountOwnershipFallback}. The intended owner does not own this agent and may not see it.`;
+            `${serviceAccountOwnershipFallback}.${transferSuffix} The intended owner does not own this agent and may not see it.`;
           logger.warn(`Agent "${result.displayName}" migrated WITHOUT ownership transfer to "${result.targetOwner}".`);
         } else {
           result.ownershipTransferred = true;
+          if (adminTransferredOwnershipNote) {
+            result.ownershipNote = adminTransferredOwnershipNote;
+          }
         }
       } catch (err: any) {
         // Only discard the asset when the target user genuinely does not exist.

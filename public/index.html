@@ -62,7 +62,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-lg font-bold text-white tracking-wide">Gemini Enterprise Admin Migration Console</h1>
-          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.8.2</span>
+          <span class="px-2 py-0.5 text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">v1.8.3</span>
           <span class="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             DWD Enabled
@@ -546,13 +546,22 @@
                       <span id="optSkillsDesc" class="block text-[10px] text-gray-400">Directly migrates enterprise and user skills between cloud registries <span class="text-amber-400/90">(Experimental — may not work for everyone)</span></span>
                     </div>
                   </label>
-                  <label id="optSessionsRow" class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" id="optSessions" checked class="rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
-                    <span class="font-medium text-cyan-300 flex items-center gap-1.5 flex-wrap">
-                      <span>💬 Migrate Multi-User Chat History</span>
-                      <span id="optSessionsBadge" class="hidden text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"></span>
-                    </span>
-                  </label>
+                  <div class="space-y-1.5">
+                    <label id="optSessionsRow" class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                      <input type="checkbox" id="optSessions" checked onchange="onOptSessionsChange()" class="rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
+                      <span class="font-medium text-cyan-300 flex items-center gap-1.5 flex-wrap">
+                        <span>💬 Migrate Multi-User Chat History</span>
+                        <span id="optSessionsBadge" class="hidden text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"></span>
+                      </span>
+                    </label>
+                    <label id="optContinuableSessionsRow" class="flex items-start space-x-2 text-xs text-gray-300 cursor-pointer ml-5 pl-2.5 border-l border-cyan-500/40">
+                      <input type="checkbox" id="optContinuableSessions" class="mt-0.5 rounded bg-gray-800 border-gray-700 text-cyan-500 focus:ring-cyan-500">
+                      <div>
+                        <span class="font-medium text-cyan-300">🔄 Enable Continuable Chats (`:streamAssist` Context Handshake)</span>
+                        <span class="block text-[10px] text-gray-400">Seeds 1 live Gemini handshake turn per chat so follow-up questions remember migrated history (~2–3s/chat, uses 1 assist call)</span>
+                      </div>
+                    </label>
+                  </div>
                   <label id="optMemoriesRow" class="flex items-start space-x-2 text-sm text-gray-300 cursor-pointer">
                     <input type="checkbox" id="optMemories" checked class="mt-0.5 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-emerald-500">
                     <div>
@@ -9481,6 +9490,18 @@ ${projectIamBlock}`;
       }
     }
 
+    function onOptSessionsChange() {
+      const sessionsChecked = document.getElementById('optSessions')?.checked ?? true;
+      const contRow = document.getElementById('optContinuableSessionsRow');
+      const contChk = document.getElementById('optContinuableSessions');
+      if (contRow) {
+        contRow.classList.toggle('opacity-50', !sessionsChecked);
+      }
+      if (contChk) {
+        contChk.disabled = !sessionsChecked;
+      }
+    }
+
     function onSingleOptAgentsChange() {
       const agentsChecked = document.getElementById('singleOptAgents')?.checked ?? true;
       const publishRow = document.getElementById('singleOptPublishAgentsRow');
@@ -9661,6 +9682,10 @@ ${projectIamBlock}`;
           migrateSkills: document.getElementById('optSkills') ? document.getElementById('optSkills').checked : true,
           migrateAgents: document.getElementById('optAgents') ? document.getElementById('optAgents').checked : true,
           migrateSessions: document.getElementById('optSessions') ? document.getElementById('optSessions').checked : true,
+          continuableSessions: Boolean(
+            (document.getElementById('optSessions') ? document.getElementById('optSessions').checked : true) &&
+            (document.getElementById('optContinuableSessions') ? document.getElementById('optContinuableSessions').checked : false)
+          ),
           migrateMemories: document.getElementById('optMemories') ? document.getElementById('optMemories').checked : true,
           exportMemories: false,
           exportArtifacts: document.getElementById('optArtifacts') ? document.getElementById('optArtifacts').checked : true,
@@ -9842,7 +9867,15 @@ ${projectIamBlock}`;
           }
 
           if (finalReport) {
-            addLog(`Migration Job Completed in ${((finalReport.durationMs || 0) / 1000).toFixed(2)}s. Agents: ${finalReport.summary.totalMigratedAgents}, Notebooks: ${finalReport.summary.totalMigratedNotebooks}`, 'SUCCESS');
+            const s = finalReport.summary || {};
+            const extraSummaryParts = [
+              `Agents: ${s.totalMigratedAgents ?? 0}`,
+              `Notebooks: ${s.totalMigratedNotebooks ?? 0}`,
+              `Sessions: ${s.totalMigratedSessions ?? 0}`
+            ];
+            if ((s.totalMigratedSkills ?? 0) > 0) extraSummaryParts.push(`Skills: ${s.totalMigratedSkills}`);
+            if ((s.totalMigratedMemories ?? 0) > 0) extraSummaryParts.push(`Memories: ${s.totalMigratedMemories}`);
+            addLog(`Migration Job Completed in ${((finalReport.durationMs || 0) / 1000).toFixed(2)}s. ${extraSummaryParts.join(', ')}`, 'SUCCESS');
           }
         } else {
           document.getElementById('statusSpinner').classList.add('hidden');

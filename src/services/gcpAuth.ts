@@ -95,6 +95,27 @@ export const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platf
  */
 export const DEFAULT_WORKFORCE_SCOPES = [CLOUD_PLATFORM_SCOPE, ...DISCOVERY_ENGINE_SCOPES];
 
+/**
+ * Returns true if the identifier represents a non-human IAM principal (Google Group,
+ * Workspace domain, GCP Service Account, IAM principalSet, or public principal) that
+ * cannot hold personal end-user OAuth sessions/memories or be DWD-impersonated.
+ */
+export function isGroupOrNonHumanPrincipal(raw?: string): boolean {
+  if (!raw || typeof raw !== 'string') return true;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return true;
+  return (
+    trimmed.startsWith('group:') ||
+    trimmed.startsWith('domain:') ||
+    trimmed.startsWith('deleted:') ||
+    trimmed.startsWith('serviceaccount:') ||
+    trimmed.startsWith('principalset://') ||
+    trimmed.endsWith('.gserviceaccount.com') ||
+    trimmed === 'allusers' ||
+    trimmed === 'allauthenticatedusers'
+  );
+}
+
 export class GcpAuthService {
   /**
    * Identities federated from an external IdP (Entra, Okta) have no Google Workspace
@@ -521,13 +542,76 @@ export class GcpAuthService {
   }
 
   /**
+   * Mints an access token directly as the configured Keyless DWD Service Account via
+   * `iamcredentials.googleapis.com/...:generateAccessToken` and caches it as the active
+   * administrative token. Used when the base operator credential holds `serviceAccountTokenCreator`
+   * on the DWD SA while project-level Discovery Engine IAM roles are granted to the SA itself.
+   */
+  public async mintKeylessServiceAccountAccessToken(scopes?: string[]): Promise<string | null> {
+    if (!this.dwdServiceAccountEmail) {
+      return null;
+    }
+    const requestedScopes = scopes && scopes.length > 0 ? scopes : [
+      'https://www.googleapis.com/auth/cloud-platform',
+      'https://www.googleapis.com/auth/discoveryengine.readwrite',
+      'https://www.googleapis.com/auth/discoveryengine.assist.readwrite'
+    ];
+    const scopesKey = requestedScopes.slice().sort().join(',');
+    const adminCacheKey = `default_ADMIN_${scopesKey}`;
+
+    try {
+      const callerToken = await this.getCallerBaseToken();
+      const genUrl = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(this.dwdServiceAccountEmail)}:generateAccessToken`;
+      const iamRes = await fetch(genUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${callerToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ scope: requestedScopes }),
+        signal: AbortSignal.timeout(30000)
+      });
+      if (iamRes.ok) {
+        const iamData: any = await iamRes.json();
+        if (iamData?.accessToken) {
+          this.userTokenCache.set(adminCacheKey, {
+            token: iamData.accessToken,
+            expiresAt: Date.now() + 3000 * 1000
+          });
+          return iamData.accessToken;
+        }
+      } else {
+        logger.debug(`Keyless SA generateAccessToken returned HTTP ${iamRes.status}.`);
+      }
+    } catch (err: any) {
+      logger.debug(`Keyless SA generateAccessToken skipped (${err.message}).`);
+    }
+    return null;
+  }
+
+  /**
    * Retrieves an active GCP access token.
    * If forUserEmail is specified and a Service Account with Domain-Wide Delegation is configured,
    * mints a user-impersonated OAuth2 token (subject: forUserEmail) so resources are created
    * with literal user ownership.
    */
   async getAccessToken(forUserEmail?: string, scopes?: string[], preferredMode?: 'DWD' | 'WIF'): Promise<string> {
-    const cleanEmail = typeof forUserEmail === 'string' ? forUserEmail.replace(/^user:/i, '').trim() : undefined;
+    if (typeof forUserEmail === 'string' && forUserEmail.trim()) {
+      const rawLower = forUserEmail.trim().toLowerCase();
+      if (
+        rawLower.startsWith('group:') ||
+        rawLower.startsWith('domain:') ||
+        rawLower.startsWith('deleted:') ||
+        rawLower.startsWith('principalset://') ||
+        rawLower === 'allusers' ||
+        rawLower === 'allauthenticatedusers'
+      ) {
+        throw new Error(
+          `Cannot impersonate non-user principal "${forUserEmail.trim()}" — groups and domains cannot hold personal end-user OAuth sessions.`
+        );
+      }
+    }
+    const cleanEmail = typeof forUserEmail === 'string' ? forUserEmail.replace(/^(user|serviceAccount):/i, '').trim() : undefined;
     const requestedScopes = scopes && scopes.length > 0 ? scopes : [
       'https://www.googleapis.com/auth/cloud-platform',
       'https://www.googleapis.com/auth/discoveryengine.readwrite',
@@ -702,6 +786,8 @@ export class GcpAuthService {
           ? lastDwdError.message
           : lastWifError
           ? lastWifError.message
+          : isExternalDomain && !this.wifConfig?.audience
+          ? 'Workforce Identity Federation (WiF) is not configured for external IdP user (Google Workspace DWD cannot impersonate external domains)'
           : (!this.hasDwdConfigured() ? 'No Service Account Key or Keyless DWD Service Account configured for Domain-Wide Delegation' : 'User impersonation failed');
         throw new Error(`${effectiveMode} Impersonation Failed for user "${cleanEmail}": ${failureReason}`);
       }
@@ -711,7 +797,7 @@ export class GcpAuthService {
       return this.staticToken;
     }
 
-    // 2. Service Account Token for service-level administrative / non-impersonated calls
+    // 2. Service Account / Operator Token for service-level administrative / non-impersonated calls
     if (this.serviceAccountKey) {
       try {
         const jwtClient = new JWT({
@@ -731,32 +817,25 @@ export class GcpAuthService {
         logger.warn(`Service Account token minting failed: ${err.message}`);
       }
     } else if (this.dwdServiceAccountEmail) {
+      // In Keyless DWD mode, the DWD service account (`gemini-dwd-migrator@...`) is created strictly as a
+      // Google Workspace `signJwt` identity with zero GCP IAM roles on source/target projects, while the
+      // operator (`dwdCallerAccount` / active ADC) holds `roles/discoveryengine.admin`.
+      // Prefer the operator's base token first; if unavailable, fall back to SA `:generateAccessToken`.
       try {
         const callerToken = await this.getCallerBaseToken();
-        const genUrl = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(this.dwdServiceAccountEmail)}:generateAccessToken`;
-        const iamRes = await fetch(genUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${callerToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ scope: requestedScopes }),
-          signal: AbortSignal.timeout(30000)
-        });
-        if (iamRes.ok) {
-          const iamData: any = await iamRes.json();
-          if (iamData?.accessToken) {
-            this.userTokenCache.set(cacheKey, {
-              token: iamData.accessToken,
-              expiresAt: Date.now() + 3000 * 1000
-            });
-            return iamData.accessToken;
-          }
-        } else {
-          logger.debug(`Keyless SA generateAccessToken returned HTTP ${iamRes.status}; falling back to caller ADC token.`);
+        if (callerToken) {
+          this.userTokenCache.set(cacheKey, {
+            token: callerToken,
+            expiresAt: Date.now() + 3000 * 1000
+          });
+          return callerToken;
         }
       } catch (err: any) {
-        logger.debug(`Keyless SA generateAccessToken skipped (${err.message}); falling back to caller ADC token.`);
+        logger.debug(`Keyless DWD caller base token unavailable (${err.message}); trying SA generateAccessToken.`);
+      }
+      const keylessSaToken = await this.mintKeylessServiceAccountAccessToken(requestedScopes);
+      if (keylessSaToken) {
+        return keylessSaToken;
       }
     }
 

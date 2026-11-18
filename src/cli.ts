@@ -31,7 +31,7 @@ const program = new Command();
 program
   .name('gemini-migrate')
   .description('Enterprise admin-driven headless migration tool for Gemini Enterprise notebooks and custom agents.')
-  .version('1.8.2')
+  .version('1.8.3')
   .option('-c, --config <path>', 'Path to JSON configuration file')
   .option('--dry-run', 'Simulate migration without applying changes to target')
   .option('--no-notebooks', 'Skip notebook migration')
@@ -46,6 +46,12 @@ program
   .option('--publish-agents', 'Publish/deploy migrated agents & workflows on target if published in source (default: true)')
   .option('--no-publish-agents', 'Do not publish/deploy migrated agents & workflows on target (keep in draft state)')
   .option('--no-preserve-sharing', 'Do not replicate sharing configurations (ALL_USERS/RESTRICTED) and IAM policies')
+  .option('--no-agent-files', 'Skip migrating local knowledge files attached to No-Code / Low-Code agents')
+  .option('--no-session-files', 'Skip migrating context attachments and AI-generated files attached to chat sessions')
+  .option('--continuable-sessions', 'Seed migrated chat sessions with a 1-line :streamAssist context handshake so follow-up questions remember migrated history')
+  .option('--no-subscriptions', 'Skip migrating per-user scheduled/event agent subscriptions')
+  .option('--no-transfer-owner', 'Disable server-side TransferAgentOwner reassignment when user impersonation falls back to Service Account')
+  .option('--local-source-files-dir <dir>', 'Local directory containing binary source files (PDF/DOCX/Audio/TXT) to upload into target notebooks via UploadSourceFile')
   .option('--users <users...>', 'Filter migration to specific user email(s) or patterns (e.g. *@company.com)')
   .option('--concurrency <number>', 'Maximum parallel worker concurrency (default: 3)')
   .option('--token <token>', 'Explicit Google OAuth Access Token (overrides ADC)')
@@ -117,6 +123,24 @@ program
       }
       if (options.preserveSharing === false) {
         baseConfig.options = { ...baseConfig.options, preserveSharing: false };
+      }
+      if (options.agentFiles === false) {
+        baseConfig.options = { ...baseConfig.options, migrateAgentFiles: false };
+      }
+      if (options.sessionFiles === false) {
+        baseConfig.options = { ...baseConfig.options, migrateSessionFiles: false };
+      }
+      if (options.continuableSessions !== undefined) {
+        baseConfig.options = { ...baseConfig.options, continuableSessions: Boolean(options.continuableSessions) };
+      }
+      if (options.subscriptions === false) {
+        baseConfig.options = { ...baseConfig.options, migrateSubscriptions: false };
+      }
+      if (options.transferOwner === false) {
+        baseConfig.options = { ...baseConfig.options, transferOwnershipViaAdmin: false };
+      }
+      if (options.localSourceFilesDir) {
+        baseConfig.options = { ...baseConfig.options, localSourceFilesDir: String(options.localSourceFilesDir) };
       }
       if (options.users && options.users.length > 0) {
         baseConfig.options = { ...baseConfig.options, userFilter: options.users };

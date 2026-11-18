@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
 import fs from 'fs';
@@ -36,11 +36,12 @@ describe('AppStateTracker & Decommissioning Suite', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     AppStateTracker.clearTrackedState();
     AppStateTracker.setStateFilePath(originalDefaultPath);
-    try {
+    if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {}
+    }
   });
 
   describe('AppStateTracker Unit Tests', () => {
@@ -187,6 +188,146 @@ describe('AppStateTracker & Decommissioning Suite', () => {
       const data = await res.json();
       expect(data.error).toBe('MissingTargetEngine');
       expect(data.message).toContain('Target GE App (Engine) instance must be specified');
+    });
+
+    it('POST /api/cleanup blocks same-project cleanup when cleanNotebooks is enabled (project-scoped hazard)', async () => {
+      const res = await fetch(`${baseUrl}/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          srcProjectId: 'ancient-sandbox-322523',
+          srcAppId: 'cosmere-source',
+          tgtProjectId: 'ancient-sandbox-322523',
+          tgtAppId: 'cosmere-clone',
+          confirmProjectId: 'ancient-sandbox-322523',
+          cleanNotebooks: true,
+          cleanAgents: false,
+          cleanSessions: true,
+          cleanMemories: false,
+          cleanArtifacts: false,
+          cleanReports: false
+        })
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('SourceCollisionBlocked');
+      expect(data.message).toContain('NotebookLM notebooks are project-scoped');
+    });
+
+    it('POST /api/cleanup blocks same-project cleanup when targetEngine matches sourceEngine', async () => {
+      const res = await fetch(`${baseUrl}/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          srcProjectId: 'ancient-sandbox-322523',
+          srcAppId: 'cosmere-source',
+          tgtProjectId: 'ancient-sandbox-322523',
+          tgtAppId: 'cosmere-source',
+          confirmProjectId: 'ancient-sandbox-322523',
+          cleanNotebooks: false,
+          cleanAgents: false,
+          cleanSessions: true,
+          cleanMemories: false,
+          cleanArtifacts: false,
+          cleanReports: false
+        })
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('SourceCollisionBlocked');
+      expect(data.message).toContain('matches source GE App');
+    });
+
+    it('POST /api/cleanup blocks same-project cloud cleanup when sourceEngine is omitted', async () => {
+      const res = await fetch(`${baseUrl}/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          srcProjectId: 'ancient-sandbox-322523',
+          srcAppId: '',
+          tgtProjectId: 'ancient-sandbox-322523',
+          tgtAppId: 'cosmere-clone',
+          confirmProjectId: 'ancient-sandbox-322523',
+          cleanNotebooks: false,
+          cleanAgents: false,
+          cleanSessions: true,
+          cleanMemories: false,
+          cleanArtifacts: false,
+          cleanReports: false
+        })
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('SourceCollisionBlocked');
+      expect(data.message).toContain('no Source GE App (Engine) ID was provided');
+    });
+
+    it('POST /api/cleanup allows same-project chat session cleanup when targetEngine differs from sourceEngine and cleanNotebooks is false', async () => {
+      const realFetch = globalThis.fetch;
+      const deletedUrls: string[] = [];
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+        const urlStr = typeof input === 'string' ? input : input.url;
+        if (urlStr.startsWith('http://127.0.0.1:')) {
+          return realFetch(input, init);
+        }
+        if (urlStr.includes('cosmere-source')) {
+          throw new Error(`Forbidden request against source engine: ${urlStr}`);
+        }
+        if (urlStr.includes('/engines/cosmere-clone/sessions') && (!init?.method || init.method === 'GET')) {
+          return new Response(
+            JSON.stringify({
+              sessions: [
+                {
+                  name: 'projects/ancient-sandbox-322523/locations/global/collections/default_collection/engines/cosmere-clone/sessions/10242290474895466107',
+                  displayName: 'Who is Vasher?'
+                }
+              ]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (
+          urlStr.includes('/engines/cosmere-clone/sessions/10242290474895466107') &&
+          init?.method === 'DELETE'
+        ) {
+          deletedUrls.push(urlStr);
+          return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        throw new Error(`Unexpected external fetch in same-project cleanup test: ${urlStr}`);
+      });
+
+      const res = await fetch(`${baseUrl}/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer static-test-token' },
+        body: JSON.stringify({
+          srcProjectId: 'ancient-sandbox-322523',
+          srcAppId: 'cosmere-source',
+          tgtProjectId: 'ancient-sandbox-322523',
+          tgtAppId: 'cosmere-clone',
+          confirmProjectId: 'ancient-sandbox-322523',
+          userFilter: ['admin@wdufrin.altostrat.com', 'group:test2@wdufrin.altostrat.com'],
+          cleanNotebooks: false,
+          cleanAgents: false,
+          cleanSessions: true,
+          cleanMemories: false,
+          cleanArtifacts: false,
+          cleanReports: false
+        })
+      });
+
+      const data = await res.json();
+      expect(res.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.deletedSessions).toBe(1);
+      expect(data.targetEngine).toBe('cosmere-clone');
+      expect(data.targetUsersCleaned).not.toContain('group:test2@wdufrin.altostrat.com');
+      expect(deletedUrls).toEqual([
+        'https://discoveryengine.googleapis.com/v1alpha/projects/ancient-sandbox-322523/locations/global/collections/default_collection/engines/cosmere-clone/sessions/10242290474895466107'
+      ]);
     });
 
     it('POST /api/maintenance/decommission should require target project ID', async () => {

@@ -1,232 +1,89 @@
 # 🚀 Gemini Enterprise Admin Migration Platform (`gemini-migrate`)
 
-[![Version](https://img.shields.io/badge/version-1.8.2-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.8.3-blue.svg)](package.json)
 [![Installation Guide](https://img.shields.io/badge/install%20guide-DOCX%20%7C%20MD-blue.svg)](docs/INSTALLATION_GUIDE.md)
 [![User Guide](https://img.shields.io/badge/user%20guide-DOCX%20%7C%20MD-green.svg)](docs/USER_GUIDE.md)
-[![Release Notes](https://img.shields.io/badge/release%20notes-v1.8.2-orange.svg)](RELEASE_NOTES.md)
+[![Release Notes](https://img.shields.io/badge/release%20notes-v1.8.3-orange.svg)](RELEASE_NOTES.md)
 [![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
-An enterprise admin-driven headless platform and web console for migrating **Gemini Enterprise (Google Cloud Discovery Engine)** custom agents, user-created skills *(Experimental — may not work for everyone)*, research notebooks, studio artifacts, grounding sources, chat conversation history, user personalized memories *(Experimental — may not work for everyone)*, Gemini Enterprise projects *(WIP)*, and associated IAM permissions across Google Cloud environments and Identity Providers.
+An admin-driven CLI and local web console for migrating **supported** **Gemini Enterprise (Google Cloud Discovery Engine)** assets across Google Cloud projects and Identity Providers — within the strict boundaries of Google's public REST APIs.
+
+> [!WARNING]
+> **Read Before Planning a Customer Migration — Every Asset Type Has API Caveats**  
+> Google Cloud Discovery Engine does **not** expose a native cross-project snapshot, database export, or lossless clone API. Because this tool operates strictly through external public REST endpoints, **none of these migrations are a 1:1 raw clone** — chat histories are **not** restored as native back-and-forth User/Gemini bubbles, locally uploaded NotebookLM files (`.pdf`, `.docx`, `.txt`, audio) **cannot** be extracted on customer projects, **admins must identify replacement DataStores/Connectors on the target Gemini Enterprise (GE) app instance**, and **end users must authorize their connectors inside the target GE app before migrated agents can use them**. Review the exact caveats below before setting expectations with stakeholders or end users.
 
 > [!TIP]
-> **📖 Official Enterprise Documentation & Operator Guides (with Illustrations & Diagrams)**:
+> **📖 Operator & Setup Guides**:
 > * **[Installation & Pre-Requisites Guide (DOCX)](INSTALLATION_GUIDE.docx)** &bull; *[Markdown Version](docs/INSTALLATION_GUIDE.md)*: Google Cloud APIs, IAM role matrices, Organization Policy pre-flight checks, DWD/WiF credentials provisioning, and local build walkthroughs.
-> * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, studio export parity, and user handover delivery.
+> * **[Administrator & User Guide (DOCX)](USER_GUIDE.docx)** &bull; *[Markdown Version](docs/USER_GUIDE.md)*: End-to-end web console operations, Auth Wizard & Org Policy overrides, dynamic `_#####` Connector Auto-Mapping & HITL validation, parity gap remediation, cross-IdP domain translation, and user handover delivery.
 > * **[JSON Setup & Auth Architecture Guide](docs/JSON_SETUP_AND_CONFIGURATION_GUIDE.md)**: Detailed technical reference covering `sa-dwd-key.json`, `workforce-identity-config.json`, `migration-config.json`, `collectionMapping`, `datastoreMapping`, cross-project IAM topologies, and token resolution order.
 
 ---
 
-## 🚀 What's New in v1.8.2
+## ⚠️ Honest Migration Capabilities, Caveats & Hard Limitations
 
-* **🛡️ Honest NotebookLM Source Handling & Per-Project 404 Caching (`src/services/discoveryEngine.ts` & `src/engines/notebookMigrator.ts`)**:
-  * Re-links external reference sources (**Google Drive files**, **Web URLs**, **YouTube videos**, and **Agentspace DataStore documents**) across projects, and preserves collaborator-contributed external sources inside shared notebooks.
-  * Because Google's external `NotebookService.GetSource` endpoint restricts `tailwindDoc` (`NOTEBOOKLM_SOURCE_CONTENT` visibility) and neither `:interactSources` nor `:streamAssist` can extract raw uploaded/pasted source content on customer projects, locally uploaded files (`.pdf`, `.docx`, `.txt`, audio) and pasted text are immediately flagged as `MANUAL_REUPLOAD_REQUIRED` without firing dead fallback RPCs.
-  * Caches per-project `404 Method not found` responses for `NoteService` and `ArtifactService` so customer migrations do not repeatedly invoke unexposed endpoints.
-* **🧪 100% Passing Automated Tests (395/395 Tests across 31 suites)**:
-  * Full 395 automated tests passing across 31 test suites with zero failures or skipped assertions.
+### 1. 💬 Chat History (`Sessions` & `Turns`)
+* **What we CAN migrate**: The text of historical user prompts and Gemini responses, reasoning thoughts, code blocks/outputs, static citation links, `@`-mention chips, pinned status (`isPinned`), session title (`displayName`), and binary session file attachments (`:listFiles` &rarr; `:addContextFile` / `:uploadFile`).
+* **Caveats & What we CANNOT do**:
+  * **NO turn-by-turn User / Gemini bubbles**: Google's public `session.proto` marks `Turn.assist_answer` and `Turn.detailed_assist_answer` as `OUTPUT_ONLY`, rejects cross-engine answer IDs, and provides no API to inject historical model replies. We **cannot** recreate native alternating prompt/response bubbles.
+  * **Standard Archive Mode *(Default — `continuableSessions: false`)* CANNOT continue conversations**: Each past Q&A pair is written inside a User prompt bubble for visual reference only. Because there is no backend `AssistAnswer` record in Spanner, Gemini ignores those turns completely if a user asks a follow-up question.
+  * **Continuable Mode *(Opt-In — `--continuable-sessions` / `🔄 Enable Continuable Chats`)* collapses the entire chat into ONE single input prompt**: To make a migrated chat continuable, the tool concatenates the **entire multi-turn historical conversation into a single User input prompt** and sends 1 live `:streamAssist` request (`toolsSpec: {}`) so Gemini replies with a 1-line confirmation (`"✅ Restored conversation context..."`). Users can then ask follow-up questions with full context, **but the historical chat will appear inside one consolidated prompt block rather than separate turns**.
+  * **Quota, length & Model Armor caveats on Continuable Mode**: Consumes 1 live Gemini generation per migrated session; transcripts over `200,000` characters are truncated inline (with the full text attached as `migrated_conversation_transcript.md`); and if target Model Armor / safety filters block the historical text (`SKIPPED`), the session falls back to read-only Archive Mode.
+  * **Timestamps reset**: `Turn.create_time` is `OUTPUT_ONLY` — all migrated chats receive the migration timestamp, not their original creation dates.
 
----
+### 2. 📔 Research Notebooks (`NotebookLM Enterprise`)
+* **What we CAN migrate**: Notebook containers (`title`, `emoji`), notebook sharing ACLs (`:share`), and **external reference links only** — specifically **Google Drive links**, **public Web URLs**, **YouTube URLs**, and **Agentspace DataStore document references** (rewritten via `datastoreMapping` / `collectionMapping`).
+* **Caveats & What we CANNOT do**:
+  * **Locally uploaded files (`.pdf`, `.docx`, `.pptx`, `.txt`, audio) and pasted text CANNOT be migrated on customer projects**: Google's external API gateway strips `tailwindDoc` (`NOTEBOOKLM_SOURCE_CONTENT` visibility) on `NotebookService.GetSource` and provides no raw file download endpoint. **Users will receive notebooks missing all uploaded/pasted sources** and must manually re-upload those files (tracked as `MANUAL_REUPLOAD_REQUIRED` in reports and handover checklists).
+  * **Google Drive sources still depend on Drive ACLs**: Drive sources are re-linked by `documentId`. If migrating across isolated Google Workspace domains or to Microsoft Entra ID where the target user identity cannot read the original Google Drive file, the link will fail access checks.
+  * **In-App Notes, Notebook Chat History & Studio Outputs (Audio/Video Overviews, Mind Maps, Slide Decks, Study Guides, Quizzes, Flashcards) do NOT migrate into the target NotebookLM UI**:
+    * On standard external customer projects, `NoteService` (`/notes`) and `ArtifactService` (`/artifacts`) are unexposed and return **`404 Method not found`** — neither notes nor Studio artifacts can be read or recreated inside NotebookLM.
+    * Even on internal/allowlisted projects where `ArtifactService` is readable on the source, there is **no API to upload Studio artifacts back into NotebookLM** — they can only be exported one-way as offline files (`.pptx`, `.docx`, `.html`, `.mp3`, `.mp4`) in the user's handover ZIP.
+  * **New Notebook IDs & URLs**: Target notebooks get newly generated resource IDs; old links/bookmarks will not redirect.
 
-## 🚀 What's New in v1.8.1
+### 3. 🤖 Custom Agents (`Low-Code / No-Code`, `Workflow`, `Managed`, `ADK`, `A2A`)
+* **What we CAN migrate**: Agent definitions, system instructions, starter prompts, schemas, Low-Code local knowledge files, source lifecycle state (`Draft` stays `Draft`; `Published` is deployed via `:deployLowCode`, `:publish`, `:deploy`, or `:enableAgent`), sharing scopes (`PRIVATE`, `ALL_USERS`, `RESTRICTED`), per-agent IAM policies, and rewritten `datastoreMapping` / `collectionMapping` resource paths.
+* **Required Admin & End-User Actions + What we CANNOT do**:
+  * **🧑‍💼 Admin Action Required — Provision & Identify Replacement DataStores/Connectors on the Target GE App**: This tool does **not** migrate, create, or index DataStores or SaaS Connectors. Admins must first attach the replacement Vertex AI Search DataStores and Connectors to the **target Gemini Enterprise (GE) app instance**, then **identify and confirm which target DataStore/Connector replaces each source DataStore/Connector** (via the **Step 2 HITL Mapping Table** or `datastoreMapping` / `collectionMapping` in config). While the tool auto-suggests matches for standard `<connector>_<timestamp>` IDs, custom DataStores with new names require explicit admin selection — and any source DataStore/Connector with no replacement on the target GE app must be stripped (`__STRIP__`) or agent creation/publishing will fail.
+  * **👤 End-User Action Required — Users Must Authorize Connectors in the Target GE App Before Agents Can Use Them**: Per-user OAuth tokens for workplace connectors (Google Drive/Workspace, Microsoft 365, Jira, Confluence, GitHub, ServiceNow, Slack, etc.) are encrypted per-engine and **cannot** be copied across GE instances. Even after an agent or workflow is migrated and published, **each user must log into the target Gemini Enterprise app and authorize their connectors in the UI before their agents will be able to query or act through those connectors**.
+  * **ADK & A2A backend services are NOT migrated**: For `ADK` and `A2A` agents, only the Gemini Enterprise catalog entry is recreated. The underlying Vertex AI Reasoning Engine or Cloud Run service is not redeployed, and admins must grant IAM / VPC Service Controls access so the target GE app's service agent can invoke that backend.
+  * **Agent URLs & Workflow run history reset**: Agents get new resource IDs in the target GE app, and historical workflow execution logs are not carried over.
+  * **Strict daily creation quotas**: Discovery Engine enforces `AgentCreateRequestsPerDayPerUser` ceilings (resetting at `00:00 PST`), which can throttle large single-day migrations unless a quota increase is approved beforehand.
 
-* **📄 DataStore-Grounded NotebookLM Source Mapping & JSON Backup (`src/services/discoveryEngine.ts`, `src/engines/notebookMigrator.ts`, `src/engines/userReportGenerator.ts`)**:
-  * Extracts text from DataStore-backed notebook sources (`getDataStoreDocument`) and automatically rewrites `agentspaceMetadata.documentName` across projects using `datastoreMapping` and `collectionMapping`.
-  * Stores replayable `userContent` payloads directly in the migration JSON report (`details.sources[]`) and `user_handover_reports/<user>/notebook_sources/<Notebook>_sources_backup.json`.
-* **🧪 100% Passing Automated Tests (389/389 Tests across 31 suites)**:
-  * Full 389 automated tests passing across 31 test suites with zero failures or skipped assertions.
+### 4. 🧠 User Personalized Memories (`Experimental` — Often Unavailable)
+* **What we CAN migrate**: User personalization consent and memory facts via `EngineUserData` *(only when enabled and exposed on both engines)*, plus local JSON backups (`./exports/memories`).
+* **Caveats & What we CANNOT do**: Frequently returns `404` or `403` on external customer projects where the `EngineUserData` memory API is not enabled/exposed, or where the backend requires an interactive 3P browser OAuth session rather than service-account impersonation. Treat as best-effort/experimental.
 
----
+### 5. 🛠️ User-Created Skills (`Experimental` — Preview Only)
+* **What we CAN migrate**: Custom user skill metadata in Cloud Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents (excluding Google 1P system templates).
+* **Caveats & What we CANNOT do**: `agentregistry.googleapis.com` (`v1alpha`) requires preview allowlisting (`403`/`404` otherwise), and **only metadata is copied** — remote MCP servers, credentials, secrets, and network bindings are not migrated.
 
-## 🚀 What's New in v1.8.0
+### 6. 📁 Gemini Enterprise Projects & Platform Infrastructure (`NOT Supported`)
+* **Gemini Enterprise Projects (`WIP`)**: Project workspaces **cannot** be migrated.
+* **Platform & Infrastructure**: This tool does **not** provision Gemini Enterprise Engines/Apps, Vertex AI Search DataStore corpora, Workforce Identity Pools, Cloud Identity users/groups, KMS/CMEK keys, Model Armor templates, or Vanity URLs. (Step 2 only audits feature-flag differences and patches basic engine toggles.)
+* **End-User Impersonation Requirement**: Reading and restoring private user chats, notebooks, and private agents requires high-privilege delegation — either **Google Workspace Domain-Wide Delegation (DWD)** (Super Admin setup) or **Workforce Identity Federation (WiF) STS token minting**. Without user impersonation, private per-user assets cannot be accessed or assigned to end users.
 
-* **🎯 Source-Faithful Agent Deployment & Draft Preservation (`src/services/discoveryEngine.ts` & `src/engines/agentMigrator.ts`)**:
-  * Only agents that were published/deployed in the source environment (`isSourceAgentPublished(agent) === true`) are published/deployed on the target instance; any agent that was in `Draft` in the source stays in `Draft` on the target.
-  * Dispatches the exact Discovery Engine RPC per agent definition: `POST :deployLowCode` with `{"deployMode": "DEPLOY"}` for Low-Code (No-Code) agents, `POST :publish` for Workflow agents (with automatic `_agent_execution_grant_` consent via `:updateEngineUserData` and numeric project normalization for `CONNECTOR_EVENT_TRIGGER`), `POST :deploy` for Managed agents, and `POST :enableAgent` for ADK/A2A agents.
-  * For shared agents (`ALL_USERS` / `RESTRICTED`), executes `:deployLowCode` / `:publish` first, then transitions the agent out of `PRIVATE` via `:requestAgentReview` before applying `sharingConfig` and `:setIamPolicy`.
-* **🧪 100% Passing Automated Tests (383/383 Tests across 31 suites)**:
-  * Full 383 automated tests passing across 31 test suites with zero failures or skipped assertions.
+### Summary Matrix
 
----
-
-## 🚀 What's New in v1.7.0
-
-* **⚡ Step 3 Worker Concurrency Control (`#optConcurrency`) & Adaptive Source Read Throttling (`public/index.html` & `src/engines/notebookMigrator.ts`)**:
-  * Added the **Worker Concurrency (Parallel API Workers)** selector (`1`, `2`, `3`, `5`, `10`, or `20` workers, default `10`) directly into Step 3 (*Migration Scope, Sharing & Delegation*) and wired it into `config.options.concurrency`.
-  * Scales per-notebook `getNotebookSource` concurrency (`Math.min(3, Math.max(1, options.concurrency || 10))`) so lowering concurrency to `1` or `2` also throttles parallel source reads on large PDF-heavy notebooks to avoid 30-second read timeouts.
-* **🚫 Ignore Draft Agents Sub-Option (`excludeDraftAgents` / `--exclude-draft-agents`) (`public/index.html`, `src/engines/agentMigrator.ts`, `src/cli.ts`)**:
-  * Added the indented **`🚫 Ignore Draft Agents (Private & Published Only)`** checkbox (`#optExcludeDraftAgents`) directly underneath **🤖 Migrate Agents & Workflows** in Step 3, synchronized with `#optAgentLifecycle` and `--exclude-draft-agents` on the CLI.
-  * Distinguishes unsaved/undeployed UI drafts (`state: 'PRIVATE'` with no `deployedNodes`, `deployedRootAgentId`, `deployedAgentFlow`, `activeRevision`, or `sharingConfig.scope`, e.g., `"My Agent"` / `"My Workflow"`) from created **Private** agents and **Published/Shared** agents.
-* **🛡️ Honest Notebook Source Failure Reporting (Removed Fake `[Restored Source: ...]` Metadata Stub) (`src/engines/notebookMigrator.ts` & `src/services/reporter.ts`)**:
-  * Removed the fabricated `[Restored Source: ...]` text placeholder fallback from `NotebookMigrator.mapSourceToPayload(source)`. If `getNotebookSource` fails (`_fetchError`) or a source only returns metadata without extracted text, Google Drive ID, YouTube URL, Agentspace document, or Web URL, `mapSourceToPayload` returns `null`.
-  * Both Dry Run and Live Run modes now evaluate every source and honestly report `sourcesFailed`, `FAILED`, and `MANUAL_REUPLOAD_REQUIRED`, marking affected users as `🟡 PARTIALLY MIGRATED` in the Markdown reconciliation table.
-* **🧪 100% Passing Automated Tests (375/375 Tests across 31 suites)**:
-  * Full 375 automated tests passing across 31 test suites with zero failures or skipped assertions.
-
----
-
-## 🚀 What's New in v1.6.3
-
-* **🔄 Multi-Page Agent Pagination in User Discovery & Auto-Map (`src/routes/discovery.ts` & `src/routes/wizard.ts`)**:
-  * Resolved an issue where `GET /api/users/discover` and `POST /api/idp/auto-map` only inspected the first 100 agents (`?pageSize=100` without following `nextPageToken`), which omitted agent owners on pages 2+ from `options.userFilter` in engines with `> 100` agents.
-  * Both endpoints now follow `nextPageToken` across all pages (with cycle protection) and batch `:getIamPolicy` calls in concurrent chunks of 10.
-* **📦 Public npm Registry Lockfile Sanitization**:
-  * Replaced internal proxy tarball URLs in `package-lock.json` with standard `https://registry.npmjs.org/` URLs for seamless external customer installation.
-* **🧪 100% Passing Automated Tests (369/369 Tests across 31 suites)**:
-  * Full 369 automated tests passing across 31 test suites with zero failures or skipped assertions.
-
----
-
-## 🚀 What's New in v1.6.2
-
-* **⚡ Step 2 Config & Parity Audit — HITL & Action Items Filtering**:
-  * **Dynamic Connector & DataStore Mapping Filter Toolbar**: Added filter buttons (`All`, `⚠️ Needs HITL`, `Mapped`), real-time search input, dynamic count badges, and an interactive `#auditConnectorHitlBadge` button. When an operator selects a mapping, the item automatically transitions out of `NEEDS_HITL` and disappears from the `HITL_ONLY` view, presenting a celebratory zero-state when all connectors and child entity datastores are resolved.
-  * **Parity Checklist & Gaps Status Filters**: Added status filters (`All Statuses`, `⚠️ Action Needed`, `Matches`) and made top metric cards ("Missing in Target (Gaps)" and "Differences / Warnings") clickable to immediately isolate actionable gaps from exact matches.
-  * **Global Step 2 Action Filter (`#btnStep2GlobalHitlFilter`)**: 1-click master filter in the audit header that simultaneously filters both panels to show only items needing action, paired with a unified live action count badge (`#step2HitlGlobalCountBadge`).
-* **👥 Targeted User Selection & Discovery Enhancements**:
-  * Added **"Delete All"** action buttons across discovery toolbars and table headers to quickly wipe candidate user lists and reset CSV staging fields.
-  * Hardened user deletion and selection handlers against email addresses containing single quotes / apostrophes (e.g., `o'connor@company.com`) using HTML5 `data-email` dataset passing instead of inline string interpolation.
-* **🧪 100% Passing Automated Tests (366/366 Tests across 30 suites)**:
-  * Full 366 automated tests passing across 30 test suites with zero failures or skipped assertions.
-
----
-
-## 🚀 What's New in v1.6.1
-
-* **⏱️ Bounded API Retries, Per-Request Timeouts & SSE Stream Resilience**:
-  * Fixed an infinite retry loop in `retryWithBackoff` where `attempt` was not incremented on transient HTTP `429`/`5xx` errors, added per-request `AbortSignal.timeout` (30s) across `DiscoveryEngineClient` and `AgentRegistryClient`, and added 15-second SSE `: keepalive` heartbeats on `/api/migrate/stream` so reverse proxies and browsers do not drop long-running notebook migrations.
-  * Promoted notebook, note, and Studio artifact fetch errors to visible `WARN` logs and added live source fetch progress (`Fetched X/Y sources...`) for large notebooks (`> 10` sources).
-* **🔗 Dynamic Connector & Child Entity DataStore Auto-Mapping (`_#####` Instance Matching)**:
-  * Resolves the No-Code Agent source multiplication bug where an agent configured with **1 Connector source** (e.g., GitHub or Jira) in the source project displays **3 separate DataStore sources** in the target project.
-  * Uses Regex Pattern Matching (`parseTimestampedResourceId`) to parse timestamp-suffixed Connector Collections (`github_1773757636775`) and their child entity DataStores (`github_1773757636775_issue`, `_pull_request`, `_repository`), automatically pairing them with the corresponding target project connector instance (`github_1780931139999`) regardless of numerical timestamp suffixes.
-  * Automatically rewrites both full `projects/.../collections/{id}` resource paths and relative `collections/{id}/dataConnector` strings in agent configurations, expands parent `collectionMapping` entries to all child entity DataStores, and deduplicates `dataStoreSpecs`.
-* **🧑‍⚖️ Human-in-the-Loop (HITL) Connector & DataStore Validation**:
-  * **Step 2 Interactive Mapping Table (`#audit`)**: Inspect auto-matched connectors and DataStores with confidence badges (`AUTO-MATCH (_#####)`, `EXACT MATCH`, `⚠️ HITL REQUIRED`), select from live target project connectors via dropdown, type custom IDs, or choose **`🗑️ Strip / Remove Connector from Migrated Agents` (`__STRIP__`)** to cleanly prune missing connectors.
-  * **Step 3 Runtime HITL Modal (`#studio`)**: If an agent references an unmapped connector or DataStore during migration, the runner pauses and opens an interactive HITL modal (`#connectorHitlModal`) so the administrator can map or strip it on the fly before the agent is created.
-* **🛡️ Shared Admin Notebook HITL Confirmation**:
-  * Added `--prompt-admin-hitl` / `promptForAdminNotebookHitl` to pause migration and let administrators interactively select which colleague-authored shared notebooks (visible due to project-level Admin permissions) should be migrated or skipped.
-* **🧪 100% Passing Automated Tests (327/327 Tests)**:
-  * Full 327 automated tests passing across 26 test suites with zero failures or skipped assertions.
-
----
-
-## 🚀 What's New in v1.5.8
-
-* **🔍 Dry Run Permission Elevation Detection for NotebookLM**:
-  * Highlights when an impersonated user token holds project-level `discoveryengine.notebooks.delete` (Admin permissions, e.g. from `roles/discoveryengine.admin` on the Workforce Pool or an admin group).
-  * Explains the exact blast radius: project-level Admin permissions cause Google Discovery Engine / NotebookLM's backend API to classify the user as `PROJECT_ROLE_OWNER` on ALL shared notebooks across the project, causing colleague-authored shared notebooks to appear as owned notebooks.
-  * Emits high-visibility `[DRY RUN AUDIT: PERMISSION ELEVATION]` warnings during pre-flight checks and per-user notebook discovery with exact `gcloud` remediation commands to replace `roles/discoveryengine.admin` with `roles/discoveryengine.user`.
-* **🛡️ Workforce Identity Federation (WiF) Least-Privilege Role Hardening**:
-  * Setup Wizard now binds `roles/discoveryengine.user` (instead of `roles/discoveryengine.admin`) to `principalSet://iam.googleapis.com/locations/global/workforcePools/${poolId}/*`.
-  * WiF group scraper in `wifPreflight.ts` explicitly filters out admin roles (`roles/discoveryengine.admin`, `roles/discoveryengine.agentspaceAdmin`, `roles/discoveryengine.notebookLmOwner`, `roles/owner`, `roles/editor`), preventing impersonated end-user tokens from inheriting unintended project-wide delete privileges.
-* **🧪 100% Passing Automated Tests (313/313 Tests)**:
-  * Full 313 automated tests passing across 26 test suites with zero failures or skipped assertions.
-
----
-
-## 🚀 What's New in v1.5.7
-
-* **💬 Resilient Chat History Migration & Full Session Hydration**:
-  * Resolved Discovery Engine 404 errors on unroutable `assistAnswers` endpoints by implementing single-flight session hydration (`getSession` with `includeAnswerDetails=true` and in-memory cache).
-  * In `listSourceSessions`, automatically requests `view=SESSION_VIEW_FULL` and per-user filtering (`filter=user_pseudo_id="..."`).
-  * Intelligent companion-turn deduplication preserves real Gemini responses and citations, eliminating premature archived placeholder stubs.
-  * Migrated sessions receive `source-session-id:${srcSessionId}` labels and query fingerprinting to prevent duplicate creation collisions in target engines.
-* **🎯 Targeted User Session Filtering & Notebook Source Deduplication**:
-  * Chat sessions are strictly filtered to configured users in `userFilter`, preventing background engine sessions from being loaded.
-  * Notebook studio migration deduplicates source files to prevent duplicate source entries during target re-creation.
-* **🧪 100% Passing Automated Tests (307/307 Tests)**:
-  * Full 307 automated tests passing across 26 test suites with zero skipped or stubbed tests.
-
----
-
-## 🚀 What's New in v1.5.5
-
-* **📊 CSV User ID Mapping (`first.last@XXXX.com ➔ #####@YYYY.com`) & Interactive Mapping Report**:
-  * Added 1-click **CSV Upload (`📂 Upload Mapping CSV`)** and **2-Column Paste (`📋 Paste CSV / Users`)** inside the User Selection & Identity Mapping Table to support customers changing both username/local-part (`first.last` to employee number `#####`) and domain (`@XXXX.com` to `@YYYY.com`).
-  * Added an interactive **Source-to-Destination User Identity Mapping Report (`📊 Mapping Report`)** with 5 KPI cards (Total Users, CSV/1:1 Mapped, Domain Rule, Unmapped Warnings, Target ID Collisions), search/filter controls, and `.CSV` / `.JSON` exports.
-  * Added Section `2b. User Identity Mapping Report (Source ID ➔ Destination ID)` to the Markdown migration report and ensured case-insensitive, prefix-tolerant identity resolution (`IdentityMappingService.lookupTargetIdentity`) across all 5 migration engines.
-* **🔐 Okta 2FA / MFA Compatibility & Browser Session Extractor**:
-  * Added explicit Okta/Entra 2FA guidance and interactive OIDC/SAML Token Helper alongside OAuth 2.0 Client Credentials M2M flow.
-* **🧪 Verified Test Suite (285/285 Tests Passing)**:
-  * Full 285 automated unit and adversarial tests passing across 26 test suites with 100% success rate.
-
----
-
-## 🚀 What's New in v1.5.3
-
-* **🔒 Least-Privilege DWD User Impersonation Scopes**:
-  * Upgraded Google Workspace Domain-Wide Delegation (DWD) impersonation flow to default strictly to Discovery Engine least-privilege scopes (`discoveryengine.readwrite`, `discoveryengine.assist.readwrite`).
-  * Prevents `unauthorized_client` errors for customer Google Workspace environments where super-admins have whitelisted Discovery Engine OAuth scopes in `admin.google.com` without granting broad `cloud-platform` scope.
-  * Added resilient multi-tier scope step-down fallback on `unauthorized_client`.
-* **🔑 Resilient Token Cache Partitioning**:
-  * User impersonation token cache now partitions by execution mode (`DWD`, `WIF`, `ADMIN`) and requested scope sets, guaranteeing zero token collision across authentication modes or cross-project boundaries.
-* **📚 Enterprise Documentation & Console Parity**:
-  * Synchronized all installation, user guides, setup schemas, and web console badges to v1.5.5 (Enterprise Release).
-* **🧪 Test Suite Stability**:
-  * Full automated test suite passing with 100% success rate.
-
----
-
-## 🚀 What's New in v1.5.1
-* **🛡️ Web Console Iframe Sandbox Security Fix**:
-  * Resolved null-origin `SecurityError` exceptions caused by browser extensions inspecting embedded artifact and handover checklist iframes by adding `allow-same-origin` to iframe sandbox policies.
-* **🧪 Test Suite Expansion (106/106 Tests Passing)**:
-  * 100% automated test pass rate across 14 test suites covering authentication, cross-project parity pre-checks, and decommissioning verification.
-
----
-
-## 🚀 What's New in v1.5.0
-
-* **🎯 Interactive Step 2 Config & Parity Environment Selector**:
-  * Direct configuration and selection of Source and Target GCP Project IDs, Regions, Collections, and Discovery Engine / App IDs directly within **Step 2 (Config & Parity Audit)**.
-  * Real-time bi-directional synchronization between Step 2 audit environment cards and Step 3 (Migration Studio) form controls.
-  * Guided empty-state prompt preventing premature, blank pre-check invocations.
-  * Seamless wizard transition button (`Next: Proceed to Step 3: Migration Studio ➔`) carrying configured environments forward.
-* **⚡ Streamlined Step 3 Action Controls**:
-  * Removed redundant pre-check button in Step 3 in favor of unified execution controls (`⚡ Execute Pre-Flight Dry Run` / `⚡ Execute Live Migration`) and direct back-navigation to Step 2.
-* **🛡️ Hardened Enterprise Security & Forensics**:
-  * P0/P1 audit remediations across Discovery Engine pagination (`listAllPages`), truthful error propagation, fail-closed auth, service account identity verification, audience validation, explicit decommissioning opt-in, and Zod audit payload schemas.
-* **🧪 Test Suite Expansion (105/105 Tests Passing)**:
-  * 100% automated test pass rate across 14 test suites covering authentication, parity pre-checks, decommissioning verification, and artifact generation.
-
----
-
-## 🚀 What's New in v1.4.1
-
-* **🛡️ Organization Policy Pre-Flight Scanner & Matrix**:
-  * **Automated Target Project Policy Verification**: Live pre-flight scan (`POST /api/wizard/check-org-policies`) inspecting critical Google Cloud Organization Policies:
-    * `iam.disableServiceAccountKeyCreation`: Checks whether on-disk service account key creation (`gcloud iam service-accounts keys create`) is blocked by organization constraint.
-    * `iam.disableCrossProjectServiceAccountUsage`: Checks whether service accounts from external projects are restricted from accessing target Discovery Engine resources.
-    * `iam.allowedPolicyMemberDomains`: Audits domain-sharing restrictions to ensure workforce pool principal sets (`principalSet://iam.googleapis.com/...`) and external user identities are permitted in IAM bindings.
-    * `discoveryengine.managed.allowedDataSources`: Checks whether custom or third-party MCP and connector datastores are restricted by enterprise policy.
-  * **Real-Time Visual Alerts**: Color-coded banners in Step 1 (DWD) of the Auth Wizard immediately display enforcement status, policy inheritance levels, and operational recommendations.
-* **⚡ 1-Click Project-Level Organization Policy Override**:
-  * **Instant Project Exception**: Dedicated 1-click override button (`POST /api/wizard/override-key-creation-policy`) allowing authorized administrators (`roles/orgpolicy.policyAdmin`) to set `enforce: false` on `iam.disableServiceAccountKeyCreation` directly on the target project without leaving the web console.
-  * **Copyable CLI Remediation Command**: Generates ready-to-paste `gcloud org-policies set-policy` command with JSON policy definition for terminal administrators.
-* **🌐 Workforce Identity Federation (WiF) Keyless Architecture Assessment**:
-  * **Keyless Architecture Immunity**: Explains and validates that WiF token exchanges (`sts.googleapis.com`) mint ephemeral, short-lived tokens via Google Cloud STS and are **100% immune** to `iam.disableServiceAccountKeyCreation` or `iam.disableServiceAccountKeyUpload` constraints.
-  * **Zero Stored Secrets**: Eliminates high-risk on-disk `.json` private keys entirely for customers adopting federated identity (Entra ID, Okta, Ping).
-* **🧹 Dual-Action Cleanup & Application Decommissioning Engine**:
-  * **Button 1 (Reset Target Project Assets)**: Resets migrated Discovery Engine notebooks, custom agents, chat history, user memories, and local artifacts for test iterations.
-  * **Button 2 (Clean Up Install & Decommission Migration App)**: Full teardown and uninstaller. Resets any overwritten organization policies (`iam.disableServiceAccountKeyCreation`) back to inherited defaults, strips IAM roles, deletes the migration service account (permanently neutralizing Google Workspace DWD token authority, with guided manual console deletion instructions), deletes local credential and config files (`*.json`, `*.pem`, `*.jwt`), purges output directories, and restores the workstation and cloud environment to their baseline state prior to app setup.
-  * **Automated Rollback Verification Engine**: Validates across 7 cloud and local security dimensions (project-level organization policy inheritance, permanent service account deletion, project IAM policy bindings revocation, Google Workspace DWD token invalidation, local private keys and config wipe, empty output directories, and cleared application state). Available via Web Console button ("Verify Rollback State"), headless CLI (`gemini-migrate verify-rollback --project <ID>`), and REST API (`GET`/`POST /api/maintenance/verify-rollback`). Automatically audits the environment after every decommission operation.
-  * **Headless CLI Decommissioning**: Supports `gemini-migrate decommission --project <ID> --confirm <ID> [--wipe-target-assets]`.
-* **🧪 Test Suite Expansion & Typing Fixes (88/88 Tests Passing)**:
-  * Full 88-test automated suite across 11 test suites passing with 100% success rate, including new dedicated unit tests for `AppStateTracker`, `validateRollbackCompleteness`, and the maintenance router in `tests/maintenance.test.ts`.
+| Asset / Scope | Migrates? | Reality & Major Caveats |
+| :--- | :---: | :--- |
+| **🤖 Custom Agents** | **🟡 Yes, with admin + user steps** | Agent configs, prompts, local Low-Code files, `Draft`/`Published` state, and sharing migrate — **but admins must identify replacement DataStores/Connectors on the target GE app instance**, **users must authorize their connectors in the target GE app before agents can use them**, and ADK/Cloud Run backends are not redeployed. |
+| **💬 Chat History** | **🟡 Partial / Caveated** | **Never turn-by-turn bubbles** (`Turn.assist_answer` is `OUTPUT_ONLY`). **Archive mode** (default) is static text and **cannot** be continued. **Continuable mode** (`--continuable-sessions`) shoves the **entire past chat into 1 single input prompt** to seed live follow-up context. |
+| **📔 Notebooks (Container & Links)** | **🟡 Partial / Caveated** | Notebook shells, sharing ACLs, and external links (Drive, Web, YouTube, DataStore refs) migrate, **but** Drive links still require target user Drive ACLs and notebook URLs change. |
+| **📄 Notebook Uploaded Files & Pasted Text** | **❌ No** | Locally uploaded `.pdf`, `.docx`, `.pptx`, `.txt`, audio, and pasted text **cannot** be read on customer projects (`NOTEBOOKLM_SOURCE_CONTENT` restriction). Flagged as `MANUAL_REUPLOAD_REQUIRED`. |
+| **🎨 Notebook Notes & Studio Artifacts** | **❌ No (In-App)** | `/notes` and `/artifacts` return `404` on standard customer projects. Even on allowlisted projects where source exports work (`.pptx`/`.docx`/`.html`/`.mp4`), artifacts **cannot** be re-uploaded into NotebookLM Studio. |
+| **🧠 User Memories** | **🧪 Experimental** | Works only on engines exposing `EngineUserData` to impersonated tokens; often `404`/`403` on customer projects. |
+| **🛠️ User-Created Skills** | **🧪 Experimental** | Requires `agentregistry.googleapis.com` preview access; copies registration metadata only (not remote MCP servers or secrets). |
+| **📁 Gemini Enterprise Projects** | **❌ No (`WIP`)** | Not implemented. |
+| **🏗️ Engines, DataStores, Connectors & OAuth** | **❌ No** | Target GE App, replacement DataStores/Connectors, and per-user in-app connector OAuth authorizations are **not** migrated. |
 
 ---
 
 ## 📋 Table of Contents
 
-- [What's New in v1.8.2](#-whats-new-in-v182)
-- [What's New in v1.8.1](#-whats-new-in-v181)
-- [What's New in v1.8.0](#-whats-new-in-v180)
-- [What's New in v1.7.0](#-whats-new-in-v170)
-- [What's New in v1.6.3](#-whats-new-in-v163)
-- [What's New in v1.6.2](#-whats-new-in-v162)
-- [What's New in v1.6.1](#-whats-new-in-v161)
-- [What's New in v1.6.0](#-whats-new-in-v160)
-- [What's New in v1.5.3](#-whats-new-in-v153)
+- [Honest Migration Capabilities, Caveats & Hard Limitations](#️-honest-migration-capabilities-caveats--hard-limitations)
+- [What's New in v1.8.3](#-whats-new-in-v183)
 - [Key Features](#-key-features)
 - [Supported Migration Matrix & Identity Providers](#-supported-migration-matrix--identity-providers)
 - [Pre-Requisites for Customer Environments](#-pre-requisites-for-customer-environments)
@@ -249,26 +106,51 @@ An enterprise admin-driven headless platform and web console for migrating **Gem
 
 ---
 
+## 🚀 What's New in v1.8.3
+
+* **💬 Opt-In Continuable Chat Migration (`--continuable-sessions` / `🔄 Enable Continuable Chats`) (`src/engines/sessionMigrator.ts`, `public/index.html`, `src/cli.ts`)**:
+  * Because Discovery Engine's `CreatePlannerStepsFromSessionTurns` ignores prior `Session.Turn` entries without a Spanner `AssistAnswer` row (and `Turn.assist_answer` is `OUTPUT_ONLY`), standard archive chat migrations are static and cannot be continued.
+  * When **Enable Continuable Chats (`:streamAssist` Context Handshake)** is enabled, `SessionMigrator` creates the target session container (`turns: []`), uploads binary session files, and consolidates the verbatim historical Q&A transcript into **1 single input prompt via `AssistantService.StreamAssist` (`toolsSpec: {}`)**, followed by `PATCH ?updateMask=displayName[,isPinned]` to preserve the original title (falling back to read-only archive turns if `:streamAssist` is skipped or rate-limited).
+* **👥 Multi-User Web-UI Chat Discovery & Non-Human Principal Filtering (`src/engines/sessionMigrator.ts`, `src/engines/memoryMigrator.ts`, `src/utils/impersonationFailure.ts`)**:
+  * Omits `filter=user_pseudo_id` on EUC-impersonated (`DWD` / `WiF`) `ListSessions` calls so native Web-UI chats (whose `userPseudoId` is a numeric `session_id`) are discovered cleanly, and filters out `group:`, `domain:`, and `serviceAccount:` entries before DWD JWT minting.
+* **🔑 Keyless DWD Admin Token Resolution & Same-Project Engine-Isolated Cleanup (`src/services/gcpAuth.ts`, `src/services/discoveryEngine.ts`, `src/routes/maintenance.ts`)**:
+  * Uses the active caller's ADC/gcloud token first for Admin API calls in Keyless DWD mode (with 1-shot `401`/`403` fallback to IAM `generateAccessToken`), and allows **Target Maintenance** (`POST /api/cleanup`) to clean engine-scoped assets (**Chats**, **Agents**, **Memories**) when `targetProject === sourceProject` and `targetEngine !== sourceEngine`.
+* **📋 Up-Front Honest Capabilities & Limitations Documentation (`README.md`)**:
+  * Documented exact public API boundaries, caveats, and non-migrated items at the top of `README.md`.
+* **🧪 100% Passing Automated Tests (425/425 Tests across 33 suites)**.
+
+<details>
+<summary><strong>📜 Previous Release Highlights (v1.4.1 – v1.8.2)</strong> — click to expand</summary>
+
+### What's New in v1.8.2
+* **Honest NotebookLM Source Handling & Per-Project 404 Caching**: Re-links external reference sources (Google Drive, Web URLs, YouTube, Agentspace DataStore docs), flags uploaded/pasted sources as `MANUAL_REUPLOAD_REQUIRED` without dead fallback RPCs, and caches per-project `404` responses for `/notes` and `/artifacts` (395 passing tests).
+
+### What's New in v1.8.1
+* **DataStore-Grounded NotebookLM Source Mapping & JSON Backup**: Rewrites `agentspaceMetadata.documentName` across projects via `datastoreMapping` / `collectionMapping` and saves `<Notebook>_sources_backup.json` in handover bundles (389 passing tests).
+
+### What's New in v1.8.0
+* **Source-Faithful Agent Deployment & Draft Preservation**: Preserves source `Draft` vs `Published` state and dispatches `:deployLowCode`, `:publish`, `:deploy`, or `:enableAgent` plus `:requestAgentReview` before `:setIamPolicy` (383 passing tests).
+
+### What's New in v1.7.0
+* **Worker Concurrency Control, Ignore Draft Agents & Honest Source Reporting**: Added `#optConcurrency`, `--exclude-draft-agents`, and removed fake `[Restored Source: ...]` placeholders (375 passing tests).
+
+### Earlier Releases (`v1.4.1` – `v1.6.3`)
+* See [`CHANGELOG.md`](CHANGELOG.md) and [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for the complete version-by-version history (`v1.0.0` – `v1.8.3`).
+
+</details>
+
+---
+
 ## 🌟 Key Features
 
-* **🤖 Custom Agent Migration & Auto-Publishing**: Deep-copies Low-Code and Workflow agents with tool attachments, system prompts, grounding data stores, and original author tags. Automatically assigns `scope: ALL_USERS` and publishes them so they immediately appear in the user's left sidebar and Agent Gallery.
-* **🛠️ User-Created Skills Migration (`Experimental`)**: Discovers, exports, and restores custom user skills in Google Agent Registry (`agentregistry.googleapis.com`) and Discovery Engine Skill Agents, while intelligently excluding public Google 1P catalog templates (`cloud.google.com-*`, `discoveryengine.googleapis.com-*`, `google-*`). *(Experimental — may not work for everyone)*.
-* **🧠 User Personalized Memories & Facts (`Experimental`)**: Discovers, backs up, and restores personalized user memory facts and profile preferences across engines. *(Experimental — may not work for everyone)*.
-* **📁 Gemini Enterprise Project Migrations (`WIP`)**: Project workspace migrations are currently a **Work in Progress (`WIP`)**.
-* **🔍 Configuration Pre-Check & Gap Audit**: Computes an end-to-end Parity Readiness Score (0–100%) and deep feature comparison (Memory, Agent Gallery, Low-Code Builder, Skills, Sharing, Audio, Canvas, Observability, TTL). Scopes DataStore audits strictly to attached DataStores, provides 1-click target settings synchronization, and renders copy-ready CLI remediation commands with zero UI flicker.
-* **📔 Research Notebooks & Granular Source Auditing**: Syncs notebooks, grounding sources (PDFs, Web URLs, YouTube videos, Google Drive docs), and studio outputs directly into the target environment. Tracks every source individually with fault-isolated batching and dedicated integrity reporting. Notes are strictly preserved as distinct artifacts, eliminating artificial source pollution.
-* **🧠 Standalone Interactive Quizzes & 3D Flashcards Apps**: Converts raw compiled Angular applications into 100% offline, zero-dependency HTML5 interactive apps that run in any browser without blank screens or host dependencies. Generates interactive quiz players (with instant feedback, hints, rationales, and retake scoring), 3D flashcard flippers (with flip animations, shuffle, keyboard shortcuts, and table views), and matching printable Microsoft Word (`.docx`) study guides and Markdown banks (`.md`).
-* **🎬 Explainer Video Media Compression (`ffmpeg`)**: Automatically detects `ffmpeg` and compresses high-bitrate Explainer Videos (`.mp4`) > 12 MB to 720p H.264 CRF 28 with 64k AAC audio, reducing file size by 70–75% (e.g. 24.2 MB &rarr; 6.7 MB) with zero visual loss so they fit securely inside email archives.
-* **📊 NotebookLM Direct Export Parity & Office Generation**: Automatically exports NotebookLM slide decks as native **`.pptx` (Microsoft PowerPoint)** presentations and briefing docs/study guides as native **`.docx` (Microsoft Word)** files matching authentic direct NotebookLM exports (clean human-readable filenames without `(Restored)` tags or duplicate title stuttering, native markdown tables with shading and borders, 1-inch margins, bullet/numbered lists, inline citations, 16:9 widescreen slides, card container layouts, and presenter speaker notes).
-* **💬 Multi-turn Chat Conversation History**: Rehydrates full turn-by-turn question/answer dialogues, thoughts, and citations in chronological order (oldest $\rightarrow$ newest) directly into users' left-hand History sidebar.
-* **👤 Multi-Tenant Identity Resolution & Auto-Auth Detection**:
-  * **Google Workspace / Cloud Identity**: Uses Domain-Wide Delegation (DWD) with `sa-dwd-key.json` to mint user-scoped OAuth2 tokens.
-  * **Microsoft Entra ID / Okta / Ping**: Uses Google Cloud Security Token Service (STS) with RSA-signed OIDC assertions via `workforce-identity-config.json`.
-  * **Auto-Resolution**: Authentication mode is automatically determined from selected Identity Providers and user email domains.
-* **🔄 Context-Aware Cross-IdP Transformation Matrix**: Supports domain transformation rules (e.g. `user@onmicrosoft.com` $\rightarrow$ `user@company.com`). The mapping interface is hidden when IdPs match and automatically reveals preset suggestions when switching between different IdPs.
-* **🛡️ Built-in Permissions & Least-Privilege Auditor**: Evaluates live IAM permissions, flags over-provisioned OAuth scopes, assigns security letter grades (A/B/C/F), verifies Google SAIF compliance, and provides 1-click `gcloud` IAM policy auto-fixes.
-* **🧹 Selective Multi-User Target Maintenance**: Granular controls to clean Chats, Agents, Notebooks, Exported Artifacts, or Reports across all target users prior to fresh migration runs.
-* **📬 Action-Oriented Handover Checklists & Single-ZIP Archive**: Generates personalized Markdown and HTML handover checklists with interactive checkboxes `[ ]` showing exact user onboarding steps (First-time sign-in, Connectors enablement, tool authorization, agent publishing). Packages all user presentations, videos, infographics, and interactive apps into a single `NotebookLM_Artifacts.zip` archive delivered via Gmail API or corporate SMTP with **Safe Staging Mode** and burst rate-limiting protection.
+* **🤖 Custom Agent Configuration & Sharing Migration**: Recreates Low-Code, Workflow, Managed, ADK, and A2A agent definitions with system prompts, schemas, local Low-Code files, rewritten `datastoreMapping`/`collectionMapping` bindings, source `Draft` vs `Published` lifecycle parity, and `PRIVATE` / `ALL_USERS` / `RESTRICTED` sharing *(admins must identify replacement DataStores/Connectors on the target GE app instance, and users must authorize their connectors in the target GE app before their agents can use them)*.
+* **🔍 Configuration Pre-Check, Gap Audit & Connector HITL Mapping**: Compares source vs. target engine feature flags, auto-matches `<connector>_<timestamp>` Collections and child entity DataStores (`_issue`, `_pull_request`, `_repository`) via Regex Pattern Matching to prevent 1-to-3 source multiplication, and provides interactive HITL dropdowns or `__STRIP__` pruning.
+* **📔 Research Notebook Shells & External Link Migration**: Recreates user notebooks, sharing ACLs, and external reference sources (Google Drive links, Web URLs, YouTube videos, Agentspace DataStore references), while auditing every source individually and flagging non-migratable local uploads/pasted text as `MANUAL_REUPLOAD_REQUIRED`.
+* **📦 Offline Studio Artifact Exports *(Allowlisted Source Projects Only)***: On projects where `ArtifactService` is exposed, exports slide decks to `.pptx`, study guides/briefings to `.docx`, Quizzes/Flashcards to offline HTML5 apps, and Explainer Videos to `ffmpeg`-compressed `.mp4` files for email handover *(not available on customer projects where `/artifacts` returns `404`, and cannot be re-imported into NotebookLM Studio)*.
+* **💬 Chat History Migration (Read-Only Archive or Single-Prompt Continuable Seed)**: Restores historical prompt/response text and session file attachments either as read-only archive turns or — via opt-in `--continuable-sessions` — as a single consolidated `:streamAssist` context prompt so users can continue the conversation *(never native multi-turn bubbles due to `OUTPUT_ONLY` API constraints)*.
+* **🛠️ Experimental Skills & Personalized Memories**: Best-effort migration of custom skills (`agentregistry.googleapis.com`) and user memories (`EngineUserData`) on enrolled/supported engines.
+* **👤 Multi-Tenant Identity Resolution (DWD & WiF)**: Supports Google Workspace Domain-Wide Delegation (JSON key or Keyless IAM `signJwt`), Workforce Identity Federation STS assertions (Entra ID, Okta, Ping), domain transformation rules, and 2-column CSV user ID mapping (`first.last@XXXX.com ➔ #####@YYYY.com`).
+* **🛡️ Permissions Auditor, Selective Maintenance & User Handover**: Includes live IAM least-privilege & Org Policy checks, selective target engine cleanup, and personalized user onboarding checklists (`/checklist`) with optional Gmail/SMTP delivery.
 
 ---
 
@@ -498,6 +380,9 @@ npx tsx src/cli.ts --dry-run --users "*@company.com"
 | `--no-notebooks` | Skip Gemini / NotebookLM notebooks migration | Migrates notebooks |
 | `--no-agents` | Skip Custom Agents migration | Migrates agents |
 | `--no-sessions` | Skip Chat conversation histories and turns migration | Migrates chat history |
+| `--continuable-sessions` | Seed a live `:streamAssist` context handshake turn (`toolsSpec: {}`) with the verbatim historical Q&A so follow-up questions in migrated chats remember prior context | `false` (Standard archive) |
+| `--no-session-files` | Skip migrating context attachments and AI-generated files attached to chat sessions | Migrates session files |
+| `--no-agent-files` | Skip migrating local knowledge files attached to No-Code / Low-Code agents | Migrates agent files |
 | `--no-memories` | Skip user personalized memories and facts migration *(Experimental — may not work for everyone)* | Migrates memories *(Experimental)* |
 | `--no-skills` | Skip Agent Registry custom skills migration *(Experimental — may not work for everyone)* | Migrates skills *(Experimental)* |
 | `--export-memories` | Export backup snapshot of user memories to disk (`./exports/memories`) *(Experimental)* | `true` |
@@ -550,8 +435,9 @@ The local Web Console is structured as a sequential 6-step administrative wizard
    - Prominent `Next: Proceed to Step 3: Migration Studio ➔` wizard transition that automatically syncs confirmed connector and datastore mappings into Step 3.
 3. **Step 3: 🚀 Migration Studio (`#studio`)**:
    - Synchronized Source and Target GCP environment pickers and asset scope selectors (Notebooks, Custom Agents, User Skills `[Experimental]`, Chat Sessions, Memories `[Experimental]`, Studio Artifacts, and Projects `[WIP]`).
+   - **Continuable Chats (`#optContinuableSessions`)**: Sub-option under Chat History Sessions (`🔄 Enable Continuable Chats (:streamAssist Context Handshake)`) to seed a live `AssistAnswer` turn with the verbatim historical Q&A so follow-up questions remember the migrated conversation.
    - **Ignore Draft Agents (`#optExcludeDraftAgents`)**: Sub-option under Custom Agents to skip unsaved UI draft placeholders (`"My Agent"`, `"My Workflow"`, etc.) and migrate only **Private (created/deployed)** and **Published/Shared** agents.
-   - **Worker Concurrency Control (`#optConcurrency`)**: Configurable parallel worker threads (`1`–`50`, default `5`, recommended `3`–`5` for large PDF/PPTX notebooks) paired with adaptive source read concurrency (`min(concurrency, 3)`) to prevent HTTP 504 `DEADLINE_EXCEEDED` timeouts.
+   - **Worker Concurrency Control (`#optConcurrency`)**: Configurable parallel worker threads (`1`–`50`, default `3`, recommended `3`–`5` for large PDF/PPTX notebooks) paired with adaptive source read concurrency (`min(concurrency, 3)`) to prevent HTTP 504 `DEADLINE_EXCEEDED` timeouts.
    - Dynamic asset discovery with user selection table and CSV identity mapping (`first.last@XXXX.com ➔ #####@YYYY.com`).
    - Context-aware Cross-IdP transformation matrix with preset domain rules and synchronized `collectionMapping` / `datastoreMapping` controls.
    - Interactive **Runtime HITL Modals**:
@@ -570,7 +456,7 @@ The local Web Console is structured as a sequential 6-step administrative wizard
    - Step 1 First-Time Login and Connector Authorization (Google Workspace, M365, Jira, etc.) walkthroughs.
    - One-click handover dispatch via Gmail API or SMTP with optional staging recipient overrides.
 6. **Step 6: 🧹 Target Maintenance & Platform Decommissioning (`#maintenance`)**:
-   - **Button 1: Reset Target Project Assets**: Purges migrated target project assets (notebooks, custom agents, chat history, user memories, reports, artifacts) for test iteration resets.
+   - **Button 1: Reset Target Project Assets**: Purges migrated target project assets (notebooks, custom agents, chat history, user memories, reports, artifacts) for test iteration resets. Supports same-project engine-isolated cleanup for Chat History, Custom Agents, and User Memories when `targetEngine !== sourceEngine`.
    - **Button 2: Clean Up Install & Decommission Migration App**: Complete uninstaller that deletes the migration service account, removes GCP IAM roles, resets any overridden organization policies (`iam.disableServiceAccountKeyCreation`) back to inherited parent defaults, automatically invalidates Google Workspace DWD, wipes all local credential/JSON files, and purges output folders to restore the workstation and GCP project to their pre-setup baseline.
    - **Automated Rollback Verification Engine**: Live 7-dimension audit (`🔍 Verify Rollback State`) proving cloud and local baseline cleanliness.
 
@@ -614,13 +500,16 @@ Designed to run **strictly on the administrator's local machine**:
     "migrateNotebooks": true,
     "migrateAgents": true,
     "migrateSessions": true,
+    "continuableSessions": false,
+    "migrateSessionFiles": true,
+    "migrateAgentFiles": true,
     "migrateMemories": true,
     "migrateSkills": true,
     "exportMemories": true,
     "exportArtifacts": true,
     "excludeDraftAgents": false,
     "dryRun": false,
-    "concurrency": 5,
+    "concurrency": 3,
     "userFilter": ["*@company.com"],
     "preserveOwnership": true,
     "promptForAdminNotebookHitl": false,
@@ -688,10 +577,10 @@ The migration tool is engineered for enterprise-scale execution and incorporates
 
 ## 🧪 Automated Testing
 
-The platform includes an extensive automated test suite with **375 automated tests across 31 test suites** covering authentication, cross-project parity audits, dynamic `_#####` connector & child entity DataStore Regex Pattern Matching, HITL connector validation, draft vs private/published agent filtering (`excludeDraftAgents`), honest notebook source failure reporting & adaptive read concurrency, Agent Registry skills discovery/filtering, memory migration, session rehydration, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
+The platform includes an extensive automated test suite with **425 automated tests across 33 test suites** covering authentication (Keyless DWD, JSON DWD, WiF), cross-project parity audits, dynamic `_#####` connector & child entity DataStore Regex Pattern Matching, HITL connector validation, draft vs private/published agent filtering (`excludeDraftAgents`), honest notebook source failure reporting & adaptive read concurrency, Agent Registry skills discovery/filtering, memory migration, chat session rehydration & opt-in `:streamAssist` continuable context handshakes, same-project engine-isolated maintenance cleanup, reporters, NotebookLM artifact formatting, bulk email dispatching, security guardrails, and E2E execution flows:
 
 ```bash
-# Run complete unit and integration test suite (375 tests across 31 suites)
+# Run complete unit and integration test suite (425 tests across 33 suites)
 npm test
 
 # Run End-to-End matrix permutations test (DWD/WiF permutations)

@@ -17,7 +17,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { GcpAuthService } from '../src/services/gcpAuth.js';
+import { GcpAuthService, isGroupOrNonHumanPrincipal } from '../src/services/gcpAuth.js';
+import { DiscoveryEngineClient } from '../src/services/discoveryEngine.js';
 import { classifyImpersonationFailure } from '../src/utils/impersonationFailure.js';
 import { wizardRouter } from '../src/routes/wizard.js';
 
@@ -208,4 +209,103 @@ describe('Experimental Keyless DWD (IAM signJwt)', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it('uses operator base token for Keyless DWD admin calls without requiring SA project IAM, and falls back to SA generateAccessToken on HTTP 403', async () => {
+    const auth = new GcpAuthService({
+      dwdServiceAccountEmail: SA_EMAIL,
+      dwdCallerAccount: 'admin@wdufrin.altostrat.com'
+    });
+    // Seed cachedAdcToken so the test is hermetic without invoking `gcloud` subprocesses
+    (auth as any).cachedAdcToken = {
+      token: 'operator-admin-token',
+      expiresAt: Date.now() + 3600_000
+    };
+
+    const seenAuthHeaders: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.includes(':generateAccessToken')) {
+        return new Response(JSON.stringify({ accessToken: 'sa-generated-admin-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url.includes('/engines/cosmere-clone')) {
+        const hdr = String((init?.headers as any)?.Authorization || '');
+        seenAuthHeaders.push(hdr);
+        if (hdr === 'Bearer operator-admin-token') {
+          return new Response(
+            JSON.stringify({
+              error: { code: 403, message: "Permission 'discoveryengine.engines.get' denied." }
+            }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (hdr === 'Bearer sa-generated-admin-token') {
+          return new Response(
+            JSON.stringify({
+              name: 'projects/acme-target-proj/locations/global/collections/default_collection/engines/cosmere-clone',
+              displayName: 'Cosmere Clone'
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+      return new Response('Unexpected URL', { status: 500 });
+    });
+
+    // 1. Primary admin token prefers operator's base token (zero-IAM DWD SA safe)
+    const initialAdminToken = await auth.getAccessToken();
+    expect(initialAdminToken).toBe('operator-admin-token');
+
+    // 2. If operator token gets 403 on Discovery Engine, client transparently falls back once to SA generateAccessToken
+    const client = new DiscoveryEngineClient(auth, { maxRetries: 1, retryBaseDelayMs: 5 });
+    const engine = await client.getEngine({
+      projectId: 'acme-target-proj',
+      appLocation: 'global',
+      appId: 'cosmere-clone'
+    });
+
+    expect(engine.displayName).toBe('Cosmere Clone');
+    expect(seenAuthHeaders).toEqual([
+      'Bearer operator-admin-token',
+      'Bearer sa-generated-admin-token'
+    ]);
+  });
+
+  it('rejects non-user principals (group:, domain:, allUsers) immediately before any signJwt call and classifies as MISCONFIGURED', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const auth = new GcpAuthService({
+      staticToken: 'operator-token',
+      dwdServiceAccountEmail: SA_EMAIL
+    });
+
+    expect(isGroupOrNonHumanPrincipal('group:test2@wdufrin.altostrat.com')).toBe(true);
+    expect(isGroupOrNonHumanPrincipal('domain:wdufrin.altostrat.com')).toBe(true);
+    expect(isGroupOrNonHumanPrincipal('serviceAccount:sa@proj.iam.gserviceaccount.com')).toBe(true);
+    expect(isGroupOrNonHumanPrincipal('allUsers')).toBe(true);
+    expect(isGroupOrNonHumanPrincipal('mikesh@wdufrin.altostrat.com')).toBe(false);
+    expect(isGroupOrNonHumanPrincipal('user:mikesh@wdufrin.altostrat.com')).toBe(false);
+
+    for (const badPrincipal of [
+      'group:test2@wdufrin.altostrat.com',
+      'domain:wdufrin.altostrat.com',
+      'allUsers'
+    ]) {
+      await expect(auth.getAccessToken(badPrincipal)).rejects.toThrow(
+        /Cannot impersonate non-user principal/
+      );
+      try {
+        await auth.getAccessToken(badPrincipal);
+      } catch (err: any) {
+        const verdict = classifyImpersonationFailure(err.message);
+        expect(verdict.kind).toBe('MISCONFIGURED');
+        expect(verdict.safeToDropData).toBe(false);
+      }
+    }
+
+    // Must never make an outbound network call to iamcredentials:signJwt for a group/domain principal
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
+

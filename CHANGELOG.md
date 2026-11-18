@@ -5,6 +5,27 @@ All notable changes to the Gemini Enterprise Admin Migration Platform (`gemini-m
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.3] - 2026-11-17
+
+### Added
+- **Opt-In Continuable Chat Migration (`--continuable-sessions` / `:streamAssist` Context Handshake) (`src/engines/sessionMigrator.ts`, `public/index.html`, `src/cli.ts`, `src/config/configSchema.ts`, `src/config/loader.ts`)**:
+  - Added `continuableSessions` (`--continuable-sessions` / `CONTINUABLE_SESSIONS=true` / `🔄 Enable Continuable Chats (:streamAssist Context Handshake)` in Step 3) to seed a live `AssistantService.StreamAssist` turn (`toolsSpec: {}`) containing 100% of the verbatim historical Q&A transcript so Spanner stores a real `AssistAnswer` row and follow-up questions remember the migrated conversation.
+  - Added `PATCH /v1alpha/{session}?updateMask=displayName[,isPinned]` after `:streamAssist` to preserve the exact source session title and pin status, and automatic fallback to `PATCH ?updateMask=turns,displayName` with verbatim archive turns if `:streamAssist` is skipped by Model Armor or rate-limited.
+  - Added `parseStreamAssistChunks` supporting JSON arrays, single JSON objects, and NDJSON stream chunks.
+- **Capabilities & API Boundaries Documentation (`README.md`)**:
+  - Added the **What This Tool Can and Cannot Migrate (Capabilities & API Boundaries)** matrix clearly documenting supported vs. unsupported features, Google Cloud Discovery Engine public proto/API restrictions, and built-in workarounds.
+
+### Fixed
+- **Multi-User Web-UI Chat Discovery & Non-Human Principal Filtering (`src/engines/sessionMigrator.ts`, `src/engines/memoryMigrator.ts`, `src/utils/impersonationFailure.ts`)**:
+  - Omitted `filter=user_pseudo_id` on EUC-impersonated (`DWD` / `WiF`) `ListSessions` calls because Spanner already scopes results by `owner_id` while native Web-UI chats default `userPseudoId` to the numeric `session_id`.
+  - Added `isGroupOrNonHumanPrincipal` to skip `group:`, `domain:`, and `serviceAccount:` principals before user-scoped Chat Session and Memory discovery.
+- **Keyless DWD Admin Token Resolution & Same-Project Engine-Isolated Cleanup (`src/services/gcpAuth.ts`, `src/services/discoveryEngine.ts`, `src/routes/maintenance.ts`)**:
+  - Updated `GcpAuthService.getAdminAccessToken` to prefer the caller's ADC/gcloud token first in Keyless DWD mode (`serviceAccountEmail` without a JSON key file), with a 1-shot `401`/`403` fallback in `DiscoveryEngineClient` to `mintKeylessServiceAccountAccessToken`.
+  - Updated `POST /api/cleanup` (`src/routes/maintenance.ts`) to allow engine-scoped cleanup (**Chat History Sessions**, **Custom Agents**, **User Memories**) when `targetProject === sourceProject` and `targetEngine !== sourceEngine`, while still blocking project-wide **Gemini Notebooks** cleanup on same-project runs.
+- Bumped platform version to `1.8.3` across `package.json`, `package-lock.json`, `src/cli.ts`, `public/index.html`, and enterprise documentation (425 passing tests across 33 test suites).
+
+---
+
 ## [1.8.2] - 2026-10-21
 
 ### Added
